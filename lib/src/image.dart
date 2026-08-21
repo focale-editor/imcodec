@@ -37,6 +37,13 @@ enum ChannelOrder {
 
 /// Stores an 8-bit image in straight-alpha RGBA order.
 final class Image {
+  /// Width in pixels.
+  final int width;
+
+  /// Height in pixels.
+  final int height;
+
+  /// The raw bytes of the image.
   final Uint8List _rgba;
 
   /// Creates a transparent RGBA image.
@@ -148,13 +155,8 @@ final class Image {
     return Image._(width, height, copy ? Uint8List.fromList(bytes) : bytes);
   }
 
+  /// Creates an image around an already validated RGBA buffer.
   Image._(this.width, this.height, this._rgba);
-
-  /// Width in pixels.
-  final int width;
-
-  /// Height in pixels.
-  final int height;
 
   /// Number of stored channels per pixel.
   int get numChannels => 4;
@@ -186,6 +188,7 @@ final class Image {
   /// Returns the alpha channel at [x], [y].
   int alpha(int x, int y) => _rgba[_pixelOffset(x, y) + 3];
 
+  /// Resolves [x] and [y] to an RGBA byte offset after bounds checking.
   int _pixelOffset(int x, int y) {
     if (x < 0 || x >= width) {
       throw RangeError.range(x, 0, width - 1, 'x');
@@ -196,11 +199,13 @@ final class Image {
     return (y * width + x) * 4;
   }
 
+  /// Allocates a zero-filled RGBA buffer for validated dimensions.
   static Uint8List _allocate(int width, int height) {
     _validateDimensions(width, height);
     return Uint8List(width * height * 4);
   }
 
+  /// Ensures both image dimensions can describe at least one pixel.
   static void _validateDimensions(int width, int height) {
     if (width < 1) {
       throw RangeError.range(width, 1, null, 'width');
@@ -210,6 +215,7 @@ final class Image {
     }
   }
 
+  /// Chooses the conventional layout for a source channel count.
   static ChannelOrder _defaultOrder(int channelCount) => switch (channelCount) {
     1 => ChannelOrder.red,
     2 => ChannelOrder.grayAlpha,

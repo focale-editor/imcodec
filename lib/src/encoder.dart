@@ -57,5 +57,5 @@ Uint8List encodeWebP(Image image) {
   if (image.width > 16384 || image.height > 16384) {
     throw const ImageCodecException('Lossless WebP dimensions may not exceed 16384 pixels');
   }
-  return WebPEncoder().encode(image);
+  return const WebPEncoder().encode(image);
 }

@@ -4,6 +4,9 @@ import 'package:imcodec/src/image.dart';
 
 /// Internal contract shared by the synchronous encoders.
 abstract class Encoder {
+  /// Creates an encoder implementation.
+  const Encoder();
+
   /// Encodes the first frame of [image].
   Uint8List encode(Image image, {bool singleFrame = false});
 }

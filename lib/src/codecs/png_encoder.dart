@@ -7,11 +7,26 @@ import 'package:imcodec/src/output_buffer.dart';
 
 /// Encodes straight-alpha RGBA pixels as a non-interlaced PNG.
 final class PngEncoder {
-  /// Creates an encoder using a zlib [level] from 0 through 9.
-  const PngEncoder({this.level = 6}) : assert(level >= 0 && level <= 9, 'PNG compression level must be between 0 and 9');
+  /// Eight-byte PNG file signature.
+  static const List<int> _signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+  /// Chunk type bytes for the image header.
+  static const List<int> _ihdr = [0x49, 0x48, 0x44, 0x52];
+
+  /// Chunk type bytes for compressed image data.
+  static const List<int> _idat = [0x49, 0x44, 0x41, 0x54];
+
+  /// Chunk type bytes for the end marker.
+  static const List<int> _iend = [0x49, 0x45, 0x4e, 0x44];
+
+  /// Lookup table for the PNG CRC-32 polynomial.
+  static final List<int> _crcTable = List<int>.generate(256, _crcTableValue, growable: false);
 
   /// Zlib compression level.
   final int level;
+
+  /// Creates an encoder using a zlib [level] from 0 through 9.
+  const PngEncoder({this.level = 6}) : assert(level >= 0 && level <= 9, 'PNG compression level must be between 0 and 9');
 
   /// Encodes [image] with an adaptive per-row PNG filter.
   Uint8List encode(Image image) {
@@ -40,6 +55,7 @@ final class PngEncoder {
     return Uint8List.fromList(output.getBytes());
   }
 
+  /// Applies the lowest-cost PNG predictor independently to every row.
   Uint8List _filter(Image image) {
     final int rowLength = image.width * 4;
     final Uint8List result = Uint8List((rowLength + 1) * image.height);
@@ -81,6 +97,7 @@ final class PngEncoder {
     return result;
   }
 
+  /// Predicts one byte from its left, upper, and upper-left neighbors.
   static int _paeth(int left, int up, int upperLeft) {
     final int prediction = left + up - upperLeft;
     final int leftDistance = (prediction - left).abs();
@@ -92,6 +109,7 @@ final class PngEncoder {
     return upDistance <= upperLeftDistance ? up : upperLeft;
   }
 
+  /// Writes a length-prefixed PNG chunk followed by its checksum.
   static void _writeChunk(OutputBuffer output, List<int> type, Uint8List data) {
     output
       ..writeUint32(data.length)
@@ -100,6 +118,7 @@ final class PngEncoder {
       ..writeUint32(_crc32(type, data));
   }
 
+  /// Computes the PNG CRC-32 over a chunk type and its payload.
   static int _crc32(List<int> type, Uint8List data) {
     int crc = 0xffffffff;
     for (final int byte in type.followedBy(data)) {
@@ -108,17 +127,12 @@ final class PngEncoder {
     return (crc ^ 0xffffffff) & 0xffffffff;
   }
 
-  static int _paethCrcValue(int index) {
+  /// Produces one entry of the CRC-32 lookup table.
+  static int _crcTableValue(int index) {
     int value = index;
     for (int bit = 0; bit < 8; bit++) {
       value = value.isOdd ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
     }
     return value;
   }
-
-  static const List<int> _signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-  static const List<int> _ihdr = [0x49, 0x48, 0x44, 0x52];
-  static const List<int> _idat = [0x49, 0x44, 0x41, 0x54];
-  static const List<int> _iend = [0x49, 0x45, 0x4e, 0x44];
-  static final List<int> _crcTable = List<int>.generate(256, _paethCrcValue, growable: false);
 }

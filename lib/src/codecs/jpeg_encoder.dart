@@ -22,6 +22,472 @@ enum JpegChroma {
 /// Derived from:
 /// https://github.com/owencm/javascript-jpeg-encoder
 class JpegEncoder extends Encoder {
+  /// Quality-scaled luminance quantization values in zigzag order.
+  final Uint8List _yTable = Uint8List(64);
+
+  /// Quality-scaled chrominance quantization values in zigzag order.
+  final Uint8List _uvTable = Uint8List(64);
+
+  /// Forward-transform scaling factors for luminance coefficients.
+  final Float32List _fdtblY = Float32List(64);
+
+  /// Forward-transform scaling factors for chrominance coefficients.
+  final Float32List _fdtblUv = Float32List(64);
+
+  /// Huffman lookup table for luminance DC coefficients.
+  List<List<int>?>? _ydcHuffman;
+
+  /// Huffman lookup table for chrominance DC coefficients.
+  List<List<int>?>? _uvdcHuffman;
+
+  /// Huffman lookup table for luminance AC coefficients.
+  late List<List<int>?> _yacHuffman;
+
+  /// Huffman lookup table for chrominance AC coefficients.
+  late List<List<int>?> _uvacHuffman;
+
+  /// Signed coefficient bit patterns indexed around zero.
+  final List<List<int>?> _bitCode = List<List<int>?>.filled(65535, null);
+
+  /// Signed coefficient category sizes indexed around zero.
+  final List<int?> _category = List<int?>.filled(65535, null);
+
+  /// Reusable output storage for transformed and quantized coefficients.
+  final List<int?> _outputfDCTQuant = List<int?>.filled(64, null);
+
+  /// Reusable zigzag-ordered data-unit coefficients.
+  final List<int?> _du = List<int?>.filled(64, null);
+
+  /// Fixed-point products used by RGB-to-YUV conversion.
+  final Int32List _rgbYuvTable = Int32List(2048);
+
+  /// Quality used to build the current quantization tables.
+  int? _currentQuality;
+
+  /// Maps natural coefficient order to JPEG zigzag order.
+  static const List<int> _zigzag = [
+    0,
+    1,
+    5,
+    6,
+    14,
+    15,
+    27,
+    28,
+    2,
+    4,
+    7,
+    13,
+    16,
+    26,
+    29,
+    42,
+    3,
+    8,
+    12,
+    17,
+    25,
+    30,
+    41,
+    43,
+    9,
+    11,
+    18,
+    24,
+    31,
+    40,
+    44,
+    53,
+    10,
+    19,
+    23,
+    32,
+    39,
+    45,
+    52,
+    54,
+    20,
+    22,
+    33,
+    38,
+    46,
+    51,
+    55,
+    60,
+    21,
+    34,
+    37,
+    47,
+    50,
+    56,
+    59,
+    61,
+    35,
+    36,
+    48,
+    49,
+    57,
+    58,
+    62,
+    63,
+  ];
+
+  /// Number of luminance DC codes for each bit length.
+  static const List<int> stdDcLuminanceNrCodes = [0, 0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0];
+
+  /// Luminance DC symbols in canonical order.
+  static const List<int> stdDcLuminanceValues = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+  /// Number of luminance AC codes for each bit length.
+  static const List<int> stdAcLuminanceNrCodes = [0, 0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 0x7d];
+
+  /// Luminance AC symbols in canonical order.
+  static const List<int> stdAcLuminanceValues = [
+    0x01,
+    0x02,
+    0x03,
+    0x00,
+    0x04,
+    0x11,
+    0x05,
+    0x12,
+    0x21,
+    0x31,
+    0x41,
+    0x06,
+    0x13,
+    0x51,
+    0x61,
+    0x07,
+    0x22,
+    0x71,
+    0x14,
+    0x32,
+    0x81,
+    0x91,
+    0xa1,
+    0x08,
+    0x23,
+    0x42,
+    0xb1,
+    0xc1,
+    0x15,
+    0x52,
+    0xd1,
+    0xf0,
+    0x24,
+    0x33,
+    0x62,
+    0x72,
+    0x82,
+    0x09,
+    0x0a,
+    0x16,
+    0x17,
+    0x18,
+    0x19,
+    0x1a,
+    0x25,
+    0x26,
+    0x27,
+    0x28,
+    0x29,
+    0x2a,
+    0x34,
+    0x35,
+    0x36,
+    0x37,
+    0x38,
+    0x39,
+    0x3a,
+    0x43,
+    0x44,
+    0x45,
+    0x46,
+    0x47,
+    0x48,
+    0x49,
+    0x4a,
+    0x53,
+    0x54,
+    0x55,
+    0x56,
+    0x57,
+    0x58,
+    0x59,
+    0x5a,
+    0x63,
+    0x64,
+    0x65,
+    0x66,
+    0x67,
+    0x68,
+    0x69,
+    0x6a,
+    0x73,
+    0x74,
+    0x75,
+    0x76,
+    0x77,
+    0x78,
+    0x79,
+    0x7a,
+    0x83,
+    0x84,
+    0x85,
+    0x86,
+    0x87,
+    0x88,
+    0x89,
+    0x8a,
+    0x92,
+    0x93,
+    0x94,
+    0x95,
+    0x96,
+    0x97,
+    0x98,
+    0x99,
+    0x9a,
+    0xa2,
+    0xa3,
+    0xa4,
+    0xa5,
+    0xa6,
+    0xa7,
+    0xa8,
+    0xa9,
+    0xaa,
+    0xb2,
+    0xb3,
+    0xb4,
+    0xb5,
+    0xb6,
+    0xb7,
+    0xb8,
+    0xb9,
+    0xba,
+    0xc2,
+    0xc3,
+    0xc4,
+    0xc5,
+    0xc6,
+    0xc7,
+    0xc8,
+    0xc9,
+    0xca,
+    0xd2,
+    0xd3,
+    0xd4,
+    0xd5,
+    0xd6,
+    0xd7,
+    0xd8,
+    0xd9,
+    0xda,
+    0xe1,
+    0xe2,
+    0xe3,
+    0xe4,
+    0xe5,
+    0xe6,
+    0xe7,
+    0xe8,
+    0xe9,
+    0xea,
+    0xf1,
+    0xf2,
+    0xf3,
+    0xf4,
+    0xf5,
+    0xf6,
+    0xf7,
+    0xf8,
+    0xf9,
+    0xfa,
+  ];
+
+  /// Number of chrominance DC codes for each bit length.
+  static const List<int> stdDcChrominanceNrCodes = [0, 0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0];
+
+  /// Chrominance DC symbols in canonical order.
+  static const List<int> stdDcChrominanceValues = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+  /// Number of chrominance AC codes for each bit length.
+  static const List<int> stdAcChrominanceNrCodes = [0, 0, 2, 1, 2, 4, 4, 3, 4, 7, 5, 4, 4, 0, 1, 2, 0x77];
+
+  /// Chrominance AC symbols in canonical order.
+  static const List<int> stdAcChrominanceValues = [
+    0x00,
+    0x01,
+    0x02,
+    0x03,
+    0x11,
+    0x04,
+    0x05,
+    0x21,
+    0x31,
+    0x06,
+    0x12,
+    0x41,
+    0x51,
+    0x07,
+    0x61,
+    0x71,
+    0x13,
+    0x22,
+    0x32,
+    0x81,
+    0x08,
+    0x14,
+    0x42,
+    0x91,
+    0xa1,
+    0xb1,
+    0xc1,
+    0x09,
+    0x23,
+    0x33,
+    0x52,
+    0xf0,
+    0x15,
+    0x62,
+    0x72,
+    0xd1,
+    0x0a,
+    0x16,
+    0x24,
+    0x34,
+    0xe1,
+    0x25,
+    0xf1,
+    0x17,
+    0x18,
+    0x19,
+    0x1a,
+    0x26,
+    0x27,
+    0x28,
+    0x29,
+    0x2a,
+    0x35,
+    0x36,
+    0x37,
+    0x38,
+    0x39,
+    0x3a,
+    0x43,
+    0x44,
+    0x45,
+    0x46,
+    0x47,
+    0x48,
+    0x49,
+    0x4a,
+    0x53,
+    0x54,
+    0x55,
+    0x56,
+    0x57,
+    0x58,
+    0x59,
+    0x5a,
+    0x63,
+    0x64,
+    0x65,
+    0x66,
+    0x67,
+    0x68,
+    0x69,
+    0x6a,
+    0x73,
+    0x74,
+    0x75,
+    0x76,
+    0x77,
+    0x78,
+    0x79,
+    0x7a,
+    0x82,
+    0x83,
+    0x84,
+    0x85,
+    0x86,
+    0x87,
+    0x88,
+    0x89,
+    0x8a,
+    0x92,
+    0x93,
+    0x94,
+    0x95,
+    0x96,
+    0x97,
+    0x98,
+    0x99,
+    0x9a,
+    0xa2,
+    0xa3,
+    0xa4,
+    0xa5,
+    0xa6,
+    0xa7,
+    0xa8,
+    0xa9,
+    0xaa,
+    0xb2,
+    0xb3,
+    0xb4,
+    0xb5,
+    0xb6,
+    0xb7,
+    0xb8,
+    0xb9,
+    0xba,
+    0xc2,
+    0xc3,
+    0xc4,
+    0xc5,
+    0xc6,
+    0xc7,
+    0xc8,
+    0xc9,
+    0xca,
+    0xd2,
+    0xd3,
+    0xd4,
+    0xd5,
+    0xd6,
+    0xd7,
+    0xd8,
+    0xd9,
+    0xda,
+    0xe2,
+    0xe3,
+    0xe4,
+    0xe5,
+    0xe6,
+    0xe7,
+    0xe8,
+    0xe9,
+    0xea,
+    0xf2,
+    0xf3,
+    0xf4,
+    0xf5,
+    0xf6,
+    0xf7,
+    0xf8,
+    0xf9,
+    0xfa,
+  ];
+
+  /// Partially filled entropy byte.
+  int _byteNew = 0;
+
+  /// Next bit position in the entropy byte.
+  int _bytePos = 7;
+
   /// Creates a baseline JPEG encoder configured with [quality].
   JpegEncoder({int quality = 100}) {
     _initHuffmanTable();
@@ -170,6 +636,7 @@ class JpegEncoder extends Encoder {
     return fp.getBytes();
   }
 
+  /// Converts one 8 by 8 RGBA block to centered Y, U, and V samples.
   void _calculateYUV(
     Image image,
     int x,
@@ -211,7 +678,7 @@ class JpegEncoder extends Encoder {
     }
   }
 
-  // Downsamples from four input lists, storing average values into duOut.
+  /// Downsamples four chroma blocks into one block using 2 by 2 averages.
   void _downsampleDU(
     Float32List duOut,
     Float32List duIn1,
@@ -232,12 +699,14 @@ class JpegEncoder extends Encoder {
     }
   }
 
+  /// Writes a two-byte JPEG marker.
   void _writeMarker(OutputBuffer fp, int marker) {
     fp
       ..writeByte(0xff)
       ..writeByte(marker & 0xff);
   }
 
+  /// Builds quality-scaled luminance and chrominance quantization tables.
   void _initQuantTables(int sf) {
     const yqt = <int>[
       16,
@@ -405,6 +874,7 @@ class JpegEncoder extends Encoder {
     }
   }
 
+  /// Builds canonical JPEG codes from a code-count table and symbol order.
   List<List<int>?> _computeHuffmanTable(List<int> nrCodes, List<int> stdTable) {
     var codeValue = 0;
     var posInTable = 0;
@@ -424,6 +894,7 @@ class JpegEncoder extends Encoder {
     return ht;
   }
 
+  /// Initializes the four baseline luminance and chrominance Huffman tables.
   void _initHuffmanTable() {
     _ydcHuffman = _computeHuffmanTable(stdDcLuminanceNrCodes, stdDcLuminanceValues);
     _uvdcHuffman = _computeHuffmanTable(stdDcChrominanceNrCodes, stdDcChrominanceValues);
@@ -431,6 +902,7 @@ class JpegEncoder extends Encoder {
     _uvacHuffman = _computeHuffmanTable(stdAcChrominanceNrCodes, stdAcChrominanceValues);
   }
 
+  /// Precomputes coefficient categories and their signed bit representations.
   void _initCategoryNumber() {
     var nrLower = 1;
     var nrUpper = 2;
@@ -450,6 +922,7 @@ class JpegEncoder extends Encoder {
     }
   }
 
+  /// Precomputes fixed-point RGB-to-YUV conversion products.
   void _initRgbYuvTable() {
     for (var i = 0; i < 256; i++) {
       _rgbYuvTable[i] = 19595 * i;
@@ -463,7 +936,7 @@ class JpegEncoder extends Encoder {
     }
   }
 
-  // DCT & quantization core
+  /// Applies the forward discrete cosine transform and quantizes one block.
   List<int?> _fDCTQuant(List<double> data, List<double> fdtbl) {
     // Pass 1: process rows.
     var dataOff = 0;
@@ -587,6 +1060,7 @@ class JpegEncoder extends Encoder {
     return _outputfDCTQuant;
   }
 
+  /// Writes the JFIF application header.
   void _writeAPP0(OutputBuffer out) {
     _writeMarker(out, JpegMarker.app0);
     out
@@ -605,6 +1079,7 @@ class JpegEncoder extends Encoder {
       ..writeByte(0); // thumbnheight
   }
 
+  /// Writes the baseline frame header and chroma sampling factors.
   void _writeSOF0(OutputBuffer out, int width, int height, JpegChroma chroma) {
     _writeMarker(out, JpegMarker.sof0);
     out
@@ -624,6 +1099,7 @@ class JpegEncoder extends Encoder {
       ..writeByte(1); // QTV
   }
 
+  /// Writes luminance and chrominance quantization tables.
   void _writeDQT(OutputBuffer out) {
     _writeMarker(out, JpegMarker.dqt);
     out
@@ -638,6 +1114,7 @@ class JpegEncoder extends Encoder {
     }
   }
 
+  /// Writes the standard baseline Huffman tables.
   void _writeDHT(OutputBuffer out) {
     _writeMarker(out, JpegMarker.dht);
     out
@@ -675,6 +1152,7 @@ class JpegEncoder extends Encoder {
     }
   }
 
+  /// Writes the start-of-scan header for the three color components.
   void _writeSOS(OutputBuffer out) {
     _writeMarker(out, JpegMarker.sos);
     out
@@ -691,6 +1169,7 @@ class JpegEncoder extends Encoder {
       ..writeByte(0); // Bf
   }
 
+  /// Transforms and entropy-encodes one data unit, returning its DC value.
   int _processDU(
     OutputBuffer out,
     List<double> cdu,
@@ -756,6 +1235,7 @@ class JpegEncoder extends Encoder {
     return dc;
   }
 
+  /// Appends one Huffman code while applying JPEG byte stuffing.
   void _writeBits(OutputBuffer out, List<int> bits) {
     final value = bits[0];
     var posval = bits[1] - 1;
@@ -779,437 +1259,9 @@ class JpegEncoder extends Encoder {
     }
   }
 
+  /// Resets the entropy bit accumulator to an empty byte.
   void _resetBits() {
     _byteNew = 0;
     _bytePos = 7;
   }
-
-  final _yTable = Uint8List(64);
-  final _uvTable = Uint8List(64);
-  final _fdtblY = Float32List(64);
-  final _fdtblUv = Float32List(64);
-  List<List<int>?>? _ydcHuffman;
-  List<List<int>?>? _uvdcHuffman;
-  late List<List<int>?> _yacHuffman;
-  late List<List<int>?> _uvacHuffman;
-
-  final _bitCode = List<List<int>?>.filled(65535, null);
-  final _category = List<int?>.filled(65535, null);
-  final _outputfDCTQuant = List<int?>.filled(64, null);
-  final _du = List<int?>.filled(64, null);
-
-  final Int32List _rgbYuvTable = Int32List(2048);
-  int? _currentQuality;
-
-  static const List<int> _zigzag = [
-    0,
-    1,
-    5,
-    6,
-    14,
-    15,
-    27,
-    28,
-    2,
-    4,
-    7,
-    13,
-    16,
-    26,
-    29,
-    42,
-    3,
-    8,
-    12,
-    17,
-    25,
-    30,
-    41,
-    43,
-    9,
-    11,
-    18,
-    24,
-    31,
-    40,
-    44,
-    53,
-    10,
-    19,
-    23,
-    32,
-    39,
-    45,
-    52,
-    54,
-    20,
-    22,
-    33,
-    38,
-    46,
-    51,
-    55,
-    60,
-    21,
-    34,
-    37,
-    47,
-    50,
-    56,
-    59,
-    61,
-    35,
-    36,
-    48,
-    49,
-    57,
-    58,
-    62,
-    63,
-  ];
-
-  static const List<int> stdDcLuminanceNrCodes = [0, 0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0];
-
-  static const List<int> stdDcLuminanceValues = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-
-  static const List<int> stdAcLuminanceNrCodes = [0, 0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 0x7d];
-
-  static const List<int> stdAcLuminanceValues = [
-    0x01,
-    0x02,
-    0x03,
-    0x00,
-    0x04,
-    0x11,
-    0x05,
-    0x12,
-    0x21,
-    0x31,
-    0x41,
-    0x06,
-    0x13,
-    0x51,
-    0x61,
-    0x07,
-    0x22,
-    0x71,
-    0x14,
-    0x32,
-    0x81,
-    0x91,
-    0xa1,
-    0x08,
-    0x23,
-    0x42,
-    0xb1,
-    0xc1,
-    0x15,
-    0x52,
-    0xd1,
-    0xf0,
-    0x24,
-    0x33,
-    0x62,
-    0x72,
-    0x82,
-    0x09,
-    0x0a,
-    0x16,
-    0x17,
-    0x18,
-    0x19,
-    0x1a,
-    0x25,
-    0x26,
-    0x27,
-    0x28,
-    0x29,
-    0x2a,
-    0x34,
-    0x35,
-    0x36,
-    0x37,
-    0x38,
-    0x39,
-    0x3a,
-    0x43,
-    0x44,
-    0x45,
-    0x46,
-    0x47,
-    0x48,
-    0x49,
-    0x4a,
-    0x53,
-    0x54,
-    0x55,
-    0x56,
-    0x57,
-    0x58,
-    0x59,
-    0x5a,
-    0x63,
-    0x64,
-    0x65,
-    0x66,
-    0x67,
-    0x68,
-    0x69,
-    0x6a,
-    0x73,
-    0x74,
-    0x75,
-    0x76,
-    0x77,
-    0x78,
-    0x79,
-    0x7a,
-    0x83,
-    0x84,
-    0x85,
-    0x86,
-    0x87,
-    0x88,
-    0x89,
-    0x8a,
-    0x92,
-    0x93,
-    0x94,
-    0x95,
-    0x96,
-    0x97,
-    0x98,
-    0x99,
-    0x9a,
-    0xa2,
-    0xa3,
-    0xa4,
-    0xa5,
-    0xa6,
-    0xa7,
-    0xa8,
-    0xa9,
-    0xaa,
-    0xb2,
-    0xb3,
-    0xb4,
-    0xb5,
-    0xb6,
-    0xb7,
-    0xb8,
-    0xb9,
-    0xba,
-    0xc2,
-    0xc3,
-    0xc4,
-    0xc5,
-    0xc6,
-    0xc7,
-    0xc8,
-    0xc9,
-    0xca,
-    0xd2,
-    0xd3,
-    0xd4,
-    0xd5,
-    0xd6,
-    0xd7,
-    0xd8,
-    0xd9,
-    0xda,
-    0xe1,
-    0xe2,
-    0xe3,
-    0xe4,
-    0xe5,
-    0xe6,
-    0xe7,
-    0xe8,
-    0xe9,
-    0xea,
-    0xf1,
-    0xf2,
-    0xf3,
-    0xf4,
-    0xf5,
-    0xf6,
-    0xf7,
-    0xf8,
-    0xf9,
-    0xfa,
-  ];
-
-  static const List<int> stdDcChrominanceNrCodes = [0, 0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0];
-
-  static const List<int> stdDcChrominanceValues = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-
-  static const List<int> stdAcChrominanceNrCodes = [0, 0, 2, 1, 2, 4, 4, 3, 4, 7, 5, 4, 4, 0, 1, 2, 0x77];
-
-  static const List<int> stdAcChrominanceValues = [
-    0x00,
-    0x01,
-    0x02,
-    0x03,
-    0x11,
-    0x04,
-    0x05,
-    0x21,
-    0x31,
-    0x06,
-    0x12,
-    0x41,
-    0x51,
-    0x07,
-    0x61,
-    0x71,
-    0x13,
-    0x22,
-    0x32,
-    0x81,
-    0x08,
-    0x14,
-    0x42,
-    0x91,
-    0xa1,
-    0xb1,
-    0xc1,
-    0x09,
-    0x23,
-    0x33,
-    0x52,
-    0xf0,
-    0x15,
-    0x62,
-    0x72,
-    0xd1,
-    0x0a,
-    0x16,
-    0x24,
-    0x34,
-    0xe1,
-    0x25,
-    0xf1,
-    0x17,
-    0x18,
-    0x19,
-    0x1a,
-    0x26,
-    0x27,
-    0x28,
-    0x29,
-    0x2a,
-    0x35,
-    0x36,
-    0x37,
-    0x38,
-    0x39,
-    0x3a,
-    0x43,
-    0x44,
-    0x45,
-    0x46,
-    0x47,
-    0x48,
-    0x49,
-    0x4a,
-    0x53,
-    0x54,
-    0x55,
-    0x56,
-    0x57,
-    0x58,
-    0x59,
-    0x5a,
-    0x63,
-    0x64,
-    0x65,
-    0x66,
-    0x67,
-    0x68,
-    0x69,
-    0x6a,
-    0x73,
-    0x74,
-    0x75,
-    0x76,
-    0x77,
-    0x78,
-    0x79,
-    0x7a,
-    0x82,
-    0x83,
-    0x84,
-    0x85,
-    0x86,
-    0x87,
-    0x88,
-    0x89,
-    0x8a,
-    0x92,
-    0x93,
-    0x94,
-    0x95,
-    0x96,
-    0x97,
-    0x98,
-    0x99,
-    0x9a,
-    0xa2,
-    0xa3,
-    0xa4,
-    0xa5,
-    0xa6,
-    0xa7,
-    0xa8,
-    0xa9,
-    0xaa,
-    0xb2,
-    0xb3,
-    0xb4,
-    0xb5,
-    0xb6,
-    0xb7,
-    0xb8,
-    0xb9,
-    0xba,
-    0xc2,
-    0xc3,
-    0xc4,
-    0xc5,
-    0xc6,
-    0xc7,
-    0xc8,
-    0xc9,
-    0xca,
-    0xd2,
-    0xd3,
-    0xd4,
-    0xd5,
-    0xd6,
-    0xd7,
-    0xd8,
-    0xd9,
-    0xda,
-    0xe2,
-    0xe3,
-    0xe4,
-    0xe5,
-    0xe6,
-    0xe7,
-    0xe8,
-    0xe9,
-    0xea,
-    0xf2,
-    0xf3,
-    0xf4,
-    0xf5,
-    0xf6,
-    0xf7,
-    0xf8,
-    0xf9,
-    0xfa,
-  ];
-
-  int _byteNew = 0;
-  int _bytePos = 7;
 }
