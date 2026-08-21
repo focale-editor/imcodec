@@ -13,6 +13,29 @@ import 'encoder.dart';
 /// Uses the VP8L lossless bitstream format wrapped in a RIFF/WebP container.
 /// Applies the subtract-green transform and LZ77 back-references.
 class WebPEncoder extends Encoder {
+  /// Maps nearby two-dimensional pixel offsets to VP8L distance plane codes.
+  static const List<int> _planeLut = <int>[
+    // yoffset=0 (xoffset 8..1, then 0..-7 which are unused=255)
+    96, 73, 55, 39, 23, 13, 5, 1, 255, 255, 255, 255, 255, 255, 255, 255,
+    // yoffset=1
+    101, 78, 58, 42, 26, 16, 8, 2, 0, 3, 9, 17, 27, 43, 59, 79,
+    // yoffset=2
+    102, 86, 62, 46, 32, 20, 10, 6, 4, 7, 11, 21, 33, 47, 63, 87,
+    // yoffset=3
+    105, 90, 70, 52, 37, 28, 18, 14, 12, 15, 19, 29, 38, 53, 71, 91,
+    // yoffset=4
+    110, 99, 82, 66, 48, 35, 30, 24, 22, 25, 31, 36, 49, 67, 83, 100,
+    // yoffset=5
+    115, 108, 94, 76, 64, 50, 44, 40, 34, 41, 45, 51, 65, 77, 95, 109,
+    // yoffset=6
+    118, 113, 103, 92, 80, 68, 60, 56, 54, 57, 61, 69, 81, 93, 104, 114,
+    // yoffset=7
+    119, 116, 111, 106, 97, 88, 84, 74, 72, 75, 85, 89, 98, 107, 112, 117,
+  ];
+
+  /// Creates a lossless WebP encoder.
+  const WebPEncoder();
+
   @override
   Uint8List encode(Image image, {bool singleFrame = false}) {
     final width = image.width;
@@ -36,6 +59,7 @@ class WebPEncoder extends Encoder {
     return out.getBytes();
   }
 
+  /// Encodes [image] as a raw VP8L lossless bitstream.
   Uint8List _encodeVP8L(Image image, int width, int height) {
     final out = OutputBuffer();
 
@@ -260,6 +284,7 @@ class WebPEncoder extends Encoder {
   // Transforms
   // ---------------------------------------------------------------------------
 
+  /// Subtracts the green channel from the red and blue channels in place.
   void _applySubtractGreenTransform(
     Uint8List r,
     Uint8List g,
@@ -550,6 +575,7 @@ class WebPEncoder extends Encoder {
     return (eb, val - base);
   }
 
+  /// Returns the integer base-two logarithm of the positive value [v].
   int _log2Floor(int v) {
     var log = 0;
     while (v > 1) {
@@ -829,6 +855,7 @@ class WebPEncoder extends Encoder {
     return codes;
   }
 
+  /// Reverses the lowest [numBits] of [value].
   int _reverseBits(int value, int numBits) {
     var result = 0;
     for (var k = 0; k < numBits; k++) {
@@ -838,6 +865,7 @@ class WebPEncoder extends Encoder {
     return result;
   }
 
+  /// Converts the ASCII RIFF tag [s] to bytes.
   Uint8List _tag(String s) {
     final bytes = Uint8List(s.length);
     for (var k = 0; k < s.length; k++) {
@@ -845,43 +873,38 @@ class WebPEncoder extends Encoder {
     }
     return bytes;
   }
-
-  // VP8L plane-to-code lookup table (128 entries, 8 rows × 16 cols).
-  // Maps 2D pixel offsets to plane codes for DistanceToPlaneCode.
-  static const _planeLut = <int>[
-    //  yoffset=0 (xoffset 8..1, then 0..-7 which are unused=255)
-    96, 73, 55, 39, 23, 13, 5, 1, 255, 255, 255, 255, 255, 255, 255, 255,
-    //  yoffset=1
-    101, 78, 58, 42, 26, 16, 8, 2, 0, 3, 9, 17, 27, 43, 59, 79,
-    //  yoffset=2
-    102, 86, 62, 46, 32, 20, 10, 6, 4, 7, 11, 21, 33, 47, 63, 87,
-    //  yoffset=3
-    105, 90, 70, 52, 37, 28, 18, 14, 12, 15, 19, 29, 38, 53, 71, 91,
-    //  yoffset=4
-    110, 99, 82, 66, 48, 35, 30, 24, 22, 25, 31, 36, 49, 67, 83, 100,
-    //  yoffset=5
-    115, 108, 94, 76, 64, 50, 44, 40, 34, 41, 45, 51, 65, 77, 95, 109,
-    //  yoffset=6
-    118, 113, 103, 92, 80, 68, 60, 56, 54, 57, 61, 69, 81, 93, 104, 114,
-    //  yoffset=7
-    119, 116, 111, 106, 97, 88, 84, 74, 72, 75, 85, 89, 98, 107, 112, 117,
-  ];
 }
 
 /// A code-length symbol with optional extra bits.
 class _ClSymbol {
+  /// Code-length alphabet symbol.
   final int symbol;
+
+  /// Number of extra bits following [symbol].
   final int extraBits;
+
+  /// Value stored in the extra bits.
   final int extraValue;
+
+  /// Creates a code-length symbol and its optional extra-bit payload.
   _ClSymbol(this.symbol, this.extraBits, this.extraValue);
 }
 
 /// Bit writer that packs bits LSB-first into bytes.
 class _BitWriter {
-  final _bytes = <int>[];
+  /// Completed output bytes.
+  final List<int> _bytes = <int>[];
+
+  /// Byte currently being assembled.
   int _currentByte = 0;
+
+  /// Number of low-order bits already occupied in [_currentByte].
   int _usedBits = 0;
 
+  /// Creates an empty bit writer.
+  _BitWriter();
+
+  /// Writes the lowest [numBits] of [value] in least-significant-bit order.
   void writeBits(int value, int numBits) {
     while (numBits > 0) {
       final available = 8 - _usedBits;
@@ -899,6 +922,7 @@ class _BitWriter {
     }
   }
 
+  /// Pads and emits the partially filled byte, when present.
   void flush() {
     if (_usedBits > 0) {
       _bytes.add(_currentByte);
@@ -907,5 +931,6 @@ class _BitWriter {
     }
   }
 
+  /// Returns a copy of all emitted bytes.
   Uint8List getBytes() => Uint8List.fromList(_bytes);
 }
