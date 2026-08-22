@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.1.2
+Released on August 23, 2026.
+
+* **CHORE**: Updated README. ([#fb295e1](https://github.com/focale-editor/imcodec/commit/fb295e1))
+
 ## v0.1.1
 Released on August 23, 2026.
 
