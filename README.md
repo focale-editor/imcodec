@@ -36,7 +36,7 @@ Future<Uint8List> exportWebP(
 });
 ```
 
-The encoder entry points mirror the subset used by Focale:
+The encoder entry points mirror the subset used by almost any image editor:
 
 ```dart
 final Uint8List png = img.encodePng(image);
