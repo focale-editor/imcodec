@@ -1,9 +1,9 @@
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
 import 'package:imcodec/src/image.dart';
 import 'package:imcodec/src/image_codec_exception.dart';
 import 'package:imcodec/src/output_buffer.dart';
+import 'package:zcodec/zcodec.dart';
 
 /// Encodes straight-alpha RGBA pixels as a non-interlaced PNG.
 final class PngEncoder {
@@ -49,7 +49,7 @@ final class PngEncoder {
     _writeChunk(output, _ihdr, header.getBytes());
 
     final Uint8List filtered = _filter(image);
-    final Uint8List compressed = Uint8List.fromList(const ZLibEncoder().encode(filtered, level: level));
+    final Uint8List compressed = Uint8List.fromList(const ZlibCodec().encode(filtered, level: level));
     _writeChunk(output, _idat, compressed);
     _writeChunk(output, _iend, Uint8List(0));
     return Uint8List.fromList(output.getBytes());

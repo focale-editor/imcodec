@@ -9,7 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  archive: ^4.1.0
+  zcodec:
+    git: https://github.com/focale-editor/zcodec.git
 
 dev_dependencies:
   flutter_test:
