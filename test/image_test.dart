@@ -26,6 +26,8 @@ void main() {
     expect(ImageFormat.sniff(Uint8List.fromList([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), ImageFormat.png);
     expect(ImageFormat.sniff(Uint8List.fromList([0x71, 0x6f, 0x69, 0x66])), ImageFormat.qoi);
     expect(ImageFormat.sniff(_uncompressedTgaFixture), ImageFormat.tga);
+    expect(ImageFormat.sniff(Uint8List.fromList([0x49, 0x49, 0x2a, 0x00])), ImageFormat.tiff);
+    expect(ImageFormat.sniff(Uint8List.fromList([0x4d, 0x4d, 0x00, 0x2a])), ImageFormat.tiff);
     expect(ImageFormat.sniff(Uint8List.fromList([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50])), ImageFormat.webp);
     expect(ImageFormat.sniff(Uint8List.fromList([1, 2, 3, 4])), isNull);
   });

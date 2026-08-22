@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:imcodec/src/codecs/bmp_codec.dart';
 import 'package:imcodec/src/codecs/qoi_codec.dart';
 import 'package:imcodec/src/codecs/tga_codec.dart';
+import 'package:imcodec/src/codecs/tiff_codec.dart';
 import 'package:imcodec/src/image.dart';
 import 'package:imcodec/src/image_codec_exception.dart';
 import 'package:imcodec/src/image_format.dart';
@@ -21,6 +22,7 @@ Future<Image> decodeImage(Uint8List bytes, {int maxPixels = 100000000}) {
     ImageFormat.jpeg || ImageFormat.png || ImageFormat.webp => _decodeWithFlutter(bytes, format, maxPixels),
     ImageFormat.qoi => decodeQoi(bytes, maxPixels: maxPixels),
     ImageFormat.tga => decodeTga(bytes, maxPixels: maxPixels),
+    ImageFormat.tiff => decodeTiff(bytes, maxPixels: maxPixels),
   };
 }
 
@@ -38,6 +40,9 @@ Future<Image> decodeQoi(Uint8List bytes, {int maxPixels = 100000000}) => _decode
 
 /// Decodes an uncompressed or run-length encoded TGA image to straight RGBA.
 Future<Image> decodeTga(Uint8List bytes, {int maxPixels = 100000000}) => _decodeWithDart(bytes, ImageFormat.tga, () => const TgaDecoder().decode(bytes, maxPixels: maxPixels));
+
+/// Decodes the first image-file directory of a baseline TIFF image.
+Future<Image> decodeTiff(Uint8List bytes, {int maxPixels = 100000000}) => _decodeWithDart(bytes, ImageFormat.tiff, () => const TiffDecoder().decode(bytes, maxPixels: maxPixels));
 
 /// Decodes the first frame of a WebP image to straight RGBA.
 Future<Image> decodeWebP(Uint8List bytes, {int maxPixels = 100000000}) => _decodeWithFlutter(bytes, ImageFormat.webp, maxPixels);

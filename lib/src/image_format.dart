@@ -17,6 +17,9 @@ enum ImageFormat {
   /// Truevision TGA image.
   tga,
 
+  /// Tagged Image File Format image.
+  tiff,
+
   /// WebP image.
   webp;
 
@@ -36,6 +39,9 @@ enum ImageFormat {
     }
     if (bytes.length >= 4 && bytes[0] == 0x71 && bytes[1] == 0x6f && bytes[2] == 0x69 && bytes[3] == 0x66) {
       return ImageFormat.qoi;
+    }
+    if (bytes.length >= 4 && ((bytes[0] == 0x49 && bytes[1] == 0x49 && bytes[2] == 0x2a && bytes[3] == 0x00) || (bytes[0] == 0x4d && bytes[1] == 0x4d && bytes[2] == 0x00 && bytes[3] == 0x2a))) {
+      return ImageFormat.tiff;
     }
     if (_hasTgaFooter(bytes) || _looksLikeHeaderlessTga(bytes)) {
       return ImageFormat.tga;

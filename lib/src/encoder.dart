@@ -5,6 +5,7 @@ import 'package:imcodec/src/codecs/jpeg_encoder.dart';
 import 'package:imcodec/src/codecs/png_encoder.dart';
 import 'package:imcodec/src/codecs/qoi_codec.dart';
 import 'package:imcodec/src/codecs/tga_codec.dart';
+import 'package:imcodec/src/codecs/tiff_codec.dart';
 import 'package:imcodec/src/codecs/webp_encoder.dart';
 import 'package:imcodec/src/image.dart';
 import 'package:imcodec/src/image_codec_exception.dart';
@@ -20,6 +21,7 @@ Uint8List encodeImage(Image image, {required ImageFormat format, int quality = 9
   ImageFormat.png => encodePng(image, level: pngLevel),
   ImageFormat.qoi => encodeQoi(image),
   ImageFormat.tga => encodeTga(image),
+  ImageFormat.tiff => encodeTiff(image),
   ImageFormat.webp => encodeWebP(image),
 };
 
@@ -37,6 +39,9 @@ Uint8List encodeQoi(Image image) => const QoiEncoder().encode(image);
 /// Run-length encoding is enabled by default and can be disabled for consumers
 /// that only support uncompressed true-color TGA files.
 Uint8List encodeTga(Image image, {bool runLengthEncoding = true}) => const TgaEncoder().encode(image, runLengthEncoding: runLengthEncoding);
+
+/// Encodes [image] as an eight-bit RGBA TIFF image.
+Uint8List encodeTiff(Image image, {TiffCompression compression = TiffCompression.packBits}) => const TiffEncoder().encode(image, compression: compression);
 
 /// Encodes [image] as a baseline JPEG.
 ///

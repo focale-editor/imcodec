@@ -1,10 +1,11 @@
 # Imcodec
 
-Imcodec is a focused Flutter image codec for BMP, JPEG, PNG, QOI, TGA, and
-WebP. It keeps a small straight-alpha RGBA image model and exposes synchronous
-Dart encoders, which makes expensive encoding suitable for `Isolate.run`.
+Imcodec is a focused Flutter image codec for BMP, JPEG, PNG, QOI, TGA, TIFF,
+and WebP. It keeps a small straight-alpha RGBA image model and exposes
+synchronous Dart encoders, which makes expensive encoding suitable for
+`Isolate.run`.
 
-Decoding is asynchronous at the public boundary. BMP, QOI, and TGA use
+Decoding is asynchronous at the public boundary. BMP, QOI, TGA, and TIFF use
 pure-Dart decoders; JPEG, PNG, and WebP use Flutter's platform codecs. Animated
 PNG and WebP inputs currently return their first frame. Flutter's premultiplied
 render pipeline may round RGB values on translucent pixels and discards hidden
@@ -44,6 +45,7 @@ final Uint8List webp = img.encodeWebP(image); // lossless VP8L
 final Uint8List bmp = img.encodeBmp(image);
 final Uint8List tga = img.encodeTga(image); // RLE by default
 final Uint8List qoi = img.encodeQoi(image);
+final Uint8List tiff = img.encodeTiff(image); // PackBits by default
 ```
 
 Decode supported data with format detection or a format-specific function:
@@ -68,6 +70,12 @@ final img.Image png = await img.decodePng(pngBytes);
   specification.
 - TGA supports color-mapped, true-color, and grayscale input, with raw or RLE
   pixel data. Output is 32-bit true-color and uses RLE by default.
+- TIFF import supports little- and big-endian baseline files, eight-bit RGB,
+  RGBA, grayscale, and palette pixels, strips, all eight orientations,
+  horizontal prediction, and uncompressed, PackBits, or LZW data. Planar,
+  tiled, JPEG-compressed, and samples wider than eight bits are not currently
+  supported. Output is little-endian, chunky, eight-bit RGBA using PackBits by
+  default; pass `TiffCompression.none` for uncompressed output.
 - WebP is lossless VP8L and preserves alpha. Quality is intentionally not an
   option until a lossy encoder is added.
 

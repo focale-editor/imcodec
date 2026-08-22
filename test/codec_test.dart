@@ -66,6 +66,7 @@ void main() {
         ImageFormat.sniff(encodePng(image)),
         ImageFormat.sniff(encodeQoi(image)),
         ImageFormat.sniff(encodeTga(image)),
+        ImageFormat.sniff(encodeTiff(image)),
         ImageFormat.sniff(encodeWebP(image)),
       ];
     });
