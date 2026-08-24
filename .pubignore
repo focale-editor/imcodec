@@ -1,4 +1,7 @@
 test/
 doc/
+docs/
 AGENTS.md
 build
+analysis_options.yaml
+imcodec.iml
