@@ -1,5 +1,11 @@
 # 📰 Imcodec changelog
 
+## v0.1.4
+Released on August 25, 2026.
+
+* **CHORE**: Added `build` to `.pubignore`. ([#6eba251](https://github.com/focale-editor/imcodec/commit/6eba251))
+* **CHORE**: Ignored some files for publishing on pub.dev. ([#d1ce6aa](https://github.com/focale-editor/imcodec/commit/d1ce6aa))
+
 ## v0.1.3
 Released on August 24, 2026.
 
