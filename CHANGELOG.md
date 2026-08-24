@@ -1,5 +1,11 @@
 # 📰 Imcodec changelog
 
+## v0.1.3
+Released on August 24, 2026.
+
+* **CHORE**: Added an example. ([#dbec106](https://github.com/focale-editor/imcodec/commit/dbec106))
+* **CHORE**: Updated `zcodec` constraint. ([#92855f6](https://github.com/focale-editor/imcodec/commit/92855f6))
+
 ## v0.1.2
 Released on August 23, 2026.
 
