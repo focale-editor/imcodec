@@ -1,0 +1,365 @@
+import 'dart:typed_data';
+
+import 'package:imcodec/src/codecs/jpeg_xl/color/color_encoding.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/color/opsin_inverse.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/header/animation.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/header/bit_depth.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/header/extensions.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/header/extra_channel.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/header/upsampling_weights.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/jpeg_xl_limits.dart';
+
+/// An image size in pixels.
+typedef SizeDim = ({int width, int height});
+
+/// The JPEG XL image-level header: signature, SizeHeader, ImageMetadata and
+/// the trailing default-transform data.
+///
+/// If [colorEncoding.useIccProfile] is set, the entropy-coded ICC payload
+/// begins at the reader position right after [ImageHeader.read] returns
+/// ([iccEncodedSize] bytes once decoded); the caller must consume it and then
+/// call `zeroPadToByte`. Without an ICC profile the header is already
+/// byte-aligned on return.
+final class ImageHeader {
+  /// Stores the alpha indices value used while processing JPEG XL data.
+  ///
+  final List<int> alphaIndices;
+
+  /// Stores the preview size value used while processing JPEG XL data.
+  ///
+  final SizeDim? previewSize;
+
+  /// Stores the level value used while processing JPEG XL data.
+  ///
+  final int level;
+
+  /// The stored (pre-orientation) size.
+  final SizeDim size;
+
+  /// EXIF-style orientation, 1–8. Values above 4 transpose the output.
+  final int orientation;
+
+  /// Stores the intrinsic size value used while processing JPEG XL data.
+  ///
+  final SizeDim? intrinsicSize;
+
+  /// Stores the codestream header value used while processing JPEG XL data.
+  ///
+  static const codestreamHeader = 0x0AFF;
+
+  /// Stores the animation value used while processing JPEG XL data.
+  ///
+  final AnimationHeader? animation;
+
+  /// Stores the bit depth value used while processing JPEG XL data.
+  ///
+  final BitDepthHeader bitDepth;
+
+  /// Stores the modular16 bit buffers value used while processing JPEG XL data.
+  ///
+  final bool modular16BitBuffers;
+
+  /// Stores the extra channels value used while processing JPEG XL data.
+  ///
+  final List<ExtraChannelInfo> extraChannels;
+
+  /// Stores the opsin inverse matrix value used while processing JPEG XL data.
+  ///
+  final OpsinInverseMatrix opsinInverseMatrix;
+
+  /// Stores the xyb encoded value used while processing JPEG XL data.
+  ///
+  final bool xybEncoded;
+
+  /// Stores the color encoding value used while processing JPEG XL data.
+  ///
+  final ColorEncodingBundle colorEncoding;
+
+  /// Stores the tone mapping value used while processing JPEG XL data.
+  ///
+  final ToneMapping toneMapping;
+
+  /// Stores the extensions value used while processing JPEG XL data.
+  ///
+  final Extensions extensions;
+
+  /// Stores the up2 weights value used while processing JPEG XL data.
+  ///
+  final Float32List up2Weights;
+
+  /// Encoded byte length of the compressed ICC payload, or null if the color
+  /// encoding does not use an ICC profile.
+  final int? iccEncodedSize;
+
+  /// Stores the up8 weights value used while processing JPEG XL data.
+  ///
+  final Float32List up8Weights;
+
+  /// Stores the up weights state used internally by the JPEG XL codec.
+  ///
+  List<List<List<Float32List>>>? _upWeights;
+
+  /// Stores the up4 weights value used while processing JPEG XL data.
+  ///
+  final Float32List up4Weights;
+
+  /// Processes read information in a JPEG XL codestream.
+  ///
+  factory ImageHeader.read({
+    required BitReader reader,
+    int level = 5,
+  }) {
+    if (level != 5 && level != 10) {
+      throw JpegXlInvalidBitstreamException(message: 'invalid level: $level');
+    }
+    if (reader.readBits(16) != codestreamHeader) {
+      throw const JpegXlInvalidBitstreamException(message: 'not a JXL codestream: 0xFF0A magic mismatch');
+    }
+    final SizeDim size = _readSizeHeader(reader, level);
+
+    final bool allDefault = reader.readBool();
+    final bool extraFields = !allDefault && reader.readBool();
+
+    var orientation = 1;
+    SizeDim? intrinsicSize;
+    SizeDim? previewSize;
+    AnimationHeader? animation;
+    if (extraFields) {
+      orientation = 1 + reader.readBits(3);
+      if (reader.readBool()) {
+        intrinsicSize = _readSizeHeader(reader, level);
+      }
+      if (reader.readBool()) {
+        previewSize = _readPreviewHeader(reader);
+      }
+      if (reader.readBool()) {
+        animation = AnimationHeader.read(reader: reader);
+      }
+    }
+
+    final BitDepthHeader bitDepth;
+    final bool modular16BitBuffers;
+    final List<ExtraChannelInfo> extraChannels;
+    final bool xybEncoded;
+    final ColorEncodingBundle colorEncoding;
+    if (allDefault) {
+      bitDepth = const BitDepthHeader();
+      modular16BitBuffers = true;
+      extraChannels = const [];
+      xybEncoded = true;
+      colorEncoding = const ColorEncodingBundle();
+    } else {
+      bitDepth = BitDepthHeader.read(reader: reader);
+      modular16BitBuffers = reader.readBool();
+      final int extraChannelCount = reader.readU32(0, 0, 1, 0, 2, 4, 1, 12);
+      if (extraChannelCount > JpegXlLimits.maxChannels) {
+        throw const JpegXlInvalidBitstreamException(message: 'too many extra channels');
+      }
+      extraChannels = List.generate(extraChannelCount, (_) => ExtraChannelInfo.read(reader: reader));
+      xybEncoded = reader.readBool();
+      colorEncoding = ColorEncodingBundle.read(reader: reader);
+    }
+    final alphaIndices = <int>[
+      for (var i = 0; i < extraChannels.length; i++)
+        if (extraChannels[i].type == ExtraChannelType.alpha) i,
+    ];
+
+    final toneMapping = extraFields ? ToneMapping.read(reader: reader) : const ToneMapping();
+    final extensions = allDefault ? const Extensions() : Extensions.read(reader: reader);
+
+    final bool defaultMatrix = reader.readBool();
+    final opsinInverseMatrix = !defaultMatrix && xybEncoded ? OpsinInverseMatrix.read(reader: reader) : const OpsinInverseMatrix();
+
+    final int cwMask = defaultMatrix ? 0 : reader.readBits(3);
+    final Float32List up2Weights = cwMask & 1 != 0 ? _readWeights(reader, 15) : defaultUp2Weights;
+    final Float32List up4Weights = cwMask & 2 != 0 ? _readWeights(reader, 55) : defaultUp4Weights;
+    final Float32List up8Weights = cwMask & 4 != 0 ? _readWeights(reader, 210) : defaultUp8Weights;
+
+    int? iccEncodedSize;
+    if (colorEncoding.useIccProfile) {
+      final int encodedSize = reader.readU64();
+      if (encodedSize < 0 || encodedSize > JpegXlLimits.maxIccBytes) {
+        throw const JpegXlInvalidBitstreamException(message: 'ICC size too large');
+      }
+      iccEncodedSize = encodedSize;
+      // The entropy-coded ICC payload follows; the caller decodes it and
+      // then re-aligns the reader.
+    } else {
+      reader.zeroPadToByte();
+    }
+
+    return ImageHeader._(
+      level: level,
+      size: size,
+      orientation: orientation,
+      intrinsicSize: intrinsicSize,
+      previewSize: previewSize,
+      animation: animation,
+      bitDepth: bitDepth,
+      modular16BitBuffers: modular16BitBuffers,
+      extraChannels: extraChannels,
+      alphaIndices: alphaIndices,
+      xybEncoded: xybEncoded,
+      colorEncoding: colorEncoding,
+      toneMapping: toneMapping,
+      extensions: extensions,
+      opsinInverseMatrix: opsinInverseMatrix,
+      up2Weights: up2Weights,
+      up4Weights: up4Weights,
+      up8Weights: up8Weights,
+      iccEncodedSize: iccEncodedSize,
+    );
+  }
+
+  /// Creates Image header state for JPEG XL processing.
+  ///
+  ImageHeader._({
+    required this.level,
+    required this.size,
+    required this.orientation,
+    required this.intrinsicSize,
+    required this.previewSize,
+    required this.animation,
+    required this.bitDepth,
+    required this.modular16BitBuffers,
+    required this.extraChannels,
+    required this.alphaIndices,
+    required this.xybEncoded,
+    required this.colorEncoding,
+    required this.toneMapping,
+    required this.extensions,
+    required this.opsinInverseMatrix,
+    required this.up2Weights,
+    required this.up4Weights,
+    required this.up8Weights,
+    required this.iccEncodedSize,
+  });
+
+  /// Stores the is animated value used while processing JPEG XL data.
+  ///
+  bool get isAnimated => animation != null;
+
+  /// Reads preview header.
+  ///
+  static SizeDim _readPreviewHeader(BitReader reader) {
+    final bool div8 = reader.readBool();
+    final int height = div8 ? reader.readU32(16, 0, 32, 0, 1, 5, 33, 9) : reader.readU32(1, 6, 65, 8, 321, 10, 1345, 12);
+    final int ratio = reader.readBits(3);
+    final int width;
+    if (ratio != 0) {
+      width = _widthFromRatio(ratio, height);
+    } else {
+      width = div8 ? reader.readU32(16, 0, 32, 0, 1, 5, 33, 9) : reader.readU32(1, 6, 65, 8, 321, 10, 1345, 12);
+    }
+    if (width > 4096 || height > 4096) {
+      throw JpegXlInvalidBitstreamException(message: 'preview too large: ${width}x$height');
+    }
+    return (width: width, height: height);
+  }
+
+  /// Reads size header.
+  ///
+  static SizeDim _readSizeHeader(BitReader reader, int level) {
+    final bool div8 = reader.readBool();
+    final int height = div8 ? (1 + reader.readBits(5)) << 3 : reader.readU32(1, 9, 1, 13, 1, 18, 1, 30);
+    final int ratio = reader.readBits(3);
+    final int width;
+    if (ratio != 0) {
+      width = _widthFromRatio(ratio, height);
+    } else {
+      width = div8 ? (1 + reader.readBits(5)) << 3 : reader.readU32(1, 9, 1, 13, 1, 18, 1, 30);
+    }
+    final int maxDim = level <= 5 ? 1 << 18 : 1 << 28;
+    // 1 << 40 (not computed): a *computed* shift by >= 32 silently gives 0
+    // on dart2js, even though the value is exactly representable.
+    final int maxTimes = level <= 5 ? 1 << 30 : 1099511627776;
+    if (width > maxDim || height > maxDim) {
+      throw JpegXlInvalidBitstreamException(message: 'width or height too large for level $level: ${width}x$height');
+    }
+    if (width * height > maxTimes) {
+      throw JpegXlInvalidBitstreamException(message: 'width times height too large for level $level: ${width}x$height');
+    }
+    return (width: width, height: height);
+  }
+
+  /// The output size after applying [orientation].
+  SizeDim get orientedSize => orientation > 4 ? (width: size.height, height: size.width) : size;
+
+  /// Processes the width from ratio data used by the JPEG XL codec.
+  ///
+  static int _widthFromRatio(int ratio, int height) => switch (ratio) {
+    1 => height,
+    2 => height * 6 ~/ 5,
+    3 => height * 4 ~/ 3,
+    4 => height * 3 ~/ 2,
+    5 => height * 16 ~/ 9,
+    6 => height * 5 ~/ 4,
+    7 => height * 2,
+    _ => throw const JpegXlInvalidBitstreamException(message: 'invalid ratio'),
+  };
+
+  /// Upsampling weights: `upWeights[l][ky * k + kx]` is a 5x5 kernel,
+  /// where k = 2 << l.
+  List<List<List<Float32List>>> get upWeights {
+    final List<List<List<Float32List>>>? cached = _upWeights;
+    if (cached != null) {
+      return cached;
+    }
+    final result = <List<List<Float32List>>>[];
+    for (var l = 0; l < 3; l++) {
+      final int k = 1 << (l + 1);
+      final Float32List upKWeights = switch (k) {
+        2 => up2Weights,
+        4 => up4Weights,
+        _ => up8Weights,
+      };
+      final level = <List<Float32List>>[];
+      for (var ky = 0; ky < k; ky++) {
+        for (var kx = 0; kx < k; kx++) {
+          final List<Float32List> kernel = List.generate(5, (_) => Float32List(5));
+          for (var iy = 0; iy < 5; iy++) {
+            for (var ix = 0; ix < 5; ix++) {
+              final int j = ky < k ~/ 2 ? iy + 5 * ky : (4 - iy) + 5 * (k - 1 - ky);
+              final int i = kx < k ~/ 2 ? ix + 5 * kx : (4 - ix) + 5 * (k - 1 - kx);
+              final x = i < j ? j : i;
+              final int y = x ^ j ^ i;
+              final int index = 5 * k * y ~/ 2 - y * (y - 1) ~/ 2 + x - y;
+              kernel[iy][ix] = upKWeights[index];
+            }
+          }
+          level.add(kernel);
+        }
+      }
+      result.add(level);
+    }
+    return _upWeights = result;
+  }
+
+  /// Stores the is grayscale value used while processing JPEG XL data.
+  ///
+  bool get isGrayscale => colorEncoding.colorEncoding == ColorFlags.ceGray;
+
+  /// Stores the color channel count value used while processing JPEG XL data.
+  ///
+  int get colorChannelCount => isGrayscale ? 1 : 3;
+
+  /// Stores the total channel count value used while processing JPEG XL data.
+  ///
+  int get totalChannelCount => colorChannelCount + extraChannels.length;
+
+  /// Stores the has alpha value used while processing JPEG XL data.
+  ///
+  bool get hasAlpha => alphaIndices.isNotEmpty;
+
+  /// Reads weights.
+  ///
+  static Float32List _readWeights(BitReader reader, int count) {
+    final weights = Float32List(count);
+    for (var i = 0; i < count; i++) {
+      weights[i] = reader.readF16();
+    }
+    return weights;
+  }
+}

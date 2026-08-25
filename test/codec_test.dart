@@ -63,6 +63,7 @@ void main() {
       return [
         ImageFormat.sniff(encodeBmp(image)),
         ImageFormat.sniff(encodeJpg(image)),
+        ImageFormat.sniff(encodeJpegXl(image)),
         ImageFormat.sniff(encodePng(image)),
         ImageFormat.sniff(encodeQoi(image)),
         ImageFormat.sniff(encodeTga(image)),

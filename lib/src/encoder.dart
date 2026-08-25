@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:imcodec/src/codecs/bmp_codec.dart';
 import 'package:imcodec/src/codecs/jpeg_encoder.dart';
+import 'package:imcodec/src/codecs/jpeg_xl_codec.dart';
 import 'package:imcodec/src/codecs/png_encoder.dart';
 import 'package:imcodec/src/codecs/qoi_codec.dart';
 import 'package:imcodec/src/codecs/tga_codec.dart';
@@ -18,6 +19,7 @@ import 'package:imcodec/src/image_format.dart';
 Uint8List encodeImage(Image image, {required ImageFormat format, int quality = 90, int pngLevel = 6}) => switch (format) {
   ImageFormat.bmp => encodeBmp(image),
   ImageFormat.jpeg => encodeJpg(image, quality: quality),
+  ImageFormat.jpegXl => encodeJpegXl(image),
   ImageFormat.png => encodePng(image, level: pngLevel),
   ImageFormat.qoi => encodeQoi(image),
   ImageFormat.tga => encodeTga(image),
@@ -27,6 +29,12 @@ Uint8List encodeImage(Image image, {required ImageFormat format, int quality = 9
 
 /// Encodes [image] as a 32-bit BMP with alpha bitfields.
 Uint8List encodeBmp(Image image) => const BmpEncoder().encode(image);
+
+/// Encodes [image] as lossless JPEG XL Modular data.
+Uint8List encodeJpegXl(Image image) => const JpegXlEncoder().encode(image);
+
+/// Encodes [image] as lossless JPEG XL Modular data.
+Uint8List encodeJxl(Image image) => encodeJpegXl(image);
 
 /// Encodes [image] as an 8-bit RGBA PNG.
 Uint8List encodePng(Image image, {int level = 6}) => PngEncoder(level: level).encode(image);

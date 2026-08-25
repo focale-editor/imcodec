@@ -8,6 +8,9 @@ enum ImageFormat {
   /// Joint Photographic Experts Group image.
   jpeg,
 
+  /// JPEG XL image.
+  jpegXl,
+
   /// Portable Network Graphics image.
   png,
 
@@ -33,6 +36,22 @@ enum ImageFormat {
     }
     if (bytes.length >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff) {
       return ImageFormat.jpeg;
+    }
+    if ((bytes.length >= 2 && bytes[0] == 0xff && bytes[1] == 0x0a) ||
+        (bytes.length >= 12 &&
+            bytes[0] == 0x00 &&
+            bytes[1] == 0x00 &&
+            bytes[2] == 0x00 &&
+            bytes[3] == 0x0c &&
+            bytes[4] == 0x4a &&
+            bytes[5] == 0x58 &&
+            bytes[6] == 0x4c &&
+            bytes[7] == 0x20 &&
+            bytes[8] == 0x0d &&
+            bytes[9] == 0x0a &&
+            bytes[10] == 0x87 &&
+            bytes[11] == 0x0a)) {
+      return ImageFormat.jpegXl;
     }
     if (bytes.length >= 12 && bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 && bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50) {
       return ImageFormat.webp;

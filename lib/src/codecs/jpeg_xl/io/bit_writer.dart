@@ -1,0 +1,154 @@
+import 'dart:typed_data';
+
+import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
+
+/// LSB-first bit writer: the exact mirror of [BitReader].
+final class BitWriter {
+  /// Processes the bytes data used by the JPEG XL codec.
+  ///
+  final _bytes = BytesBuilder();
+
+  /// Stores the cache state used internally by the JPEG XL codec.
+  ///
+  int _cache = 0;
+
+  /// Stores the cache bits state used internally by the JPEG XL codec.
+  ///
+  int _cacheBits = 0;
+
+  /// Bits written so far (including unflushed cache bits).
+  int get bitsWritten => _bytes.length * 8 + _cacheBits;
+
+  /// Processes write bits information in a JPEG XL codestream.
+  ///
+  void writeBits(int value, int bits) {
+    assert(bits >= 0 && bits <= 32, 'The bit count must be between 0 and 32.');
+    assert(value >= 0 && (bits >= 32 || value < (1 << bits)), 'value $value does not fit in $bits bits');
+    // += (not |=) and wideShl (not <<): _cacheBits is always < 8 here, but
+    // `value` can itself need the full 32 bits, so the true combined value
+    // can need up to 39 bits - beyond what dart2js's `<<`/`|` guarantee (they
+    // silently truncate results above 2^32, mirroring BitReader.readBits).
+    // Addition is equivalent to OR here since value's shifted bit range
+    // never overlaps the bits already in _cache.
+    _cache += wideShl(value, _cacheBits);
+    _cacheBits += bits;
+    while (_cacheBits >= 8) {
+      _bytes.addByte(_cache & 0xFF);
+      _cache = wideShr(_cache, 8);
+      _cacheBits -= 8;
+    }
+  }
+
+  /// Processes write bool information in a JPEG XL codestream.
+  ///
+  void writeBool(bool value) => writeBits(value ? 1 : 0, 1);
+
+  /// Writes [value] with the U32 distribution that encodes it in the
+  /// fewest bits (mirror of `BitReader.readU32`).
+  void writeU32(int value, int c0, int u0, int c1, int u1, int c2, int u2, int c3, int u3) {
+    final constants = [c0, c1, c2, c3];
+    final bits = [u0, u1, u2, u3];
+    var best = -1;
+    int bestCost = 1 << 30;
+    for (var i = 0; i < 4; i++) {
+      final int lo = constants[i];
+      final int hi = lo + (bits[i] >= 32 ? 0xFFFFFFFF : (1 << bits[i]) - 1);
+      if (value >= lo && value <= hi && 2 + bits[i] < bestCost) {
+        best = i;
+        bestCost = 2 + bits[i];
+      }
+    }
+    if (best < 0) {
+      throw ArgumentError('value $value not representable by this U32');
+    }
+    writeBits(best, 2);
+    writeBits(value - constants[best], bits[best]);
+  }
+
+  /// Mirror of `BitReader.readU64`.
+  void writeU64(int value) {
+    if (value == 0) {
+      writeBits(0, 2);
+    } else if (value <= 16) {
+      writeBits(1, 2);
+      writeBits(value - 1, 4);
+    } else if (value <= 272) {
+      writeBits(2, 2);
+      writeBits(value - 17, 8);
+    } else {
+      writeBits(3, 2);
+      writeBits(value & 0xFFF, 12);
+      int remaining = value >>> 12;
+      var shift = 12;
+      while (remaining != 0 && shift < 60) {
+        writeBool(true);
+        writeBits(remaining & 0xFF, 8);
+        remaining >>>= 8;
+        shift += 8;
+      }
+      if (remaining != 0) {
+        // shift == 60: final 4-bit tail with no continuation bit.
+        writeBool(true);
+        writeBits(remaining & 0xF, 4);
+      } else {
+        writeBool(false);
+      }
+    }
+  }
+
+  /// Mirror of `BitReader.readEnum`.
+  void writeEnum(int value) {
+    assert(value >= 0 && value <= 63, 'An enum value must be between 0 and 63.');
+    writeU32(value, 0, 0, 1, 0, 2, 4, 18, 6);
+  }
+
+  /// Mirror of `BitReader.readF16`: writes [value] as an IEEE-754-like
+  /// half-precision float (round-toward-zero on the mantissa). Magnitudes
+  /// too large to represent clamp to the largest finite half value;
+  /// magnitudes too small (or zero/NaN) flush to signed zero — this
+  /// encoder never needs subnormal precision for the small set of
+  /// quantizer parameters it writes as F16.
+  void writeF16(double value) {
+    if (value == 0 || value.isNaN) {
+      writeBits(0, 16);
+      return;
+    }
+    // The sign, exponent, and the mantissa's top 10 bits all live in the
+    // double's high 32 bits (bits 63-32), so a 32-bit read suffices - no
+    // need for getUint64, which dart2js doesn't implement (throws).
+    final int hi32 = (ByteData(8)..setFloat64(0, value)).getUint32(0);
+    final int sign = (hi32 >> 31) & 1;
+    int exp16 = ((hi32 >> 20) & 0x7FF) - 1023 + 15;
+    int mantissa16;
+    if (exp16 >= 31) {
+      exp16 = 30;
+      mantissa16 = 0x3FF;
+    } else if (exp16 <= 0) {
+      writeBits(sign << 15, 16);
+      return;
+    } else {
+      mantissa16 = (hi32 >> 10) & 0x3FF;
+    }
+    writeBits((sign << 15) | (exp16 << 10) | mantissa16, 16);
+  }
+
+  /// Pads with zero bits to the next byte boundary.
+  void zeroPadToByte() {
+    if (_cacheBits > 0) {
+      writeBits(0, 8 - _cacheBits);
+    }
+  }
+
+  /// Appends whole bytes; the writer must be byte-aligned.
+  void writeBytes(List<int> bytes) {
+    assert(_cacheBits == 0, 'writeBytes requires byte alignment');
+    _bytes.add(bytes);
+  }
+
+  /// Processes to bytes information in a JPEG XL codestream.
+  ///
+  Uint8List toBytes() {
+    zeroPadToByte();
+    return _bytes.toBytes();
+  }
+}

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:imcodec/src/codecs/bmp_codec.dart';
+import 'package:imcodec/src/codecs/jpeg_xl_codec.dart';
 import 'package:imcodec/src/codecs/qoi_codec.dart';
 import 'package:imcodec/src/codecs/tga_codec.dart';
 import 'package:imcodec/src/codecs/tiff_codec.dart';
@@ -20,6 +21,7 @@ Future<Image> decodeImage(Uint8List bytes, {int maxPixels = 100000000}) {
   return switch (format) {
     ImageFormat.bmp => decodeBmp(bytes, maxPixels: maxPixels),
     ImageFormat.jpeg || ImageFormat.png || ImageFormat.webp => _decodeWithFlutter(bytes, format, maxPixels),
+    ImageFormat.jpegXl => decodeJpegXl(bytes, maxPixels: maxPixels),
     ImageFormat.qoi => decodeQoi(bytes, maxPixels: maxPixels),
     ImageFormat.tga => decodeTga(bytes, maxPixels: maxPixels),
     ImageFormat.tiff => decodeTiff(bytes, maxPixels: maxPixels),
@@ -34,6 +36,12 @@ Future<Image> decodePng(Uint8List bytes, {int maxPixels = 100000000}) => _decode
 
 /// Decodes a JPEG image to opaque RGBA.
 Future<Image> decodeJpg(Uint8List bytes, {int maxPixels = 100000000}) => _decodeWithFlutter(bytes, ImageFormat.jpeg, maxPixels);
+
+/// Decodes the first visible frame of a JPEG XL image to straight RGBA.
+Future<Image> decodeJpegXl(Uint8List bytes, {int maxPixels = 100000000}) => _decodeWithDart(bytes, ImageFormat.jpegXl, () => const JpegXlDecoder().decode(bytes, maxPixels: maxPixels));
+
+/// Decodes the first visible frame of a JPEG XL image to straight RGBA.
+Future<Image> decodeJxl(Uint8List bytes, {int maxPixels = 100000000}) => decodeJpegXl(bytes, maxPixels: maxPixels);
 
 /// Decodes a Quite OK Image to straight RGBA.
 Future<Image> decodeQoi(Uint8List bytes, {int maxPixels = 100000000}) => _decodeWithDart(bytes, ImageFormat.qoi, () => const QoiDecoder().decode(bytes, maxPixels: maxPixels));
