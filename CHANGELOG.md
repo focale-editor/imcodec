@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.1.5
+Released on August 25, 2026.
+
+* **FEAT**: Added pure-Dart JPEG XL import for Modular and VarDCT codestreams and containers, plus lossless Modular RGBA export. ([#84d9de6](https://github.com/focale-editor/imcodec/commit/84d9de6))
+
 ## v0.1.4
 Released on August 25, 2026.
 
