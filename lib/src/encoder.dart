@@ -1,13 +1,13 @@
 import 'dart:typed_data';
 
 import 'package:imcodec/src/codecs/bmp_codec.dart';
-import 'package:imcodec/src/codecs/jpeg_encoder.dart';
+import 'package:imcodec/src/codecs/jpeg_codec.dart';
 import 'package:imcodec/src/codecs/jpeg_xl_codec.dart';
 import 'package:imcodec/src/codecs/png_encoder.dart';
 import 'package:imcodec/src/codecs/qoi_codec.dart';
 import 'package:imcodec/src/codecs/tga_codec.dart';
 import 'package:imcodec/src/codecs/tiff_codec.dart';
-import 'package:imcodec/src/codecs/webp_encoder.dart';
+import 'package:imcodec/src/codecs/webp_codec.dart';
 import 'package:imcodec/src/image.dart';
 import 'package:imcodec/src/image_codec_exception.dart';
 import 'package:imcodec/src/image_format.dart';
