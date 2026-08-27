@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/int_buffer.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/encoder/ans_encoder.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/entropy/hybrid_uint.dart';
@@ -322,17 +323,22 @@ void _writeComplexPrefixCode(BitWriter w, List<int> lengths) {
 /// (length, distance) matches, ready for histogramming and emission.
 final class Lz77Operations {
   /// Operation kind at each encoded position: zero for literals, one for matches.
-  final List<int> operationKinds = [];
+  final IntBuffer operationKinds = IntBuffer(1 << 12);
 
   /// Entropy context associated with each operation.
-  final List<int> contexts = []; // context of the pixel at this position
+  final IntBuffer contexts = IntBuffer(1 << 12);
 
   /// Literal value or match length associated with each operation.
-  final List<int> literalValuesOrMatchLengths = [];
+  final IntBuffer literalValuesOrMatchLengths = IntBuffer(1 << 12);
 
   /// Backward distance for each match, or zero for literals.
-  final List<int> matchDistances = [];
+  final IntBuffer matchDistances = IntBuffer(1 << 12);
 }
+
+/// Token slots reserved per context before the count block has to grow.
+/// Literal tokens stay below [lz77MinSymbol] and match symbols add a small
+/// length code on top, so this covers every alphabet the encoder produces.
+const int _defaultAlphabetCapacity = 288;
 
 /// First entropy symbol reserved for an LZ77 match.
 const int lz77MinSymbol = 224;
@@ -390,8 +396,10 @@ Lz77Operations lz77Compress(List<int> contexts, List<int> values, {Lz77Effort ef
   final int searchDepth = effort.searchDepth;
   final int preferredMatchLength = effort.preferredMatchLength;
   final bool usesLazyMatching = effort.usesLazyMatching;
-  final chains = List<int>.filled(1 << hashBits, -1);
-  final prev = List<int>.filled(n < 1 ? 1 : n, -1);
+  // Typed scratch: these are sized from the section length, so a `List<int>`
+  // here cost twice the memory and a garbage-collector-visible fill per call.
+  final Int32List chains = Int32List(1 << hashBits)..fillRange(0, 1 << hashBits, -1);
+  final Int32List prev = Int32List(n < 1 ? 1 : n)..fillRange(0, n < 1 ? 1 : n, -1);
 
   int hash(int i) {
     int h = values[i] * 0x9E3779B1;
@@ -514,8 +522,16 @@ final class EntropyCodes {
   /// Token-frequency histogram for each entropy context.
   final List<List<int>> _histograms;
 
-  /// Sparse token counts collected before dense histograms are built.
-  final Map<int, Map<int, int>> _sparse = {};
+  /// Token counts for every context, laid out as one flat row-major block.
+  /// A nested hash map cost two lookups per coded symbol, and a separate row
+  /// per context cost one allocation per context; a single block pays neither.
+  Int32List _counts = Int32List(0);
+
+  /// Number of token slots reserved for each context in [_counts].
+  int _countsStride = 0;
+
+  /// Highest token seen in each context, or -1 when the context is unused.
+  Int32List _maximumTokens = Int32List(0);
 
   /// Whether entropy coding uses LZ77 references.
   bool usesLz77 = false;
@@ -584,11 +600,36 @@ final class EntropyCodes {
   /// Number of clusters.
   int get _clusterCount => usesLz77 ? contextCount + 1 : contextCount;
 
-  /// Counts.
+  /// Counts one coded [token] in [context].
   void _count(int context, int token, [int extraBits = 0]) {
-    final Map<int, int> m = _sparse.putIfAbsent(context, () => {});
-    m[token] = (m[token] ?? 0) + 1;
+    if (context >= _maximumTokens.length || token >= _countsStride) {
+      _reserveCounts(context, token);
+    }
+    _counts[context * _countsStride + token]++;
+    if (token > _maximumTokens[context]) {
+      _maximumTokens[context] = token;
+    }
     _extraBits += extraBits;
+  }
+
+  /// Grows the count block so that [context] and [token] both fit.
+  void _reserveCounts(int context, int token) {
+    final int contexts = _maximumTokens.length > context ? _maximumTokens.length : context + 1;
+    int stride = _countsStride < 1 ? _defaultAlphabetCapacity : _countsStride;
+    while (stride <= token) {
+      stride *= 2;
+    }
+    final Int32List counts = Int32List(contexts * stride);
+    if (_countsStride > 0) {
+      for (var c = 0; c < _maximumTokens.length; c++) {
+        counts.setRange(c * stride, c * stride + _countsStride, _counts, c * _countsStride);
+      }
+    }
+    final Int32List maximumTokens = Int32List(contexts)..fillRange(_maximumTokens.length, contexts, -1);
+    maximumTokens.setRange(0, _maximumTokens.length, _maximumTokens);
+    _counts = counts;
+    _countsStride = stride;
+    _maximumTokens = maximumTokens;
   }
 
   /// Exact-code-length estimate of the payload size in bits: the actual
@@ -761,19 +802,14 @@ final class EntropyCodes {
   /// Finalizes histograms.
   void _finishHistograms(int clusters) {
     for (var c = 0; c < clusters; c++) {
-      final Map<int, int>? m = _sparse[c];
-      var maxToken = -1;
-      if (m != null) {
-        for (final int t in m.keys) {
-          if (t > maxToken) {
-            maxToken = t;
-          }
-        }
-      }
+      final int maxToken = c < _maximumTokens.length ? _maximumTokens[c] : -1;
       final int size = maxToken < 0 ? 1 : maxToken + 1;
       _alphabetSizes.add(size);
       final hist = List<int>.filled(size, 0);
-      m?.forEach((t, count) => hist[t] = count);
+      final int base = c * _countsStride;
+      for (var t = 0; t <= maxToken; t++) {
+        hist[t] = _counts[base + t];
+      }
       _histograms.add(hist);
       _codes.add(const []);
       _codeLengths.add(const []);

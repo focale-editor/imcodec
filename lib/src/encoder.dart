@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:imcodec/src/codecs/bmp.dart';
 import 'package:imcodec/src/codecs/jpeg.dart';
 import 'package:imcodec/src/codecs/jpeg_xl.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/encoder/effort.dart';
 import 'package:imcodec/src/codecs/png.dart';
 import 'package:imcodec/src/codecs/qoi.dart';
 import 'package:imcodec/src/codecs/tga.dart';
@@ -29,10 +30,11 @@ Uint8List encodeImage(Image image, {required ImageFormat format, int quality = 9
 Uint8List encodeBmp(Image image) => const BmpCodec().encode(image);
 
 /// Encodes [image] as lossless JPEG XL Modular data.
-Uint8List encodeJpegXl(Image image) => const JpegXlCodec().encode(image);
+/// [effort] trades encoding speed against output size.
+Uint8List encodeJpegXl(Image image, {JpegXlEffort effort = JpegXlEffort.balanced}) => JpegXlCodec(effort: effort).encode(image);
 
 /// Encodes [image] as lossless JPEG XL Modular data.
-Uint8List encodeJxl(Image image) => encodeJpegXl(image);
+Uint8List encodeJxl(Image image, {JpegXlEffort effort = JpegXlEffort.balanced}) => encodeJpegXl(image, effort: effort);
 
 /// Encodes [image] as an 8-bit RGBA PNG.
 Uint8List encodePng(Image image, {int level = 6}) => PngCodec(level: level).encode(image);

@@ -124,13 +124,13 @@ void wpTileResiduals(Int32List tile, int tw, int th, Int32List residuals, [Int32
       }
       if (maxErrors != null) {
         var maxError = tW;
-        if (tN.abs() > maxError.abs()) {
+        if ((tN < 0 ? -tN : tN) > (maxError < 0 ? -maxError : maxError)) {
           maxError = tN;
         }
-        if (tNW.abs() > maxError.abs()) {
+        if ((tNW < 0 ? -tNW : tNW) > (maxError < 0 ? -maxError : maxError)) {
           maxError = tNW;
         }
-        if (tNE.abs() > maxError.abs()) {
+        if ((tNE < 0 ? -tNE : tNE) > (maxError < 0 ? -maxError : maxError)) {
           maxError = tNE;
         }
         maxErrors[o] = maxError;
@@ -138,10 +138,14 @@ void wpTileResiduals(Int32List tile, int tw, int th, Int32List residuals, [Int32
       final int trueValue = tile[o];
       residuals[o] = trueValue - ((pred + 3) >> 3);
       final int tv3 = trueValue << 3;
-      err0[o] = ((subpred[0] - tv3).abs() + 3) >> 3;
-      err1[o] = ((subpred[1] - tv3).abs() + 3) >> 3;
-      err2[o] = ((subpred[2] - tv3).abs() + 3) >> 3;
-      err3[o] = ((subpred[3] - tv3).abs() + 3) >> 3;
+      final int d0 = subpred[0] - tv3;
+      err0[o] = ((d0 < 0 ? -d0 : d0) + 3) >> 3;
+      final int d1 = subpred[1] - tv3;
+      err1[o] = ((d1 < 0 ? -d1 : d1) + 3) >> 3;
+      final int d2 = subpred[2] - tv3;
+      err2[o] = ((d2 < 0 ? -d2 : d2) + 3) >> 3;
+      final int d3 = subpred[3] - tv3;
+      err3[o] = ((d3 < 0 ? -d3 : d3) + 3) >> 3;
       err4[o] = pred - tv3;
     }
   }

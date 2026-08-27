@@ -41,6 +41,7 @@ The encoder entry points mirror the subset used by almost any image editor:
 final Uint8List png = img.encodePng(image);
 final Uint8List jpeg = img.encodeJpg(image, quality: 90);
 final Uint8List jpegXl = img.encodeJpegXl(image); // lossless Modular
+final Uint8List quickJxl = img.encodeJpegXl(image, effort: img.JpegXlEffort.fast);
 final Uint8List webp = img.encodeWebP(image); // lossless VP8L
 final Uint8List bmp = img.encodeBmp(image);
 final Uint8List tga = img.encodeTga(image); // RLE by default
@@ -87,7 +88,9 @@ shared `defaultMaxPixels` constant (100 million) is used unless a lower
 - JPEG XL import supports bare codestreams and ISOBMFF containers, lossless
   Modular and lossy VarDCT images, alpha, orientation, embedded matrix/TRC ICC
   profiles, and the first visible animation frame. Output is lossless Modular
-  RGBA and preserves hidden RGB values.
+  RGBA and preserves hidden RGB values. `JpegXlEffort` trades encoding speed
+  against output size: `fast` codes the image once, `balanced` (the default)
+  picks the better predictor first, and `maximum` searches every candidate.
 - QOI is encoded and decoded losslessly according to the Quite OK Image
   specification.
 - TGA supports color-mapped, true-color, and grayscale input, with raw or RLE

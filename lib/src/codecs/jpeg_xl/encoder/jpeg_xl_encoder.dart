@@ -1,8 +1,10 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/int_buffer.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/encoder/context_tree.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/encoder/effort.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/encoder/entropy_encoder.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/encoder/header_encoder.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/encoder/var_dct_encoder.dart';
@@ -20,7 +22,7 @@ final class JpegXlCodestreamEncoder {
   /// [pixels] layout is `width * height * channelCount` bytes where the
   /// channel count is 1 (gray), 2 (gray+alpha), 3 (RGB) or 4 (RGBA)
   /// according to [grayscale] and [hasAlpha].
-  static Uint8List encodeLossless(Uint8List pixels, {required int width, required int height, bool grayscale = false, bool hasAlpha = false}) {
+  static Uint8List encodeLossless(Uint8List pixels, {required int width, required int height, bool grayscale = false, bool hasAlpha = false, JpegXlEffort effort = JpegXlEffort.balanced}) {
     final setup = JpegXlEncodeSetup(width: width, height: height, bitsPerSample: 8, grayscale: grayscale, hasAlpha: hasAlpha);
     final int n = setup.channelCount;
     if (pixels.length != width * height * n) {
@@ -36,12 +38,12 @@ final class JpegXlCodestreamEncoder {
         plane[i] = pixels[i * n + c];
       }
     }
-    return _encodeModular(setup, planes);
+    return _encodeModular(setup, planes, effort);
   }
 
   /// Losslessly encodes interleaved 16-bit pixels (same layout as
   /// [encodeLossless]).
-  static Uint8List encodeLossless16(Uint16List pixels, {required int width, required int height, bool grayscale = false, bool hasAlpha = false}) {
+  static Uint8List encodeLossless16(Uint16List pixels, {required int width, required int height, bool grayscale = false, bool hasAlpha = false, JpegXlEffort effort = JpegXlEffort.balanced}) {
     final setup = JpegXlEncodeSetup(width: width, height: height, bitsPerSample: 16, grayscale: grayscale, hasAlpha: hasAlpha);
     final int n = setup.channelCount;
     if (pixels.length != width * height * n) {
@@ -57,11 +59,11 @@ final class JpegXlCodestreamEncoder {
         plane[i] = pixels[i * n + c];
       }
     }
-    return _encodeModular(setup, planes);
+    return _encodeModular(setup, planes, effort);
   }
 
   /// Losslessly re-encodes a decoded [JpegXlDecodedImage] (integer samples only).
-  static Uint8List encodeImage(JpegXlDecodedImage image) {
+  static Uint8List encodeImage(JpegXlDecodedImage image, {JpegXlEffort effort = JpegXlEffort.balanced}) {
     final ImageHeader header = image.header;
     if (header.bitDepth.usesFloatSamples || image.channels[0].isFloat) {
       throw ArgumentError('only integer images can be re-encoded losslessly');
@@ -86,7 +88,7 @@ final class JpegXlCodestreamEncoder {
       }
       planes.add(plane);
     }
-    return _encodeModular(setup, planes);
+    return _encodeModular(setup, planes, effort);
   }
 
   /// Lossily (VarDCT) encodes an interleaved 8-bit RGB image
@@ -136,10 +138,10 @@ void _tileResiduals(
   int oy,
   int tw,
   int th,
-  List<int> valuesOut,
-  List<int>? maxErrOut,
-  List<int> trainProps,
-  List<int> trainTokens,
+  IntBuffer valuesOut,
+  IntBuffer? maxErrOut,
+  IntBuffer trainProps,
+  IntBuffer trainTokens,
   int stride,
   List<int> strideState,
   bool useWp,
@@ -210,7 +212,7 @@ void _tileResiduals(
 /// Pass B over a tile: assigns each pixel a context by walking [tree]. The
 /// per-pixel max-error (property 15) is read from [maxErrIn] (filled by Pass
 /// A in the same order) so the weighted predictor isn't recomputed.
-void _tileContexts(Int32List plane, int imageWidth, int ox, int oy, int tw, int th, ContextTree tree, List<int> contextsOut, List<int>? maxErrIn, {int channelIndex = 0, Int32List? priorPlane}) {
+void _tileContexts(Int32List plane, int imageWidth, int ox, int oy, int tw, int th, ContextTree tree, IntBuffer contextsOut, IntBuffer? maxErrIn, {int channelIndex = 0, Int32List? priorPlane}) {
   final tile = Int32List(tw * th);
   for (var y = 0; y < th; y++) {
     tile.setRange(y * tw, y * tw + tw, plane, (oy + y) * imageWidth + ox);
@@ -305,12 +307,12 @@ const _kPredictorMargin = 1.02;
 /// [ContextTree.trainingBits]) before the expensive Pass B + entropy coding,
 /// and so the loser's per-pixel residuals stay available for per-leaf predictor
 /// selection (the winning tree's leaves may switch to the loser's predictor).
-typedef _Prep = ({int predictor, List<int> properties, ContextTree tree, List<List<int>> groupValues, List<List<int>>? groupMaxErr, List<int> metaValues, List<int>? metaMaxErr});
+typedef _Prep = ({int predictor, List<int> properties, ContextTree tree, List<Int32List> groupValues, List<IntBuffer>? groupMaxErr, Int32List metaValues, IntBuffer? metaMaxErr});
 
 /// Pass B output for one prep: the per-region leaf contexts (reused to build
 /// the mixed value stream) plus the same contexts already grouped into
 /// entropy-coding sections.
-typedef _PassB = ({List<int> metaContexts, List<List<int>> groupContexts, List<List<int>> sectionContexts});
+typedef _PassB = ({Int32List metaContexts, List<Int32List> groupContexts, List<List<int>> sectionContexts});
 
 /// Estimates the zero-order entropy of one slice of [histogram].
 double _histogramEntropy(Int32List histogram, int offset, int width, int total) {
@@ -462,27 +464,28 @@ List<Int32List> _copyPlanes(List<Int32List> planes) => [for (final p in planes) 
 /// path when the colour count is small enough, keeping whichever is smaller.
 /// Grayscale tries a single-channel palette under the same never-worse rule when
 /// its value set is sparse enough to benefit (see [_grayPaletteWorthTrying]).
-Uint8List _encodeModular(JpegXlEncodeSetup setup, List<Int32List> planes) {
+Uint8List _encodeModular(JpegXlEncodeSetup setup, List<Int32List> planes, JpegXlEffort effort) {
   if (setup.grayscale) {
-    final Uint8List grayBytes = _encodeModularCore(setup, planes, null, false);
     final List<int>? palette = _detectPaletteGray(planes[0], _kPaletteMaxColorsGray);
-    if (palette == null || !_grayPaletteWorthTrying(palette)) {
+    final bool worthTrying = palette != null && _grayPaletteWorthTrying(palette);
+    final Uint8List grayBytes = _encodeModularCore(setup, planes, null, false, effort);
+    if (!worthTrying) {
       return grayBytes;
     }
-    final Uint8List palBytes = _encodeModularCore(setup, _copyPlanes(planes), palette, false, paletteChannels: 1);
+    final Uint8List palBytes = _encodeModularCore(setup, _copyPlanes(planes), palette, false, effort, paletteChannels: 1);
     return palBytes.length < grayBytes.length ? palBytes : grayBytes;
   }
   final List<int>? palette = _detectPalette(planes, _kPaletteMaxColors);
-  final Uint8List rctBytes = _encodeModularCore(setup, _copyPlanes(planes), null, true);
+  final Uint8List rctBytes = _encodeModularCore(setup, _copyPlanes(planes), null, true, effort);
   if (palette == null) {
     return rctBytes;
   }
-  final Uint8List palBytes = _encodeModularCore(setup, _copyPlanes(planes), palette, false);
+  final Uint8List palBytes = _encodeModularCore(setup, _copyPlanes(planes), palette, false, effort);
   return palBytes.length < rctBytes.length ? palBytes : rctBytes;
 }
 
 /// Encodes modular core.
-Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlanes, List<int>? palette, bool applyRct, {int paletteChannels = 3}) {
+Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlanes, List<int>? palette, bool applyRct, JpegXlEffort effort, {int paletteChannels = 3}) {
   List<Int32List> planes = inputPlanes;
   const groupDimension = 256;
   final int width = setup.width;
@@ -493,6 +496,14 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
   final int lowFrequencyGroupCount = ceilDiv(width, groupDimension << 3) * ceilDiv(height, groupDimension << 3);
   final singleSection = groupCount == 1;
   final bool globalChannels = width <= groupDimension && height <= groupDimension;
+
+  /// Number of samples group [g] contributes across [planeCount] planes.
+  int groupSampleCount(int g, int planeCount) {
+    final int tileWidth = (width - (g % groupsX) * groupDimension).clamp(0, groupDimension);
+    final int tileHeight = (height - (g ~/ groupsX) * groupDimension).clamp(0, groupDimension);
+    final int count = tileWidth * tileHeight * planeCount;
+    return count < 1 ? 1 : count;
+  }
 
   // Transform application (the palette-vs-RCT *decision* is [_encodeModular]'s;
   // here it is a given). Palette: replace the 3 colour planes with one index
@@ -556,19 +567,21 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
     // the prior channel (cross-channel context); grayscale/palette can't.
     final List<int> properties = useRct ? (useWp ? rctWpProperties : rctGradProperties) : (useWp ? wpProperties : gradProperties);
     final strideState = [0];
-    final trainProps = <int>[];
-    final trainTokens = <int>[];
+    final trainProps = IntBuffer(1 << 16);
+    final trainTokens = IntBuffer(1 << 12);
 
     // Pass A: residuals per group (and the palette meta channel) plus a
     // strided training set for the context tree. For WP, the max-error
     // (property 15) is captured here so Pass B needn't recompute it.
-    final metaValues = <int>[];
-    final List<int>? metaMaxErr = useWp ? <int>[] : null;
+    final metaValues = IntBuffer(pal == null ? 1 : palette!.length * paletteChannels);
+    final IntBuffer? metaMaxErr = useWp ? IntBuffer(pal == null ? 1 : palette!.length * paletteChannels) : null;
     if (pal != null) {
       _tileResiduals(pal, palette!.length, 0, 0, palette.length, paletteChannels, metaValues, metaMaxErr, trainProps, trainTokens, stride, strideState, useWp, properties);
     }
-    final groupValues = List<List<int>>.generate(groupCount, (_) => []);
-    final List<List<int>>? groupMaxErr = useWp ? List<List<int>>.generate(groupCount, (_) => []) : null;
+    // Every group's residual count is known up front, so each buffer is sized
+    // once instead of doubling its way to a few million entries.
+    final List<IntBuffer> groupValues = List<IntBuffer>.generate(groupCount, (g) => IntBuffer(groupSampleCount(g, planes.length)));
+    final List<IntBuffer>? groupMaxErr = useWp ? List<IntBuffer>.generate(groupCount, (g) => IntBuffer(groupSampleCount(g, planes.length))) : null;
     for (var g = 0; g < groupCount; g++) {
       final int ox = (g % groupsX) * groupDimension;
       final int oy = (g ~/ groupsX) * groupDimension;
@@ -596,8 +609,16 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
       }
     }
 
-    final ContextTree tree = learnContextTree(Int32List.fromList(trainProps), Int32List.fromList(trainTokens), properties);
-    return (predictor: predictor, properties: properties, tree: tree, groupValues: groupValues, groupMaxErr: groupMaxErr, metaValues: metaValues, metaMaxErr: metaMaxErr);
+    final ContextTree tree = learnContextTree(trainProps.view(), trainTokens.view(), properties);
+    return (
+      predictor: predictor,
+      properties: properties,
+      tree: tree,
+      groupValues: [for (final IntBuffer values in groupValues) values.view()],
+      groupMaxErr: groupMaxErr,
+      metaValues: metaValues.view(),
+      metaMaxErr: metaMaxErr,
+    );
   }
 
   // Sections: the LowFrequencyGlobal section carries the meta channel (and, for small
@@ -619,11 +640,11 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
   // both the single-predictor baseline and the per-leaf-mixed value stream.
   _PassB passB(_Prep p) {
     final ContextTree tree = p.tree;
-    final metaContexts = <int>[];
+    final metaContexts = IntBuffer(pal == null ? 1 : palette!.length * paletteChannels);
     if (pal != null) {
       _tileContexts(pal, palette!.length, 0, 0, palette.length, paletteChannels, tree, metaContexts, p.metaMaxErr);
     }
-    final groupContexts = List<List<int>>.generate(groupCount, (_) => []);
+    final List<IntBuffer> groupContexts = List<IntBuffer>.generate(groupCount, (g) => IntBuffer(groupSampleCount(g, planes.length)));
     for (var g = 0; g < groupCount; g++) {
       final int ox = (g % groupsX) * groupDimension;
       final int oy = (g ~/ groupsX) * groupDimension;
@@ -633,7 +654,9 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
         _tileContexts(planes[pi], width, ox, oy, tw, th, tree, groupContexts[g], p.groupMaxErr?[g], channelIndex: useRct ? pi : 0, priorPlane: useRct && pi > 0 ? planes[pi - 1] : null);
       }
     }
-    return (metaContexts: metaContexts, groupContexts: groupContexts, sectionContexts: mkSections(metaContexts, groupContexts));
+    final Int32List metaContextValues = metaContexts.view();
+    final List<Int32List> groupContextValues = [for (final IntBuffer contexts in groupContexts) contexts.view()];
+    return (metaContexts: metaContextValues, groupContexts: groupContextValues, sectionContexts: mkSections(metaContextValues, groupContextValues));
   }
 
   // Entropy-codes and assembles the smallest real codestream for one
@@ -782,7 +805,8 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
     final candidates = <(EntropyCodes, bool, bool, int, bool, double)>[];
     double bestPlain = double.infinity;
     double bestShallowLz = double.infinity;
-    for (var ci = 0; ci < _hybridConfigs.length; ci++) {
+    final int configCount = effort.triesEveryEntropyConfig ? _hybridConfigs.length : 1;
+    for (var ci = 0; ci < configCount; ci++) {
       final HybridIntegerConfig cfg = _hybridConfigs[ci];
       final lzCodes = EntropyCodes.buildLz77(contextCount: contextCount, sections: sectionOpsShallow, config: cfg);
       final plainCodes = EntropyCodes.build(contextCount: contextCount, contexts: allContexts, values: allValues, config: cfg);
@@ -816,7 +840,7 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
     // larger than the shallow one (e.g. on a synthetic gradient's zero runs) —
     // keeping the shallow candidates makes the pair never-worse, and gating on
     // "LZ77 beats plain" spares plainly-coded content (photos) the deep search.
-    if (bestShallowLz < bestPlain) {
+    if (effort.triesDeepLz77 && bestShallowLz < bestPlain) {
       for (var ci = 0; ci < _hybridConfigs.length; ci++) {
         final HybridIntegerConfig cfg = _hybridConfigs[ci];
         final lzCodes = EntropyCodes.buildLz77(contextCount: contextCount, sections: sectionOpsDeep, config: cfg);
@@ -831,7 +855,9 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
     // Candidates within 3% of the best estimate get assembled for real; the
     // smallest actual output wins. This captures near-tie wins (e.g. unified
     // ANS+LZ77 beating LZ77 by a fraction of a percent) that estimates miss.
-    final double threshold = best * 1.03;
+    // Below the top effort only the single best estimate is assembled, which
+    // is where most of the assembly time goes.
+    final double threshold = effort.assemblesNearTies ? best * 1.03 : best;
     Uint8List? bestBytes;
     var bestMode = '';
     var bestCfg = 0;
@@ -914,19 +940,26 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
   // individual leaves switch to the other predictor where it codes their pixels
   // smaller.
   final _Prep gradPrep = prep(false);
+  if (!effort.triesBothPredictors) {
+    // One residual pass, one tree, one assembly: the fast level skips the
+    // second predictor entirely rather than measuring which one wins.
+    final _PassB ctx = passB(gradPrep);
+    final (Uint8List bytes, _, _) = baselineOf(gradPrep, ctx.sectionContexts);
+    return bytes;
+  }
   final _Prep wpPrep = prep(true);
   final double gBits = gradPrep.tree.trainingBits;
   final double wBits = wpPrep.tree.trainingBits;
 
   final Uint8List chosen;
   final String debug;
-  if (gBits * _kPredictorMargin < wBits || wBits * _kPredictorMargin < gBits) {
+  if (!effort.refinesBothPredictors || gBits * _kPredictorMargin < wBits || wBits * _kPredictorMargin < gBits) {
     final bool useWp = wBits < gBits;
     final win = useWp ? wpPrep : gradPrep;
     final lose = useWp ? gradPrep : wpPrep;
     final _PassB ctx = passB(win);
     final (Uint8List bb, String bl, (int, bool, bool, bool) sel) = baselineOf(win, ctx.sectionContexts);
-    final (Uint8List bytes, String mode) = refineOf(win, lose, ctx, bb, bl, sel);
+    final (Uint8List bytes, String mode) = effort.refinesLeafPredictors ? refineOf(win, lose, ctx, bb, bl, sel) : (bb, bl);
     chosen = bytes;
     debug =
         'chose=$mode (skip loser tree; trainBits '

@@ -110,9 +110,9 @@ void computeProps(Int32List tile, int tw, int th, int y, int x, List<int> proper
     final int g = (rW + rN - rNW).toSigned(32);
     final pred = g < lo ? lo : (g > hi ? hi : g);
     final int rG = (rC - pred).toSigned(32);
-    cx16 = rC.abs();
+    cx16 = rC < 0 ? -rC : rC;
     cx17 = rC;
-    cx18 = rG.abs();
+    cx18 = rG < 0 ? -rG : rG;
     cx19 = rG;
   }
   for (var i = 0; i < properties.length; i++) {
@@ -142,6 +142,9 @@ void computeProps(Int32List tile, int tw, int th, int y, int x, List<int> proper
 /// Returns the base-two logarithm of [value].
 double _binaryLogarithm(double value) => math.log(value) * 1.4426950408889634;
 
+/// Shared empty sample set for nodes that have been split.
+final Int32List _noSamples = Int32List(0);
+
 /// Stores one learned split or leaf in a modular context tree.
 final class _ContextTreeNode {
   /// Index into the serialized tree properties, or `-1` for a leaf.
@@ -159,7 +162,8 @@ final class _ContextTreeNode {
   _ContextTreeNode? right;
 
   /// Training-sample indices that currently reach this node.
-  List<int> samples; // sample indices (training)
+  Int32List samples;
+
   /// Candidate property index, with negative values denoting unresolved states.
   int splitProperty = -2; // -2 = not computed, -1 = no useful split
   /// Threshold used to partition [samples].
@@ -209,13 +213,14 @@ final class ContextTree {
 }
 
 /// Computes the zero-order entropy of [counts] containing [total] samples.
-double _countsEntropy(List<int> counts, int total) {
+double _countsEntropy(Int32List counts, int total) {
   if (total == 0) {
     return 0;
   }
   var bits = 0.0;
   final double lt = total.toDouble();
-  for (final c in counts) {
+  for (var i = 0; i < counts.length; i++) {
+    final int c = counts[i];
     if (c > 0) {
       bits += c * _binaryLogarithm(lt / c);
     }
@@ -230,15 +235,22 @@ ContextTree learnContextTree(Int32List props, Int32List tokens, List<int> proper
   final int p = properties.length;
   final int n = tokens.length;
   var maxToken = 0;
-  for (final t in tokens) {
-    if (t > maxToken) {
-      maxToken = t;
+  for (var i = 0; i < tokens.length; i++) {
+    if (tokens[i] > maxToken) {
+      maxToken = tokens[i];
     }
   }
   final int alpha = maxToken + 1;
   final int nb = _thresholds.length; // bins = thresholds + 1
 
-  int binOf(int v) {
+  // Direct lookup for the property range that covers almost every sample; the
+  // binary search stays as the fallback. This runs once per training sample
+  // per candidate property, which is the innermost loop of tree learning.
+  const int binTableOffset = 512;
+  const int binTableSize = 1024;
+  final Uint8List binTable = Uint8List(binTableSize);
+  for (var i = 0; i < binTableSize; i++) {
+    final int v = i - binTableOffset;
     var lo = 0;
     var hi = nb;
     while (lo < hi) {
@@ -249,33 +261,55 @@ ContextTree learnContextTree(Int32List props, Int32List tokens, List<int> proper
         hi = mid;
       }
     }
-    return lo; // in [0, nb]
+    binTable[i] = lo;
   }
+
+  int binOf(int v) {
+    final int index = v + binTableOffset;
+    if (index >= 0 && index < binTableSize) {
+      return binTable[index];
+    }
+    return v < 0 ? 0 : nb;
+  }
+
+  // Split scratch, allocated once for the whole tree: the bin histograms are
+  // rebuilt for every candidate property of every node, and reallocating them
+  // each time dominated tree learning.
+  final Int32List parent = Int32List(alpha);
+  final Int32List binHistogram = Int32List((nb + 1) * alpha);
+  final Int32List binTotal = Int32List(nb + 1);
+  final Int32List right = Int32List(alpha);
 
   void computeSplit(_ContextTreeNode node) {
     node.splitProperty = -1;
     if (node.samples.length < 1024) {
       return;
     }
-    final parent = List<int>.filled(alpha, 0);
-    for (final int s in node.samples) {
-      parent[tokens[s]]++;
+    // Indexed loops throughout: iterating a typed list with `for in` allocates
+    // an iterator and costs several times an indexed read, and these loops run
+    // once per training sample per candidate property.
+    final Int32List samples = node.samples;
+    parent.fillRange(0, alpha, 0);
+    for (var i = 0; i < samples.length; i++) {
+      parent[tokens[samples[i]]]++;
     }
-    final int total = node.samples.length;
+    final int total = samples.length;
     final double parentBits = _countsEntropy(parent, total);
     for (var pi = 0; pi < p; pi++) {
-      final binHist = List<List<int>>.generate(nb + 1, (_) => List<int>.filled(alpha, 0), growable: false);
-      final binTotal = List<int>.filled(nb + 1, 0);
-      for (final int s in node.samples) {
+      binHistogram.fillRange(0, (nb + 1) * alpha, 0);
+      binTotal.fillRange(0, nb + 1, 0);
+      for (var i = 0; i < samples.length; i++) {
+        final int s = samples[i];
         final int b = binOf(props[s * p + pi]);
-        binHist[b][tokens[s]]++;
+        binHistogram[b * alpha + tokens[s]]++;
         binTotal[b]++;
       }
-      final right = List<int>.filled(alpha, 0);
+      right.fillRange(0, alpha, 0);
       var rightTotal = 0;
       for (var i = 0; i < nb; i++) {
+        final int binBase = i * alpha;
         for (var t = 0; t < alpha; t++) {
-          right[t] += binHist[i][t];
+          right[t] += binHistogram[binBase + t];
         }
         rightTotal += binTotal[i];
         final int leftTotal = total - rightTotal;
@@ -304,7 +338,11 @@ ContextTree learnContextTree(Int32List props, Int32List tokens, List<int> proper
     }
   }
 
-  final root = _ContextTreeNode(samples: [for (var i = 0; i < n; i++) i]);
+  final Int32List rootSamples = Int32List(n);
+  for (var i = 0; i < n; i++) {
+    rootSamples[i] = i;
+  }
+  final root = _ContextTreeNode(samples: rootSamples);
   computeSplit(root);
   var leaves = 1;
   final frontier = <_ContextTreeNode>[root];
@@ -322,21 +360,29 @@ ContextTree learnContextTree(Int32List props, Int32List tokens, List<int> proper
     }
     final int pi = pick.splitProperty;
     final int thr = pick.splitThreshold;
-    final leftS = <int>[];
-    final rightS = <int>[];
-    for (final int s in pick.samples) {
+    // Partition in a single pass by filling one scratch buffer from both ends,
+    // then hand each child a view of its half. Growing two lists instead would
+    // reallocate repeatedly for a training set this large.
+    final Int32List picked = pick.samples;
+    final Int32List partition = Int32List(picked.length);
+    var leftIndex = 0;
+    int rightIndex = picked.length;
+    for (var i = 0; i < picked.length; i++) {
+      final int s = picked[i];
       if (props[s * p + pi] > thr) {
-        leftS.add(s);
+        partition[leftIndex++] = s;
       } else {
-        rightS.add(s);
+        partition[--rightIndex] = s;
       }
     }
+    final Int32List leftS = Int32List.sublistView(partition, 0, leftIndex);
+    final Int32List rightS = Int32List.sublistView(partition, rightIndex);
     pick
       ..propertyIndex = pi
       ..value = thr
       ..left = _ContextTreeNode(samples: leftS)
       ..right = _ContextTreeNode(samples: rightS)
-      ..samples = const []
+      ..samples = _noSamples
       ..splitProperty = -1;
     computeSplit(pick.left!);
     computeSplit(pick.right!);
@@ -350,14 +396,15 @@ ContextTree learnContextTree(Int32List props, Int32List tokens, List<int> proper
   // Training entropy: sum of each leaf's token-histogram entropy. `frontier`
   // holds exactly the leaves (split nodes were removed as they split).
   var trainingBits = 0.0;
-  final leafHist = List<int>.filled(alpha, 0);
+  final Int32List leafHist = Int32List(alpha);
   for (final leaf in frontier) {
-    for (final int s in leaf.samples) {
-      leafHist[tokens[s]]++;
+    final Int32List samples = leaf.samples;
+    for (var i = 0; i < samples.length; i++) {
+      leafHist[tokens[samples[i]]]++;
     }
-    trainingBits += _countsEntropy(leafHist, leaf.samples.length);
-    for (final int s in leaf.samples) {
-      leafHist[tokens[s]] = 0;
+    trainingBits += _countsEntropy(leafHist, samples.length);
+    for (var i = 0; i < samples.length; i++) {
+      leafHist[tokens[samples[i]]] = 0;
     }
   }
 

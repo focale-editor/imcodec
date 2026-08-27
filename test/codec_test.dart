@@ -143,7 +143,7 @@ void main() {
         quality: 90,
         chroma: JpegChroma.yuv420,
       ),
-      const JpegXlCodec(maxPixels: 1000),
+      JpegXlCodec(maxPixels: 1000),
       PngCodec(
         maxPixels: 1000,
         level: 9,
@@ -182,7 +182,7 @@ void main() {
       final List<Codec<Image, Uint8List>> codecs = [
         const BmpCodec(),
         JpegCodec(),
-        const JpegXlCodec(),
+        JpegXlCodec(),
         PngCodec(),
         const QoiCodec(),
         TgaCodec(),

@@ -9,6 +9,7 @@ import 'package:imcodec/src/codecs/jpeg_xl/color/transfer_function.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/core/image_buffer.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/core/resampling.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/encoder/effort.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/encoder/jpeg_xl_encoder.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/blending_info.dart';

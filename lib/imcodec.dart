@@ -3,7 +3,8 @@ library;
 
 export 'src/codecs/bmp.dart' show BmpCodec;
 export 'src/codecs/jpeg.dart' show JpegChroma, JpegCodec;
-export 'src/codecs/jpeg_xl.dart' show JpegXlCodec;
+export 'src/codecs/jpeg_xl.dart' show JpegXlCodec, JpegXlEncoder;
+export 'src/codecs/jpeg_xl/encoder/effort.dart' show JpegXlEffort;
 export 'src/codecs/png.dart' show PngCodec;
 export 'src/codecs/qoi.dart' show QoiCodec;
 export 'src/codecs/raster_codec.dart' show RasterCodec, RasterDecoder, RasterEncoder, defaultMaxPixels;

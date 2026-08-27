@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/int_buffer.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/entropy/entropy_tables.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_writer.dart';
 
@@ -265,16 +266,16 @@ final class AnsAliasTable {
 /// are consumed in reverse; a forward decode reproduces them in order.
 final class AnsEncoder {
   /// Alias-table index selected for each queued symbol.
-  final List<int> _tableIndices = [];
+  final IntBuffer _tableIndices = IntBuffer(1 << 12);
 
   /// Hybrid-integer token for each queued symbol.
-  final List<int> _tokens = [];
+  final IntBuffer _tokens = IntBuffer(1 << 12);
 
   /// Expanded hybrid-integer payload for each queued symbol.
-  final List<int> _extraValues = [];
+  final IntBuffer _extraValues = IntBuffer(1 << 12);
 
   /// Number of raw payload bits carried by each queued symbol.
-  final List<int> _extraBitCounts = [];
+  final IntBuffer _extraBitCounts = IntBuffer(1 << 12);
 
   /// Encoding tables shared by all queued symbols.
   final List<AnsAliasTable> aliasTables;
@@ -299,8 +300,8 @@ final class AnsEncoder {
     // Chunks are collected during the reverse pass, then reversed to get the
     // forward stream. For value k the forward order is [refill?][extra];
     // reversed, that means appending extra first, then the renorm word.
-    final chunkBits = <int>[];
-    final chunkLen = <int>[];
+    final chunkBits = IntBuffer(1 << 12);
+    final chunkLen = IntBuffer(1 << 12);
     const int xMax = (_ansRenormLower >> _precisionBits) << 16;
     int state = _ansFinalState;
     for (int k = _tokens.length - 1; k >= 0; k--) {
