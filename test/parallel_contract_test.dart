@@ -29,14 +29,16 @@ void main() {
   });
 
   for (final MapEntry<ImageFormat, RasterCodec> entry in codecs.entries) {
-    test('${entry.key.name} encodes identically with and without a runner', () async {
-      final RasterCodec codec = entry.value;
-      final Uint8List sequential = codec.encode(source);
+    if (entry.value is ParallelRasterCodec) {
+      test('${entry.key.name} encodes identically with and without a runner', () async {
+        final ParallelRasterCodec codec = entry.value as ParallelRasterCodec;
+        final Uint8List sequential = codec.encode(source);
 
-      expect(await codec.encodeWith(runSequentially, source), sequential, reason: 'inline runner');
-      expect(await codec.encodeWith(onIsolates, source), sequential, reason: 'isolate runner');
-      expect(await codec.rasterEncoder.encodeWith(onIsolates, source), sequential, reason: 'encoder entry point');
-    });
+        expect(await codec.encodeWith(runSequentially, source), sequential, reason: 'inline runner');
+        expect(await codec.encodeWith(onIsolates, source), sequential, reason: 'isolate runner');
+        expect(await codec.rasterEncoder.encodeWith(onIsolates, source), sequential, reason: 'encoder entry point');
+      });
+    }
   }
 
   test('the format-dispatching helper matches its synchronous twin', () async {

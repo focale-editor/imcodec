@@ -24,19 +24,19 @@ Future<void> main(List<String> arguments) async {
   final int iterations = arguments.length < 2 ? 3 : int.parse(arguments[1]);
   final Uint8List encodedSource = File(imagePath).readAsBytesSync();
   final Image image = imagePath.toLowerCase().endsWith('.png') ? PngCodec().decode(encodedSource) : JpegCodec().decode(encodedSource);
-  final List<(String, RasterCodec)> codecs = <(String, RasterCodec)>[
+  final List<(String, ParallelRasterCodec)> codecs = <(String, ParallelRasterCodec)>[
     ('JPEG 4:4:4', JpegCodec(quality: 90)),
     ('JPEG 4:2:0', JpegCodec(quality: 90, chroma: JpegChroma.yuv420)),
     ('PNG', PngCodec(level: 6)),
-    ('BMP', const BmpCodec()),
-    ('QOI', const QoiCodec()),
-    ('TGA', TgaCodec()),
-    ('TIFF PackBits', TiffCodec()),
+    // ('BMP', const BmpCodec()),
+    // ('QOI', const QoiCodec()),
+    // ('TGA', TgaCodec()),
+    // ('TIFF PackBits', TiffCodec()),
     ('WebP', const WebPCodec()),
   ];
 
   stdout.writeln('${image.width}x${image.height}, $iterations measured iteration(s)');
-  for (final (String label, RasterCodec codec) in codecs) {
+  for (final (String label, ParallelRasterCodec codec) in codecs) {
     final _BenchmarkRunner runner = _BenchmarkRunner();
     final Uint8List expected = codec.encode(image);
     final Uint8List warmParallel = await codec.encodeWith(runner.call, image);

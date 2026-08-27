@@ -40,6 +40,8 @@ import 'package:imcodec/src/image_codec_exception.dart';
 import 'package:imcodec/src/image_format.dart';
 import 'package:imcodec/src/parallel_runner.dart';
 
+export 'jpeg_xl/encoder/effort.dart';
+
 part 'jpeg_xl/codec.dart';
 part 'jpeg_xl/decoder.dart';
 part 'jpeg_xl/encoder.dart';

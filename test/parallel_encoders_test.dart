@@ -46,14 +46,14 @@ void main() {
   final Image mediumSource = _createSource(520, 520);
   final Image largeSource = _createSource(1032, 1032);
 
-  final List<(String, RasterCodec, Image)> codecs = <(String, RasterCodec, Image)>[
+  final List<(String, ParallelRasterCodec, Image)> codecs = <(String, ParallelRasterCodec, Image)>[
     ('JPEG 4:4:4', JpegCodec(quality: 91), largeSource),
     ('JPEG 4:2:0', JpegCodec(quality: 91, chroma: JpegChroma.yuv420), largeSource),
     ('PNG', PngCodec(level: 6), mediumSource),
     ('WebP', const WebPCodec(), mediumSource),
   ];
 
-  for (final (String label, RasterCodec codec, Image source) in codecs) {
+  for (final (String label, ParallelRasterCodec codec, Image source) in codecs) {
     test('$label spreads real work and stays byte-identical', () async {
       final Uint8List sequential = codec.encode(source);
       final _RecordingRunner recording = _RecordingRunner();
