@@ -38,17 +38,25 @@ final class BmpEncoder extends RasterEncoder {
       ..writeUint32(0x73524742);
     output.writeBytes(Uint8List(48));
 
+    // Rows are written bottom-up into one preallocated block, which avoids a
+    // bounds check and a growth check for every channel byte.
+    final Uint8List source = image.bytes;
+    final Uint8List rows = Uint8List(pixelDataLength);
+    final int rowLength = image.width * 4;
+    int target = 0;
     for (int y = image.height - 1; y >= 0; y--) {
-      int offset = y * image.width * 4;
-      for (int x = 0; x < image.width; x++) {
-        output
-          ..writeByte(image.bytes[offset + 2])
-          ..writeByte(image.bytes[offset + 1])
-          ..writeByte(image.bytes[offset])
-          ..writeByte(image.bytes[offset + 3]);
+      int offset = y * rowLength;
+      final int rowEnd = offset + rowLength;
+      while (offset < rowEnd) {
+        rows[target] = source[offset + 2];
+        rows[target + 1] = source[offset + 1];
+        rows[target + 2] = source[offset];
+        rows[target + 3] = source[offset + 3];
+        target += 4;
         offset += 4;
       }
     }
-    return Uint8List.fromList(output.getBytes());
+    output.writeBytes(rows);
+    return output.takeBytes();
   }
 }

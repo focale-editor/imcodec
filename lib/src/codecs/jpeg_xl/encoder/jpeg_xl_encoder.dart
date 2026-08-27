@@ -739,17 +739,27 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
         '${lz ? (deep ? "lzd" : "lz") : "plain"}+${ans ? "ans" : "prefix"}'
         '/h${cfg.splitExponent}${cfg.msbInToken}${cfg.lsbInToken}';
 
-    List<int> flatContexts() {
-      final all = <int>[];
-      sectionContexts.forEach(all.addAll);
-      return all;
+    // Flattening allocates a list the size of the whole image, so it is sized
+    // up front and computed at most once per assembly instead of once per
+    // candidate.
+    Int32List flatten(List<List<int>> sections) {
+      int length = 0;
+      for (final s in sections) {
+        length += s.length;
+      }
+      final flat = Int32List(length);
+      int offset = 0;
+      for (final s in sections) {
+        flat.setRange(offset, offset + s.length, s);
+        offset += s.length;
+      }
+      return flat;
     }
 
-    List<int> flatValues() {
-      final all = <int>[];
-      sectionValues.forEach(all.addAll);
-      return all;
-    }
+    Int32List? flatContextsCache;
+    Int32List? flatValuesCache;
+    Int32List flatContexts() => flatContextsCache ??= flatten(sectionContexts);
+    Int32List flatValues() => flatValuesCache ??= flatten(sectionValues);
 
     if (only != null) {
       final (int cfgI, bool lz, bool ans, bool deep) = only;
@@ -761,8 +771,8 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
       return (assemble(codes, ans, lz, ops), modeStr(cfg, lz, ans, deep), cfgI, lz, ans, deep);
     }
 
-    final List<int> allContexts = flatContexts();
-    final List<int> allValues = flatValues();
+    final Int32List allContexts = flatContexts();
+    final Int32List allValues = flatValues();
     // For each candidate hybrid-uint config, build the {plain, LZ77} x
     // {prefix, ANS} entropy codes and their size estimates. ANS spends
     // fractional bits (no 1-bit-per-symbol floor); LZ77 copies repeated runs;

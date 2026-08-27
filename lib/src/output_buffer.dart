@@ -22,8 +22,18 @@ final class OutputBuffer {
     length = 0;
   }
 
-  /// Returns the resulting bytes from the buffer.
+  /// Returns a view of the bytes written so far.
+  /// The result aliases this buffer, so copy it before writing again.
   Uint8List getBytes() => Uint8List.view(_buffer.buffer, 0, length);
+
+  /// Returns the written bytes and leaves this buffer empty.
+  /// The result never aliases storage that later writes can reach.
+  Uint8List takeBytes() {
+    final Uint8List result = Uint8List.view(_buffer.buffer, 0, length);
+    _buffer = Uint8List(_blockSize);
+    length = 0;
+    return result;
+  }
 
   /// Clears the buffer.
   void clear() {
@@ -41,12 +51,12 @@ final class OutputBuffer {
 
   /// Writes a set of bytes to the end of the buffer.
   void writeBytes(List<int> bytes, [int? len]) {
-    len ??= bytes.length;
-    while (length + len > _buffer.length) {
-      _expandBuffer((length + len) - _buffer.length);
+    final int count = len ?? bytes.length;
+    if (length + count > _buffer.length) {
+      _expandBuffer(count);
     }
-    _buffer.setRange(length, length + len, bytes);
-    length += len;
+    _buffer.setRange(length, length + count, bytes);
+    length += count;
   }
 
   /// Writes a 16-bit word to the end of the buffer.
@@ -133,14 +143,15 @@ final class OutputBuffer {
     return Uint8List.view(_buffer.buffer, resolvedStart, resolvedEnd - resolvedStart);
   }
 
-  /// Grows the buffer to accommodate additional data.
-  void _expandBuffer([int? required]) {
-    final int blockSize = (required != null)
-        ? required
-        : (_buffer.isEmpty)
-        ? _blockSize
-        : (_buffer.length * 2);
-    final Uint8List newBuffer = Uint8List(_buffer.length + blockSize)..setRange(0, _buffer.length, _buffer);
-    _buffer = newBuffer;
+  /// Grows the buffer so that [required] more bytes fit.
+  /// Capacity always at least doubles, which keeps repeated writes amortized
+  /// to linear time instead of reallocating on every call.
+  void _expandBuffer([int required = 0]) {
+    int capacity = _buffer.isEmpty ? _blockSize : _buffer.length * 2;
+    final int needed = length + required;
+    while (capacity < needed) {
+      capacity *= 2;
+    }
+    _buffer = Uint8List(capacity)..setRange(0, length, _buffer);
   }
 }

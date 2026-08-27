@@ -8,6 +8,9 @@ final class _JpegData {
   /// Maximum number of components permitted in one entropy scan.
   static const int _maximumScanComponents = 4;
 
+  /// Maximum number of Huffman tables addressable per table class.
+  static const int _huffmanTableCount = 4;
+
   /// Maximum number of decoded output pixels.
   final int maxPixels;
 
@@ -15,10 +18,10 @@ final class _JpegData {
   final List<Int16List?> quantizationTables = List<Int16List?>.filled(_quantizationTableCount, null);
 
   /// Alternating-current Huffman tables indexed by their stream identifier.
-  final List<List<_JpegHuffmanNode?>?> huffmanTablesAc = List<List<_JpegHuffmanNode?>?>.empty(growable: true);
+  final List<_JpegHuffmanTable?> huffmanTablesAc = List<_JpegHuffmanTable?>.filled(_huffmanTableCount, null);
 
   /// Direct-current Huffman tables indexed by their stream identifier.
-  final List<List<_JpegHuffmanNode?>?> huffmanTablesDc = List<List<_JpegHuffmanNode?>?>.empty(growable: true);
+  final List<_JpegHuffmanTable?> huffmanTablesDc = List<_JpegHuffmanTable?>.filled(_huffmanTableCount, null);
 
   /// Spatial sample planes produced after inverse transformation.
   final List<_JpegComponentData> components = [];
@@ -69,6 +72,8 @@ final class _JpegData {
           verticalSamples: component.verticalSamples,
           maximumVerticalSamples: decodedFrame.maximumVerticalSamples,
           lines: _buildComponentData(component),
+          width: decodedFrame.samplesPerLine,
+          height: decodedFrame.scanLines,
         ),
       );
     }
@@ -281,7 +286,7 @@ final class _JpegData {
       final bool alternatingCurrent = (specification & 0x10) != 0;
       final int tableClass = specification >>> 4;
       final int identifier = specification & 0x0f;
-      if (tableClass > 1 || identifier >= 4) {
+      if (tableClass > 1 || identifier >= _huffmanTableCount) {
         throw const ImageCodecException('Invalid JPEG Huffman-table specification');
       }
       final Uint8List codeLengths = Uint8List(16);
@@ -293,13 +298,10 @@ final class _JpegData {
       if (valueCount > 256 || valueCount > block.length) {
         throw const ImageCodecException('Invalid JPEG Huffman-table length');
       }
-      final Uint8List values = block.readBytes(valueCount).toUint8List();
-      final List<_JpegHuffmanNode?> tree = _buildHuffmanTree(codeLengths, values);
-      final List<List<_JpegHuffmanNode?>?> tables = alternatingCurrent ? huffmanTablesAc : huffmanTablesDc;
-      if (tables.length <= identifier) {
-        tables.length = identifier + 1;
-      }
-      tables[identifier] = tree;
+      final Uint8List values = Uint8List.fromList(block.readBytes(valueCount).toUint8List());
+      final _JpegHuffmanTable table = _JpegHuffmanTable(codeLengths: codeLengths, symbols: values);
+      final List<_JpegHuffmanTable?> tables = alternatingCurrent ? huffmanTablesAc : huffmanTablesDc;
+      tables[identifier] = table;
     }
   }
 
@@ -352,14 +354,14 @@ final class _JpegData {
       final _JpegComponent component = scanComponents[index];
       if (spectralStart == 0) {
         final int tableIndex = directCurrentIndices[index];
-        if (tableIndex >= huffmanTablesDc.length || huffmanTablesDc[tableIndex] == null) {
+        if (tableIndex >= _huffmanTableCount || huffmanTablesDc[tableIndex] == null) {
           throw const ImageCodecException('JPEG scan references a missing direct-current Huffman table');
         }
         component.huffmanTableDc = huffmanTablesDc[tableIndex]!;
       }
       if (spectralEnd > 0) {
         final int tableIndex = alternatingCurrentIndices[index];
-        if (tableIndex >= huffmanTablesAc.length || huffmanTablesAc[tableIndex] == null) {
+        if (tableIndex >= _huffmanTableCount || huffmanTablesAc[tableIndex] == null) {
           throw const ImageCodecException('JPEG scan references a missing alternating-current Huffman table');
         }
         component.huffmanTableAc = huffmanTablesAc[tableIndex]!;
@@ -376,62 +378,6 @@ final class _JpegData {
       successive: successive,
     ).decode();
     _hasScan = true;
-  }
-
-  /// Builds a binary decoding tree from canonical code lengths and values.
-  List<_JpegHuffmanNode?> _buildHuffmanTree(Uint8List codeLengths, Uint8List values) {
-    int valueIndex = 0;
-    final List<_JpegHuffmanBuilder> levels = [_JpegHuffmanBuilder()];
-    final _JpegHuffmanBuilder root = levels.first;
-    int maximumLength = codeLengths.length;
-    while (maximumLength > 0 && codeLengths[maximumLength - 1] == 0) {
-      maximumLength--;
-    }
-    _JpegHuffmanBuilder current = root;
-    for (int length = 0; length < maximumLength; length++) {
-      for (int code = 0; code < codeLengths[length]; code++) {
-        if (levels.isEmpty || valueIndex >= values.length) {
-          throw const ImageCodecException('Invalid JPEG Huffman code distribution');
-        }
-        current = levels.removeLast();
-        _setHuffmanChild(current, _JpegHuffmanValue(value: values[valueIndex++]));
-        while (current.index > 0) {
-          if (levels.isEmpty) {
-            throw const ImageCodecException('Oversubscribed JPEG Huffman table');
-          }
-          current = levels.removeLast();
-        }
-        current.index++;
-        levels.add(current);
-        while (levels.length <= length) {
-          final _JpegHuffmanBuilder child = _JpegHuffmanBuilder();
-          levels.add(child);
-          _setHuffmanChild(current, _JpegHuffmanBranch(children: child.children));
-          current = child;
-        }
-      }
-      if (length + 1 < maximumLength) {
-        final _JpegHuffmanBuilder child = _JpegHuffmanBuilder();
-        levels.add(child);
-        _setHuffmanChild(current, _JpegHuffmanBranch(children: child.children));
-        current = child;
-      }
-    }
-    if (valueIndex != values.length) {
-      throw const ImageCodecException('Invalid JPEG Huffman table');
-    }
-    return root.children;
-  }
-
-  /// Assigns one child while enforcing a binary branch width.
-  void _setHuffmanChild(_JpegHuffmanBuilder parent, _JpegHuffmanNode child) {
-    if (parent.index > 1) {
-      throw const ImageCodecException('Oversubscribed JPEG Huffman table');
-    }
-    if (parent.children.length <= parent.index) {
-      parent.children.length = parent.index + 1;
-    }
-    parent.children[parent.index] = child;
   }
 
   /// Applies inverse transformation to every block of one component.
@@ -469,16 +415,4 @@ final class _JpegData {
       throw ImageCodecException('Decoded image contains $pixelCount pixels, exceeding the $maxPixels pixel limit');
     }
   }
-}
-
-/// Builds one mutable Huffman branch during canonical tree construction.
-final class _JpegHuffmanBuilder {
-  /// Child nodes indexed by the next entropy bit.
-  final List<_JpegHuffmanNode?> children = [];
-
-  /// Branch position to fill next.
-  int index = 0;
-
-  /// Creates an empty branch builder.
-  _JpegHuffmanBuilder();
 }

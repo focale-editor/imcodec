@@ -23,11 +23,11 @@ final class _JpegComponent {
   /// Frequency coefficients including minimum-coded-unit padding.
   late List<List<Int32List>> blocks;
 
-  /// Huffman tree used for direct-current coefficients.
-  late List<_JpegHuffmanNode?> huffmanTableDc;
+  /// Huffman table used for direct-current coefficients.
+  late _JpegHuffmanTable huffmanTableDc;
 
-  /// Huffman tree used for alternating-current coefficients.
-  late List<_JpegHuffmanNode?> huffmanTableAc;
+  /// Huffman table used for alternating-current coefficients.
+  late _JpegHuffmanTable huffmanTableAc;
 
   /// Previous direct-current coefficient for differential coding.
   int prediction = 0;

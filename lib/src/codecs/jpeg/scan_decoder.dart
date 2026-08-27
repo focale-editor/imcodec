@@ -26,7 +26,10 @@ final class _JpegScanDecoder {
   /// Current progressive approximation bit position.
   final int successive;
 
-  /// Last entropy byte loaded into the bit reader.
+  /// Mask applied to the entropy bit register.
+  static const int _bitDataMask = 0xffffffffff;
+
+  /// Buffered entropy bits, most significant bit first.
   int _bitData = 0;
 
   /// Number of unread bits in [_bitData].
@@ -93,6 +96,8 @@ final class _JpegScanDecoder {
         }
       }
       _bitCount = 0;
+      _bitData = 0;
+      _successiveState = 0;
       if (unit < expectedUnits) {
         if (input.length < 2 || input[0] != 0xff || input[1] != expectedRestartMarker) {
           throw const ImageCodecException('JPEG restart marker is missing or out of sequence');
@@ -103,14 +108,16 @@ final class _JpegScanDecoder {
     }
   }
 
-  /// Reads one entropy bit while handling byte stuffing.
-  int _readBit() {
-    if (_bitCount == 0) {
+  /// Fills the bit register so that it holds at least [count] bits.
+  /// Byte stuffing is unwound here so that the hot decoding paths only see a
+  /// continuous bit stream.
+  void _fill(int count) {
+    while (_bitCount < count) {
       if (input.isEOS) {
         throw const ImageCodecException('JPEG entropy data is truncated');
       }
-      _bitData = input.readByte();
-      if (_bitData == 0xff) {
+      final int byte = input.readByte();
+      if (byte == 0xff) {
         if (input.isEOS) {
           throw const ImageCodecException('JPEG entropy data ends inside a marker');
         }
@@ -120,38 +127,74 @@ final class _JpegScanDecoder {
           throw const ImageCodecException('JPEG entropy scan ended before all coefficients were decoded');
         }
       }
-      _bitCount = 8;
+      _bitData = ((_bitData << 8) | byte) & _bitDataMask;
+      _bitCount += 8;
+    }
+  }
+
+  /// Reads one entropy bit while handling byte stuffing.
+  int _readBit() {
+    if (_bitCount == 0) {
+      _fill(1);
     }
     _bitCount--;
     return (_bitData >>> _bitCount) & 1;
   }
 
-  /// Walks one Huffman tree and returns its symbol.
-  int _decodeHuffman(List<_JpegHuffmanNode?> tree) {
-    _JpegHuffmanNode node = _JpegHuffmanBranch(children: tree);
-    for (int depth = 0; depth < 16; depth++) {
-      if (node is! _JpegHuffmanBranch) {
-        break;
+  /// Decodes one Huffman symbol using a direct lookup with canonical fallback.
+  int _decodeHuffman(_JpegHuffmanTable table) {
+    const int lookupBits = _JpegHuffmanTable.lookupBits;
+    if (_bitCount < lookupBits) {
+      _fillOrPad(lookupBits);
+    }
+    final int prefix = (_bitData >>> (_bitCount - lookupBits)) & ((1 << lookupBits) - 1);
+    final int entry = table.lookup[prefix];
+    if (entry != 0) {
+      final int length = entry >>> 8;
+      if (length > _bitCount) {
+        throw const ImageCodecException('JPEG entropy data is truncated');
       }
-      final int bit = _readBit();
-      if (bit >= node.children.length || node.children[bit] == null) {
-        throw const ImageCodecException('JPEG entropy data contains an invalid Huffman code');
-      }
-      node = node.children[bit]!;
-      if (node is _JpegHuffmanValue) {
-        return node.value;
+      _bitCount -= length;
+      return entry & 0xff;
+    }
+
+    int code = 0;
+    for (int length = 1; length <= 16; length++) {
+      code = (code << 1) | _readBit();
+      final int maximumCode = table.maximumCodes[length - 1];
+      if (maximumCode >= 0 && code <= maximumCode) {
+        return table.symbols[table.valueOffsets[length - 1] + code - table.minimumCodes[length - 1]];
       }
     }
-    throw const ImageCodecException('JPEG Huffman code exceeds sixteen bits');
+    throw const ImageCodecException('JPEG entropy data contains an invalid Huffman code');
+  }
+
+  /// Fills the register, tolerating a stream that ends mid-symbol.
+  /// The final Huffman code of a scan may be shorter than the lookup window,
+  /// so a truncated fill is only an error once the decoder consumes the
+  /// missing bits.
+  void _fillOrPad(int count) {
+    try {
+      _fill(count);
+    } on ImageCodecException {
+      if (_bitCount == 0) {
+        rethrow;
+      }
+      _bitData = (_bitData << (count - _bitCount)) & _bitDataMask;
+      _bitCount = count;
+    }
   }
 
   /// Reads an unsigned entropy value of [length] bits.
   int _receive(int length) {
-    int value = 0;
-    for (int bit = 0; bit < length; bit++) {
-      value = (value << 1) | _readBit();
+    if (length == 0) {
+      return 0;
     }
-    return value;
+    if (_bitCount < length) {
+      _fill(length);
+    }
+    _bitCount -= length;
+    return (_bitData >>> _bitCount) & ((1 << length) - 1);
   }
 
   /// Reads a JPEG sign-magnitude coefficient difference.

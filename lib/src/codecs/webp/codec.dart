@@ -24,5 +24,5 @@ final class WebPCodec extends RasterCodec {
     this.rasterDecoder = const WebPDecoder(),
   }) : super(
          format: ImageFormat.webp,
-  );
+       );
 }

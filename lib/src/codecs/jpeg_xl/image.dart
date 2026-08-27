@@ -70,7 +70,7 @@ final class JpegXlDecodedImage {
     final int maximumAlphaValue = alphaExtraChannelIndex >= 0 ? _header.extraChannels[alphaExtraChannelIndex].bitDepth.maxValue : 1;
 
     /// Scales an integer sample to the unsigned eight-bit range.
-      int scaleInteger(int value, int maximum) {
+    int scaleInteger(int value, int maximum) {
       int clampedValue = value;
       if (clampedValue < 0) {
         clampedValue = 0;
@@ -85,7 +85,7 @@ final class JpegXlDecodedImage {
     }
 
     /// Reads and scales one sample from [plane].
-      int sample(ImageBuffer plane, int row, int column, int maximum) {
+    int sample(ImageBuffer plane, int row, int column, int maximum) {
       if (plane.isInt) {
         return scaleInteger(plane.intRows[row][column], maximum);
       }

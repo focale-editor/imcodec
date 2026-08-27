@@ -785,7 +785,7 @@ final class _Vp8LosslessDecoder {
   }
 
   /// Reads the optional Huffman meta-image and all referenced tree groups.
-    bool _readHuffmanCodes(int xSize, int ySize, int colorCacheBits, bool allowRecursion) {
+  bool _readHuffmanCodes(int xSize, int ySize, int colorCacheBits, bool allowRecursion) {
     Uint32List? huffmanImage;
     var numHtreeGroups = 1;
 
@@ -835,7 +835,7 @@ final class _Vp8LosslessDecoder {
   }
 
   /// Reads one simple or canonical Huffman tree for [alphabetSize] symbols.
-    bool _readHuffmanCode(int alphabetSize, _WebPHuffmanTree tree) {
+  bool _readHuffmanCode(int alphabetSize, _WebPHuffmanTree tree) {
     var ok = false;
     final int simpleCode = bitReader.readBits(1);
 
@@ -887,7 +887,7 @@ final class _Vp8LosslessDecoder {
   }
 
   /// Expands repeat-coded Huffman lengths into [codeLengths].
-    bool _readHuffmanCodeLengths(List<int> codeLengthCodeLengths, int numSymbols, List<int> codeLengths) {
+  bool _readHuffmanCodeLengths(List<int> codeLengthCodeLengths, int numSymbols, List<int> codeLengths) {
     //bool ok = false;
     int symbol;
     int maxSymbol;
@@ -947,7 +947,7 @@ final class _Vp8LosslessDecoder {
   }
 
   /// Decodes the backward-reference value represented by [distanceSymbol].
-    int _getCopyDistance(int distanceSymbol) {
+  int _getCopyDistance(int distanceSymbol) {
     if (distanceSymbol < 4) {
       return distanceSymbol + 1;
     }
@@ -957,10 +957,10 @@ final class _Vp8LosslessDecoder {
   }
 
   /// Decodes the backward-reference length represented by [lengthSymbol].
-    int _getCopyLength(int lengthSymbol) => _getCopyDistance(lengthSymbol);
+  int _getCopyLength(int lengthSymbol) => _getCopyDistance(lengthSymbol);
 
   /// Converts a compact two-dimensional [planeCode] to a linear distance.
-    int _planeCodeToDistance(int xsize, int planeCode) {
+  int _planeCodeToDistance(int xsize, int planeCode) {
     if (planeCode > _codeToPlaneCodes) {
       return planeCode - _codeToPlaneCodes;
     } else {
@@ -975,12 +975,12 @@ final class _Vp8LosslessDecoder {
 
   // Computes sampled size of 'size' when sampling using 'sampling bits'.
   /// Returns the ceiling of [size] divided by the sampling block size.
-    static int _subsampledSize(int size, int samplingBits) => (size + (1 << samplingBits) - 1) >> samplingBits;
+  static int _subsampledSize(int size, int samplingBits) => (size + (1 << samplingBits) - 1) >> samplingBits;
 
   // For security reason, we need to remap the color map to span
   // the total possible bundled values, and not just the num_colors.
   /// Reconstructs [numColors] cumulative entries in a palette transform.
-    bool _expandColorMap(int numColors, _Vp8LosslessTransform transform) {
+  bool _expandColorMap(int numColors, _Vp8LosslessTransform transform) {
     final int finalNumColors = 1 << (8 >> transform.bits);
     final newColorMap = Uint32List(finalNumColors);
     final data = Uint8List.view(transform.data!.buffer);
@@ -1006,7 +1006,7 @@ final class _Vp8LosslessDecoder {
   }
 
   /// Returns the meta-image value selecting the tile containing ([x], [y]).
-    int _getMetaIndex(Uint32List? image, int xsize, int bits, int x, int y) {
+  int _getMetaIndex(Uint32List? image, int xsize, int bits, int x, int y) {
     if (bits == 0) {
       return 0;
     }
@@ -1014,7 +1014,7 @@ final class _Vp8LosslessDecoder {
   }
 
   /// Returns the Huffman tree group selected for pixel ([x], [y]).
-    _WebPHuffmanTreeGroup _huffmanTreeGroupAt(int x, int y) {
+  _WebPHuffmanTreeGroup _huffmanTreeGroupAt(int x, int y) {
     final int metaIndex = _getMetaIndex(_huffmanImage, _huffmanWidth, _huffmanSubsampleBits, x, y);
     return _huffmanTreeGroups[metaIndex];
   }

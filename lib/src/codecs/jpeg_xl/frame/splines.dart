@@ -40,10 +40,10 @@ final class SplinesBundle {
   late final List<List<int>> bCoefficients;
 
   /// Sigma coefficients processed by the splines bundle.
-    late final List<List<int>> sigmaCoefficients;
+  late final List<List<int>> sigmaCoefficients;
 
   /// Reads this structure from the bitstream.
-    SplinesBundle.read({
+  SplinesBundle.read({
     required BitReader reader,
   }) {
     final stream = EntropyStream.read(reader: reader, distributionCount: 6);

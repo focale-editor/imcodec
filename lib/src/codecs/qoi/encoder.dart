@@ -17,25 +17,29 @@ final class QoiEncoder extends RasterEncoder {
     if (image.width > 0xffffffff || image.height > 0xffffffff) {
       throw const ImageCodecException('QOI dimensions may not exceed 4294967295 pixels');
     }
+    final Uint8List bytes = image.bytes;
     final OutputBuffer output = OutputBuffer(bigEndian: true)
       ..writeBytes(_magic)
       ..writeUint32(image.width)
       ..writeUint32(image.height)
-      ..writeByte(_hasTransparency(image) ? 4 : 3)
+      ..writeByte(_hasTransparency(bytes) ? 4 : 3)
       ..writeByte(0);
-    final List<_QoiColor> index = List<_QoiColor>.filled(64, const _QoiColor(red: 0, green: 0, blue: 0, alpha: 0));
-    _QoiColor previous = const _QoiColor(red: 0, green: 0, blue: 0, alpha: 255);
+    // Colors stay packed in integers so that the running index and the pixel
+    // loop never allocate.
+    final Int32List index = Int32List(64);
+    int previousRed = 0;
+    int previousGreen = 0;
+    int previousBlue = 0;
+    int previousAlpha = 255;
     int run = 0;
     final int pixelCount = image.width * image.height;
     for (int pixel = 0; pixel < pixelCount; pixel++) {
       final int offset = pixel * 4;
-      final _QoiColor color = _QoiColor(
-        red: image.bytes[offset],
-        green: image.bytes[offset + 1],
-        blue: image.bytes[offset + 2],
-        alpha: image.bytes[offset + 3],
-      );
-      if (color == previous) {
+      final int red = bytes[offset];
+      final int green = bytes[offset + 1];
+      final int blue = bytes[offset + 2];
+      final int alpha = bytes[offset + 3];
+      if (red == previousRed && green == previousGreen && blue == previousBlue && alpha == previousAlpha) {
         run++;
         if (run == 62 || pixel == pixelCount - 1) {
           output.writeByte(0xc0 | (run - 1));
@@ -48,17 +52,20 @@ final class QoiEncoder extends RasterEncoder {
         run = 0;
       }
 
-      final int indexPosition = color.hashPosition;
-      if (index[indexPosition] == color) {
+      final int packed = (red << 24) | (green << 16) | (blue << 8) | alpha;
+      final int indexPosition = (red * 3 + green * 5 + blue * 7 + alpha * 11) & 63;
+      if (index[indexPosition] == packed) {
         output.writeByte(indexPosition);
       } else {
-        index[indexPosition] = color;
-        if (color.alpha == previous.alpha) {
-          final int redDifference = color.red - previous.red;
-          final int greenDifference = color.green - previous.green;
-          final int blueDifference = color.blue - previous.blue;
-          final int redGreenDifference = redDifference - greenDifference;
-          final int blueGreenDifference = blueDifference - greenDifference;
+        index[indexPosition] = packed;
+        if (alpha == previousAlpha) {
+          // Differences wrap around like the reference encoder's signed bytes,
+          // which lets values that cross zero still use the compact opcodes.
+          final int redDifference = _wrap(red - previousRed);
+          final int greenDifference = _wrap(green - previousGreen);
+          final int blueDifference = _wrap(blue - previousBlue);
+          final int redGreenDifference = _wrap(redDifference - greenDifference);
+          final int blueGreenDifference = _wrap(blueDifference - greenDifference);
           if (redDifference >= -2 && redDifference <= 1 && greenDifference >= -2 && greenDifference <= 1 && blueDifference >= -2 && blueDifference <= 1) {
             output.writeByte(0x40 | ((redDifference + 2) << 4) | ((greenDifference + 2) << 2) | (blueDifference + 2));
           } else if (greenDifference >= -32 && greenDifference <= 31 && redGreenDifference >= -8 && redGreenDifference <= 7 && blueGreenDifference >= -8 && blueGreenDifference <= 7) {
@@ -68,29 +75,35 @@ final class QoiEncoder extends RasterEncoder {
           } else {
             output
               ..writeByte(0xfe)
-              ..writeByte(color.red)
-              ..writeByte(color.green)
-              ..writeByte(color.blue);
+              ..writeByte(red)
+              ..writeByte(green)
+              ..writeByte(blue);
           }
         } else {
           output
             ..writeByte(0xff)
-            ..writeByte(color.red)
-            ..writeByte(color.green)
-            ..writeByte(color.blue)
-            ..writeByte(color.alpha);
+            ..writeByte(red)
+            ..writeByte(green)
+            ..writeByte(blue)
+            ..writeByte(alpha);
         }
       }
-      previous = color;
+      previousRed = red;
+      previousGreen = green;
+      previousBlue = blue;
+      previousAlpha = alpha;
     }
     output.writeBytes(_endMarker);
-    return Uint8List.fromList(output.getBytes());
+    return output.takeBytes();
   }
 
+  /// Reduces a channel difference to the signed byte range.
+  static int _wrap(int difference) => ((difference + 128) & 0xff) - 128;
+
   /// Reports whether any source pixel uses transparency.
-  bool _hasTransparency(Image image) {
-    for (int offset = 3; offset < image.bytes.length; offset += 4) {
-      if (image.bytes[offset] != 255) {
+  bool _hasTransparency(Uint8List bytes) {
+    for (int offset = 3; offset < bytes.length; offset += 4) {
+      if (bytes[offset] != 255) {
         return true;
       }
     }

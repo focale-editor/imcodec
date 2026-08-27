@@ -91,7 +91,9 @@ void main() {
 
       final Uint8List encoded = encodeQoi(red);
 
-      expect(encoded, [0x71, 0x6f, 0x69, 0x66, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 0xfe, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+      // Channel differences wrap around, so red 255 is one step below the
+      // initial black pixel and fits in a difference opcode.
+      expect(encoded, [0x71, 0x6f, 0x69, 0x66, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 0x5a, 0, 0, 0, 0, 0, 0, 0, 1]);
     });
 
     test('decodes an independent one-pixel RGB stream', () {

@@ -4,25 +4,25 @@ import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
 /// Describes the progressive coefficient passes declared by a frame header.
 final class ProgressivePasses {
   /// Number of coefficient passes.
-    final int passCount;
+  final int passCount;
 
   /// Number of downsampling stages.
-    final int downsamplingCount;
+  final int downsamplingCount;
 
   /// Bit shift applied to coefficients in each pass.
-    final List<int> coefficientShifts;
+  final List<int> coefficientShifts;
 
   /// Downsampling factor available after each stage.
-    final List<int> downsamplingFactors;
+  final List<int> downsamplingFactors;
 
   /// Final pass contributing to each downsampling stage.
-    final List<int> lastPassByDownsampling;
+  final List<int> lastPassByDownsampling;
 
   /// Returns the specification defaults.
-    ProgressivePasses.defaults() : passCount = 1, downsamplingCount = 0, coefficientShifts = const [0], downsamplingFactors = const [1], lastPassByDownsampling = const [0];
+  ProgressivePasses.defaults() : passCount = 1, downsamplingCount = 0, coefficientShifts = const [0], downsamplingFactors = const [1], lastPassByDownsampling = const [0];
 
   /// Reads progressive-pass metadata from [reader].
-    factory ProgressivePasses.read({
+  factory ProgressivePasses.read({
     required BitReader reader,
   }) {
     final int passCount = reader.readU32(1, 0, 2, 0, 3, 0, 4, 3);
@@ -52,7 +52,7 @@ final class ProgressivePasses {
   }
 
   /// Creates decoded progressive-pass metadata.
-    ProgressivePasses._({
+  ProgressivePasses._({
     required this.passCount,
     required this.downsamplingCount,
     required this.coefficientShifts,

@@ -783,134 +783,134 @@ final class _Vp8Decoder {
   static const _modeFilterDeltaCount = 4; // I4x4, ZERO, *, SPLIT
 
   /// Maximum number of coefficient-data partitions.
-    static const _maximumPartitionCount = 8;
+  static const _maximumPartitionCount = 8;
 
   /// Identifier for four-by-four direct-current prediction.
-    static const _intra4DirectCurrent = 0; // 4x4 modes
+  static const _intra4DirectCurrent = 0; // 4x4 modes
 
   /// Identifier for four-by-four true-motion prediction.
-    static const _intra4TrueMotion = 1;
+  static const _intra4TrueMotion = 1;
 
   /// Identifier for four-by-four vertical prediction.
-    static const _intra4Vertical = 2;
+  static const _intra4Vertical = 2;
 
   /// Identifier for four-by-four horizontal prediction.
-    static const _intra4Horizontal = 3;
+  static const _intra4Horizontal = 3;
 
   /// Identifier for four-by-four down-right prediction.
-    static const _intra4DownRight = 4;
+  static const _intra4DownRight = 4;
 
   /// Identifier for four-by-four vertical-right prediction.
-    static const _intra4VerticalRight = 5;
+  static const _intra4VerticalRight = 5;
 
   /// Identifier for four-by-four down-left prediction.
-    static const _intra4DownLeft = 6;
+  static const _intra4DownLeft = 6;
 
   /// Identifier for four-by-four vertical-left prediction.
-    static const _intra4VerticalLeft = 7;
+  static const _intra4VerticalLeft = 7;
 
   /// Identifier for four-by-four horizontal-down prediction.
-    static const _intra4HorizontalDown = 8;
+  static const _intra4HorizontalDown = 8;
 
   /// Identifier for four-by-four horizontal-up prediction.
-    static const _intra4HorizontalUp = 9;
+  static const _intra4HorizontalUp = 9;
 
   // Luma16 or UV modes
   /// Identifier for macroblock direct-current prediction.
-    static const int _directCurrentPrediction = _intra4DirectCurrent;
+  static const int _directCurrentPrediction = _intra4DirectCurrent;
 
   /// Identifier for macroblock vertical prediction.
-    static const int _verticalPrediction = _intra4Vertical;
+  static const int _verticalPrediction = _intra4Vertical;
 
   /// Identifier for macroblock horizontal prediction.
-    static const int _horizontalPrediction = _intra4Horizontal;
+  static const int _horizontalPrediction = _intra4Horizontal;
 
   /// Identifier for macroblock true-motion prediction.
-    static const int _trueMotionPrediction = _intra4TrueMotion;
+  static const int _trueMotionPrediction = _intra4TrueMotion;
 
   // special modes
   /// Direct-current mode used without top neighbors.
-    static const _directCurrentWithoutTop = 4;
+  static const _directCurrentWithoutTop = 4;
 
   /// Direct-current mode used without left neighbors.
-    static const _directCurrentWithoutLeft = 5;
+  static const _directCurrentWithoutLeft = 5;
 
   /// Direct-current mode used without any neighbors.
-    static const _directCurrentWithoutNeighbors = 6;
+  static const _directCurrentWithoutNeighbors = 6;
 
   // Probabilities
   /// Number of coefficient block types.
-    static const _coefficientTypeCount = 4;
+  static const _coefficientTypeCount = 4;
 
   /// Number of coefficient probability bands.
-    static const _coefficientBandCount = 8;
+  static const _coefficientBandCount = 8;
 
   /// Number of neighboring-coefficient contexts.
-    static const _coefficientContextCount = 3;
+  static const _coefficientContextCount = 3;
 
   /// Number of decisions in a coefficient probability node.
-    static const _coefficientProbabilityCount = 11;
+  static const _coefficientProbabilityCount = 11;
 
   /// Shared row stride of the reconstruction buffer.
-    static const reconstructionStride = 32; // this is the common stride used by yuv[]
+  static const reconstructionStride = 32; // this is the common stride used by yuv[]
 
   /// Number of samples in the reconstruction buffer.
-    static const int _reconstructionBufferSize = reconstructionStride * 17 + reconstructionStride * 9;
+  static const int _reconstructionBufferSize = reconstructionStride * 17 + reconstructionStride * 9;
 
   /// Luma-plane offset in the reconstruction buffer.
-    static const int _lumaOffset = reconstructionStride * 1 + 8;
+  static const int _lumaOffset = reconstructionStride * 1 + 8;
 
   /// Blue-difference-plane offset in the reconstruction buffer.
-    static const int _blueDifferenceOffset = _lumaOffset + reconstructionStride * 16 + reconstructionStride;
+  static const int _blueDifferenceOffset = _lumaOffset + reconstructionStride * 16 + reconstructionStride;
 
   /// Red-difference-plane offset in the reconstruction buffer.
-    static const int _redDifferenceOffset = _blueDifferenceOffset + 16;
+  static const int _redDifferenceOffset = _blueDifferenceOffset + 16;
 
   /// Fractional precision of fixed-point YUV conversion.
-    static const _colorConversionFractionBits = 14; // fixed-point precision for YUV->RGB
+  static const _colorConversionFractionBits = 14; // fixed-point precision for YUV->RGB
 
   /// Rounding term for fixed-point YUV conversion.
-    static const int _colorConversionRounding = 1 << (_colorConversionFractionBits - 1);
+  static const int _colorConversionRounding = 1 << (_colorConversionFractionBits - 1);
 
   /// Mask covering the valid fixed-point color range.
-    static const int _colorConversionMask = (256 << _colorConversionFractionBits) - 1;
+  static const int _colorConversionMask = (256 << _colorConversionFractionBits) - 1;
 
   /// Complement of the fixed-point color mask.
-    static const int _inverseColorConversionMask = -_colorConversionMask - 1;
+  static const int _inverseColorConversionMask = -_colorConversionMask - 1;
 
   // These constants are 14b fixed-point version of ITU-R BT.601 constants.
   /// Fixed-point scale converting limited-range luma.
-    static const _lumaScale = 19077; // 1.164 = 255 / 219
+  static const _lumaScale = 19077; // 1.164 = 255 / 219
 
   /// Fixed-point red-difference contribution to red.
-    static const _redDifferenceToRed = 26149; // 1.596 = 255 / 112 * 0.701
+  static const _redDifferenceToRed = 26149; // 1.596 = 255 / 112 * 0.701
 
   /// Fixed-point blue-difference contribution to green.
-    static const _blueDifferenceToGreen = 6419; // 0.391 = 255 / 112 * 0.886 * 0.114 / 0.587
+  static const _blueDifferenceToGreen = 6419; // 0.391 = 255 / 112 * 0.886 * 0.114 / 0.587
 
   /// Fixed-point red-difference contribution to green.
-    static const _redDifferenceToGreen = 13320; // 0.813 = 255 / 112 * 0.701 * 0.299 / 0.587
+  static const _redDifferenceToGreen = 13320; // 0.813 = 255 / 112 * 0.701 * 0.299 / 0.587
 
   /// Fixed-point blue-difference contribution to blue.
-    static const _blueDifferenceToBlue = 33050; // 2.018 = 255 / 112 * 0.886
+  static const _blueDifferenceToBlue = 33050; // 2.018 = 255 / 112 * 0.886
 
   /// Fixed-point offset applied while reconstructing red.
-    static const int _redConversionOffset = -_lumaScale * 16 - _redDifferenceToRed * 128 + _colorConversionRounding;
+  static const int _redConversionOffset = -_lumaScale * 16 - _redDifferenceToRed * 128 + _colorConversionRounding;
 
   /// Fixed-point offset applied while reconstructing green.
-    static const int _greenConversionOffset = -_lumaScale * 16 + _blueDifferenceToGreen * 128 + _redDifferenceToGreen * 128 + _colorConversionRounding;
+  static const int _greenConversionOffset = -_lumaScale * 16 + _blueDifferenceToGreen * 128 + _redDifferenceToGreen * 128 + _colorConversionRounding;
 
   /// Fixed-point offset applied while reconstructing blue.
-    static const int _blueConversionOffset = -_lumaScale * 16 - _blueDifferenceToBlue * 128 + _colorConversionRounding;
+  static const int _blueConversionOffset = -_lumaScale * 16 - _blueDifferenceToBlue * 128 + _colorConversionRounding;
 
   /// Creates a decoder over one lossy VP8 payload.
-    _Vp8Decoder({
+  _Vp8Decoder({
     required this.input,
     required this.information,
   });
 
   /// Reads the uncompressed VP8 key-frame header.
-    bool _decodeHeader() {
+  bool _decodeHeader() {
     final int bits = input.readUint24();
 
     final keyFrame = (bits & 1) == 0;
@@ -946,7 +946,7 @@ final class _Vp8Decoder {
   }
 
   /// Decodes the payload, returning null when its VP8 data is invalid.
-    Image? decode() {
+  Image? decode() {
     if (!_readHeaders()) {
       return null;
     }
@@ -967,7 +967,7 @@ final class _Vp8Decoder {
   }
 
   /// Reads all frame headers and coefficient partitions.
-    bool _readHeaders() {
+  bool _readHeaders() {
     if (!_decodeHeader()) {
       return false;
     }
@@ -1025,7 +1025,7 @@ final class _Vp8Decoder {
   }
 
   /// Reads macroblock segmentation settings.
-    bool _parseSegmentHeader(_Vp8SegmentHeader hdr, _Vp8Probabilities? proba) {
+  bool _parseSegmentHeader(_Vp8SegmentHeader hdr, _Vp8Probabilities? proba) {
     hdr.usesSegmentation = bitReader.readBoolean() != 0;
     if (hdr.usesSegmentation) {
       hdr.updatesMap = bitReader.readBoolean() != 0;
@@ -1052,7 +1052,7 @@ final class _Vp8Decoder {
   }
 
   /// Reads in-loop-filter settings.
-    bool _parseFilterHeader() {
+  bool _parseFilterHeader() {
     final _Vp8FilterHeader hdr = _filterHeader
       ..isSimple = bitReader.readBoolean() != 0
       ..level = bitReader.readBits(6)
@@ -1093,7 +1093,7 @@ final class _Vp8Decoder {
   // VP8_STATUS_NOT_ENOUGH_DATA is returned, and this is an unrecoverable error.
   // If the partitions were positioned ok, VP8_STATUS_OK is returned.
   /// Splits coefficient data into Boolean-coded partitions.
-    bool _parsePartitions(_WebPBuffer input) {
+  bool _parsePartitions(_WebPBuffer input) {
     var sz = 0;
     final int bufEnd = input.length;
 
@@ -1127,7 +1127,7 @@ final class _Vp8Decoder {
   }
 
   /// Reads and expands per-segment quantization factors.
-    void _parseQuant() {
+  void _parseQuant() {
     final int baseQ0 = bitReader.readBits(7);
     final int dqy1Dc = bitReader.readBoolean() != 0 ? bitReader.readSignedBits(4) : 0;
     final int dqy2Dc = bitReader.readBoolean() != 0 ? bitReader.readSignedBits(4) : 0;
@@ -1174,7 +1174,7 @@ final class _Vp8Decoder {
   }
 
   /// Reads coefficient and macroblock skip probabilities.
-    void _parseProbabilities() {
+  void _parseProbabilities() {
     final _Vp8Probabilities? proba = _probabilities;
     for (var t = 0; t < _coefficientTypeCount; ++t) {
       for (var b = 0; b < _coefficientBandCount; ++b) {
@@ -1196,7 +1196,7 @@ final class _Vp8Decoder {
   // Precompute the filtering strength for each segment and each i4x4/i16x16
   // mode.
   /// Builds filter strengths for every segment and prediction mode.
-    void _precomputeFilterStrengths() {
+  void _precomputeFilterStrengths() {
     if (_filterType! > 0) {
       final _Vp8FilterHeader hdr = _filterHeader;
       for (var s = 0; s < _segmentCount; ++s) {
@@ -1263,7 +1263,7 @@ final class _Vp8Decoder {
   }
 
   /// Allocates frame-sized caches and initializes row state.
-    bool _initializeFrame() {
+  bool _initializeFrame() {
     if (information.alphaData != null) {
       _compressedAlpha = information.alphaData;
     }
@@ -1348,7 +1348,7 @@ final class _Vp8Decoder {
   }
 
   /// Decodes all macroblock rows in presentation order.
-    bool _parseFrame() {
+  bool _parseFrame() {
     for (_macroblockY = 0; _macroblockY < _bottomRightMacroblockY!; ++_macroblockY) {
       // Parse bitstream for this row.
       final _Vp8BitReader? tokenBr = _partitions[_macroblockY & (_partitionCount - 1)];
@@ -1375,7 +1375,7 @@ final class _Vp8Decoder {
   }
 
   /// Reconstructs, filters, and emits the current macroblock row.
-    bool _processRow() {
+  bool _processRow() {
     _reconstructRow();
 
     final bool useFilter = (_filterType! > 0) && (_macroblockY >= _topLeftMacroblockY) && (_macroblockY <= _bottomRightMacroblockY!);
@@ -1383,7 +1383,7 @@ final class _Vp8Decoder {
   }
 
   /// Reconstructs prediction and residual samples for one macroblock row.
-    void _reconstructRow() {
+  void _reconstructRow() {
     final int mbY = _macroblockY;
     final yDst = _WebPBuffer(data: _sampleBlock, offset: _lumaOffset);
     final uDst = _WebPBuffer(data: _sampleBlock, offset: _blueDifferenceOffset);
@@ -1519,7 +1519,7 @@ final class _Vp8Decoder {
   }
 
   /// Maps an unavailable-neighbor prediction mode to its valid fallback.
-    static int? _validatePredictionMode(int mbX, int mbY, int? mode) {
+  static int? _validatePredictionMode(int mbX, int mbY, int? mode) {
     if (mode == _intra4DirectCurrent) {
       if (mbX == 0) {
         return (mbY == 0) ? _directCurrentWithoutNeighbors : _directCurrentWithoutLeft;
@@ -1531,7 +1531,7 @@ final class _Vp8Decoder {
   }
 
   /// Applies the selected inverse transform to luma blocks.
-    void _inverseTransformLuma(int bits, _WebPBuffer src, _WebPBuffer dst) {
+  void _inverseTransformLuma(int bits, _WebPBuffer src, _WebPBuffer dst) {
     switch (bits >> 30) {
       case 3:
         _filter.inverseTransformLumaBlocks(src, dst, false);
@@ -1548,7 +1548,7 @@ final class _Vp8Decoder {
   }
 
   /// Applies the selected inverse transform to chroma blocks.
-    void _inverseTransformChroma(int bits, _WebPBuffer src, _WebPBuffer dst) {
+  void _inverseTransformChroma(int bits, _WebPBuffer src, _WebPBuffer dst) {
     if (bits & 0xff != 0) {
       // any non-zero coeff at all?
       if (bits & 0xaa != 0) {
@@ -1563,10 +1563,10 @@ final class _Vp8Decoder {
 
   // vertical position of a MB
   /// Returns the top pixel row of a macroblock row.
-    int _macroblockVerticalPosition(int mbY) => mbY * 16;
+  int _macroblockVerticalPosition(int mbY) => mbY * 16;
 
   /// Applies the configured in-loop filters to one macroblock.
-    void _filterMacroblock(int mbX, int mbY) {
+  void _filterMacroblock(int mbX, int mbY) {
     final int? yBps = _lumaCacheStride;
     final _Vp8FilterInfo fInfo = _filterInformation[mbX]!;
     final yDst = _WebPBuffer.from(source: _lumaCache, offset: mbX * 16);
@@ -1622,7 +1622,7 @@ final class _Vp8Decoder {
 
   // Filter the decoded macroblock row (if needed)
   /// Filters every visible macroblock in the current row.
-    void _filterRow() {
+  void _filterRow() {
     for (int mbX = _topLeftMacroblockX; mbX < _bottomRightMacroblockX!; ++mbX) {
       _filterMacroblock(mbX, _macroblockY);
     }
@@ -1639,7 +1639,7 @@ final class _Vp8Decoder {
   //  * we must clip the remaining pixels against the cropping area. The VP8Io
   //   struct must have the following fields set correctly before calling put():
   /// Finalizes filtering and emits all complete output rows.
-    bool _finishRow(bool useFilter) {
+  bool _finishRow(bool useFilter) {
     final int extraYRows = _filterExtraRows[_filterType!];
     final int ySize = extraYRows * _lumaCacheStride!;
     final int uvSize = (extraYRows ~/ 2) * _chromaCacheStride!;
@@ -1718,7 +1718,7 @@ final class _Vp8Decoder {
   }
 
   /// Converts and writes a group of reconstructed output rows.
-    bool _writeOutputRows(int mbY, int mbW, int mbH) {
+  bool _writeOutputRows(int mbY, int mbW, int mbH) {
     if (mbW <= 0 || mbH <= 0) {
       return false;
     }
@@ -1733,7 +1733,7 @@ final class _Vp8Decoder {
   }
 
   /// Clips a fixed-point color value to an unsigned byte.
-    int _clipColorSample(int v) {
+  int _clipColorSample(int v) {
     final int d = ((v & _inverseColorConversionMask) == 0)
         ? (v >> _colorConversionFractionBits)
         : (v < 0)
@@ -1743,29 +1743,29 @@ final class _Vp8Decoder {
   }
 
   /// Converts one YUV sample to red.
-    int _yuvToR(int y, int v) => _clipColorSample(_lumaScale * y + _redDifferenceToRed * v + _redConversionOffset);
+  int _yuvToR(int y, int v) => _clipColorSample(_lumaScale * y + _redDifferenceToRed * v + _redConversionOffset);
 
   /// Converts one YUV sample to green.
-    int _yuvToG(int y, int u, int v) => _clipColorSample(_lumaScale * y - _blueDifferenceToGreen * u - _redDifferenceToGreen * v + _greenConversionOffset);
+  int _yuvToG(int y, int u, int v) => _clipColorSample(_lumaScale * y - _blueDifferenceToGreen * u - _redDifferenceToGreen * v + _greenConversionOffset);
 
   /// Converts one YUV sample to blue.
-    int _yuvToB(int y, int u) => _clipColorSample(_lumaScale * y + _blueDifferenceToBlue * u + _blueConversionOffset);
+  int _yuvToB(int y, int u) => _clipColorSample(_lumaScale * y + _blueDifferenceToBlue * u + _blueConversionOffset);
 
   /// Writes one opaque RGB pixel from YUV samples.
-    void _yuvToRgb(int y, int u, int v, _WebPBuffer rgb) {
+  void _yuvToRgb(int y, int u, int v, _WebPBuffer rgb) {
     rgb[0] = _yuvToR(y, v);
     rgb[1] = _yuvToG(y, u, v);
     rgb[2] = _yuvToB(y, u);
   }
 
   /// Writes one RGBA pixel from YUV samples and decoded alpha.
-    void _yuvToRgba(int y, int u, int v, _WebPBuffer rgba) {
+  void _yuvToRgba(int y, int u, int v, _WebPBuffer rgba) {
     _yuvToRgb(y, u, v, rgba);
     rgba[3] = 0xff;
   }
 
   /// Upsamples adjacent chroma rows while converting them to RGB.
-    void _upsample(_WebPBuffer topY, _WebPBuffer? bottomY, _WebPBuffer topU, _WebPBuffer topV, _WebPBuffer curU, _WebPBuffer curV, _WebPBuffer topDst, _WebPBuffer? bottomDst, int len) {
+  void _upsample(_WebPBuffer topY, _WebPBuffer? bottomY, _WebPBuffer topU, _WebPBuffer topV, _WebPBuffer curU, _WebPBuffer curV, _WebPBuffer topDst, _WebPBuffer? bottomDst, int len) {
     int loadUv(int u, int v) => u | (v << 16);
 
     final int lastPixelPair = (len - 1) >> 1;
@@ -1820,7 +1820,7 @@ final class _Vp8Decoder {
   }
 
   /// Copies decoded alpha values into the output image.
-    void _writeAlpha(int mbY, int mbW, int mbH) {
+  void _writeAlpha(int mbY, int mbW, int mbH) {
     if (_alphaRows == null) {
       return;
     }
@@ -1860,7 +1860,7 @@ final class _Vp8Decoder {
   }
 
   /// Converts reconstructed YUV rows to interleaved RGBA.
-    int _writeUpsampledRgb(int mbY, int mbW, int mbH) {
+  int _writeUpsampledRgb(int mbY, int mbW, int mbH) {
     var numLinesOut = mbH; // a priori guess
     final Uint8List outputBytes = _output!.bytes;
     final dst = _WebPBuffer(data: outputBytes, offset: mbY * information.width * 4);
@@ -1917,7 +1917,7 @@ final class _Vp8Decoder {
   }
 
   /// Decodes and returns the requested alpha rows.
-    _WebPBuffer? _decodeAlphaRows(int row, int numRows) {
+  _WebPBuffer? _decodeAlphaRows(int row, int numRows) {
     final int width = information.width;
     final int height = information.height;
 
@@ -1945,7 +1945,7 @@ final class _Vp8Decoder {
   }
 
   /// Decodes prediction modes and residuals for one macroblock.
-    bool _decodeMacroblock(_Vp8BitReader? tokenBr) {
+  bool _decodeMacroblock(_Vp8BitReader? tokenBr) {
     final _Vp8MacroBlock left = _macroblockInformation[0];
     final _Vp8MacroBlock mb = _macroblockInformation[1 + _macroblockX];
     final _Vp8MacroBlockData block = _macroblockData[_macroblockX];
@@ -1987,7 +1987,7 @@ final class _Vp8Decoder {
   }
 
   /// Reads quantized residual coefficients for one macroblock.
-    bool _parseResiduals(_Vp8MacroBlock mb, _Vp8BitReader? tokenBr) {
+  bool _parseResiduals(_Vp8MacroBlock mb, _Vp8BitReader? tokenBr) {
     final List<List<_Vp8BandProbabilities>> bands = _probabilities!.bandProbabilities;
     List<_Vp8BandProbabilities> acProba;
     final _Vp8QuantizationMatrix? q = _quantizationMatrices[_segmentIndex];
@@ -2091,7 +2091,7 @@ final class _Vp8Decoder {
   }
 
   /// Applies the inverse Walsh-Hadamard transform to luma DC coefficients.
-    void _inverseWalshHadamardTransform(_WebPBuffer src, _WebPBuffer out) {
+  void _inverseWalshHadamardTransform(_WebPBuffer src, _WebPBuffer out) {
     final tmp = Int32List(16);
 
     var oi = 0;
@@ -2122,7 +2122,7 @@ final class _Vp8Decoder {
   }
 
   /// Packs neighboring nonzero flags into a coefficient context.
-    int _nonZeroContext(int nzCoeffs, int nz, int dcNz) {
+  int _nonZeroContext(int nzCoeffs, int nz, int dcNz) {
     int result = nzCoeffs << 2;
     result |= (nz > 3)
         ? 3
@@ -2134,7 +2134,7 @@ final class _Vp8Decoder {
 
   // See section 13-2: http://tools.ietf.org/html/rfc6386#section-13.2
   /// Reads a coefficient magnitude greater than one.
-    int _readLargeCoefficient(_Vp8BitReader bitReader, List<int> p) {
+  int _readLargeCoefficient(_Vp8BitReader bitReader, List<int> p) {
     int v;
     if (bitReader.readBit(p[3]) == 0) {
       if (bitReader.readBit(p[4]) == 0) {
@@ -2168,7 +2168,7 @@ final class _Vp8Decoder {
 
   // Returns the position of the last non-zero coeff plus one
   /// Reads, dequantizes, and reorders one transform block.
-    int _readCoefficients(_Vp8BitReader? bitReader, List<_Vp8BandProbabilities> prob, int ctx, List<int> dq, int n, _WebPBuffer out) {
+  int _readCoefficients(_Vp8BitReader? bitReader, List<_Vp8BandProbabilities> prob, int ctx, List<int> dq, int n, _WebPBuffer out) {
     // n is either 0 or 1 here. _coefficientBands[n] is not necessary for extracting '*p'.
     int coefficient = n;
     List<int> p = prob[coefficient].probabilities[ctx];
@@ -2204,7 +2204,7 @@ final class _Vp8Decoder {
   }
 
   /// Reads luma and chroma intra-prediction modes.
-    void _parseIntraPredictionModes() {
+  void _parseIntraPredictionModes() {
     final int ti = 4 * _macroblockX;
     const li = 0;
     final Uint8List? top = _topIntraModes;
@@ -2261,7 +2261,7 @@ final class _Vp8Decoder {
   }
 
   /// Clamps a value to the inclusive range from zero to a maximum.
-    static int _clamp(int v, int M) => v < 0
+  static int _clamp(int v, int M) => v < 0
       ? 0
       : v > M
       ? M

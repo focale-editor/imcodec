@@ -805,7 +805,7 @@ final class _Vp8Filter {
   }
 
   /// Predicts luma from left samples when top samples are unavailable.
-    static void _predictDirectCurrentLumaWithoutTop(_WebPBuffer destination) {
+  static void _predictDirectCurrentLumaWithoutTop(_WebPBuffer destination) {
     int directCurrent = 8;
     for (int row = 0; row < 16; ++row) {
       directCurrent += destination[-1 + row * _Vp8Decoder.reconstructionStride];
@@ -814,7 +814,7 @@ final class _Vp8Filter {
   }
 
   /// Predicts luma from top samples when left samples are unavailable.
-    static void _predictDirectCurrentLumaWithoutLeft(_WebPBuffer destination) {
+  static void _predictDirectCurrentLumaWithoutLeft(_WebPBuffer destination) {
     int directCurrent = 8;
     for (int column = 0; column < 16; ++column) {
       directCurrent += destination[column - _Vp8Decoder.reconstructionStride];
@@ -823,14 +823,14 @@ final class _Vp8Filter {
   }
 
   /// Predicts neutral luma when no neighboring samples are available.
-    static void _predictDirectCurrentLumaWithoutNeighbors(
+  static void _predictDirectCurrentLumaWithoutNeighbors(
     _WebPBuffer destination,
   ) {
     _fillLumaBlock(0x80, destination);
   }
 
   /// Predicts an 8 by 8 chroma block from its top row.
-    static void _predictVerticalChroma(_WebPBuffer destination) {
+  static void _predictVerticalChroma(_WebPBuffer destination) {
     for (int row = 0; row < 8; ++row) {
       destination.memcpy(
         row * _Vp8Decoder.reconstructionStride,
@@ -842,7 +842,7 @@ final class _Vp8Filter {
   }
 
   /// Predicts an 8 by 8 chroma block from its left column.
-    static void _predictHorizontalChroma(_WebPBuffer destination) {
+  static void _predictHorizontalChroma(_WebPBuffer destination) {
     int destinationIndex = 0;
     for (int row = 0; row < 8; ++row) {
       destination.memset(
@@ -855,14 +855,14 @@ final class _Vp8Filter {
   }
 
   /// Fills an 8 by 8 chroma block with one sample value.
-    static void _fillChromaBlock(int value, _WebPBuffer destination) {
+  static void _fillChromaBlock(int value, _WebPBuffer destination) {
     for (int row = 0; row < 8; ++row) {
       destination.memset(row * _Vp8Decoder.reconstructionStride, 8, value);
     }
   }
 
   /// Predicts chroma from the direct-current value of all neighbors.
-    static void _predictDirectCurrentChroma(_WebPBuffer destination) {
+  static void _predictDirectCurrentChroma(_WebPBuffer destination) {
     int directCurrent = 8;
     for (int index = 0; index < 8; ++index) {
       directCurrent += destination[index - _Vp8Decoder.reconstructionStride] + destination[-1 + index * _Vp8Decoder.reconstructionStride];
@@ -871,7 +871,7 @@ final class _Vp8Filter {
   }
 
   /// Predicts chroma from top samples when left samples are unavailable.
-    static void _predictDirectCurrentChromaWithoutLeft(
+  static void _predictDirectCurrentChromaWithoutLeft(
     _WebPBuffer destination,
   ) {
     int directCurrent = 4;
@@ -882,7 +882,7 @@ final class _Vp8Filter {
   }
 
   /// Predicts chroma from left samples when top samples are unavailable.
-    static void _predictDirectCurrentChromaWithoutTop(
+  static void _predictDirectCurrentChromaWithoutTop(
     _WebPBuffer destination,
   ) {
     int directCurrent = 4;
@@ -893,20 +893,20 @@ final class _Vp8Filter {
   }
 
   /// Predicts neutral chroma when no neighboring samples are available.
-    static void _predictDirectCurrentChromaWithoutNeighbors(
+  static void _predictDirectCurrentChromaWithoutNeighbors(
     _WebPBuffer destination,
   ) {
     _fillChromaBlock(0x80, destination);
   }
 
   /// Multiplies two fixed-point values and restores their original scale.
-    static int _multiplyFixedPoint(int first, int second) {
+  static int _multiplyFixedPoint(int first, int second) {
     final int product = first * second;
     return _signedShiftRight(product, 16);
   }
 
   /// Adds a transformed value to one prediction sample and clips the result.
-    static void _storeSample(
+  static void _storeSample(
     _WebPBuffer destination,
     int destinationIndex,
     int x,
@@ -918,7 +918,7 @@ final class _Vp8Filter {
   }
 
   /// Stores one transformed row of four samples.
-    static void _storeFourSamples(
+  static void _storeFourSamples(
     _WebPBuffer destination,
     int y,
     int directCurrent,
@@ -932,7 +932,7 @@ final class _Vp8Filter {
   }
 
   /// Initializes the shared lookup tables once per isolate.
-    static void _initTables() {
+  static void _initTables() {
     if (!_tablesInitialized) {
       for (int value = -255; value <= 255; ++value) {
         _absolute[255 + value] = value < 0 ? -value : value;
@@ -964,7 +964,7 @@ final class _Vp8Filter {
   }
 
   /// Clips [value] to the unsigned byte range.
-    static int _clampToByte(int value) => ((value & -256) == 0)
+  static int _clampToByte(int value) => ((value & -256) == 0)
       ? value
       : (value < 0)
       ? 0

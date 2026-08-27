@@ -57,7 +57,7 @@ final class WebPEncoder extends RasterEncoder {
       output.writeByte(0);
     }
 
-    return output.getBytes();
+    return output.takeBytes();
   }
 
   /// Encodes [image] as a raw VP8L lossless bitstream.
@@ -70,7 +70,7 @@ final class WebPEncoder extends RasterEncoder {
 
     // VP8L image header: signature byte 0x2f + 28-bit header (w-1, h-1,
     // alpha_is_used, version=0) packed little-endian.
-    final bool hasAlpha = image.numChannels >= 4;
+    final bool hasAlpha = _hasTransparency(image);
     final int header = (width - 1) | ((height - 1) << 14) | ((hasAlpha ? 1 : 0) << 28);
     output
       ..writeByte(0x2f)
@@ -167,15 +167,16 @@ final class WebPEncoder extends RasterEncoder {
     // Hash table: RGBA key → recent positions (newest first, up to maxChain).
     const int maximumChainLength = 64;
     const int maximumMatchLength = 4096;
-    final Map<int, List<int>> hashChain = <int, List<int>>{};
+    // A match this long already codes as cheaply as a longer one would, so the
+    // search stops instead of walking the rest of the chain.
+    const int sufficientMatchLength = 64;
+    // Each colour keeps its most recent positions in a fixed-size ring, so a
+    // saturated chain costs one write instead of shifting the whole list.
+    final Map<int, _Vp8lPositionRing> hashChain = <int, _Vp8lPositionRing>{};
 
     void addToHash(int position) {
       final int key = (green[position] << 24) | (red[position] << 16) | (blue[position] << 8) | alpha[position];
-      final List<int> list = hashChain.putIfAbsent(key, () => <int>[]);
-      if (list.length >= maximumChainLength) {
-        list.removeAt(0);
-      }
-      list.add(position);
+      (hashChain[key] ??= _Vp8lPositionRing(maximumChainLength)).add(position);
     }
 
     int pixelIndex = 0;
@@ -186,10 +187,10 @@ final class WebPEncoder extends RasterEncoder {
       // Search for best match.
       int bestLength = 0;
       int bestDistance = 0;
-      final List<int>? candidates = hashChain[key];
+      final _Vp8lPositionRing? candidates = hashChain[key];
       if (pixelIndex > 0 && candidates != null) {
         for (int ci = candidates.length - 1; ci >= 0; ci--) {
-          final int candidateIndex = candidates[ci];
+          final int candidateIndex = candidates.at(ci);
           final int distance = pixelIndex - candidateIndex;
 
           // The VP8L specification limits the maximum distance to 1048576.
@@ -213,6 +214,9 @@ final class WebPEncoder extends RasterEncoder {
           if (matchLength > bestLength || (matchLength == bestLength && distance < bestDistance)) {
             bestLength = matchLength;
             bestDistance = distance;
+          }
+          if (bestLength >= sufficientMatchLength) {
+            break;
           }
         }
       }
@@ -325,12 +329,25 @@ final class WebPEncoder extends RasterEncoder {
 
     bitWriter.flush();
     output.writeBytes(bitWriter.getBytes());
-    return output.getBytes();
+    return output.takeBytes();
   }
 
   // ---------------------------------------------------------------------------
   // Transforms
   // ---------------------------------------------------------------------------
+
+  /// Reports whether any pixel is translucent.
+  /// The alpha flag is a container hint, so an opaque image must not claim to
+  /// carry transparency.
+  bool _hasTransparency(Image image) {
+    final Uint8List bytes = image.bytes;
+    for (int offset = 3; offset < bytes.length; offset += 4) {
+      if (bytes[offset] != 255) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   /// Subtracts the green channel from the red and blue channels in place.
   void _applySubtractGreenTransform({
@@ -1029,4 +1046,34 @@ final class _Vp8lBitWriter {
 
   /// Returns a copy of all emitted bytes.
   Uint8List getBytes() => Uint8List.fromList(_bytes);
+}
+
+/// Keeps the most recent positions of one colour in a fixed-size ring.
+final class _Vp8lPositionRing {
+  /// Stored positions, oldest first once the ring has wrapped.
+  final Int32List _positions;
+
+  /// Number of stored positions, capped at the ring size.
+  int length = 0;
+
+  /// Index of the next slot to overwrite.
+  int _next = 0;
+
+  /// Creates a ring holding at most [capacity] positions.
+  _Vp8lPositionRing(int capacity) : _positions = Int32List(capacity);
+
+  /// Records [position] as the most recent entry.
+  void add(int position) {
+    _positions[_next] = position;
+    _next = _next + 1 == _positions.length ? 0 : _next + 1;
+    if (length < _positions.length) {
+      length++;
+    }
+  }
+
+  /// Returns the position at [index], oldest first.
+  int at(int index) {
+    final int slot = length < _positions.length ? index : _next + index;
+    return _positions[slot >= _positions.length ? slot - _positions.length : slot];
+  }
 }

@@ -41,48 +41,39 @@ final class PngEncoder extends RasterEncoder {
       ..writeByte(0)
       ..writeByte(0)
       ..writeByte(0);
-    _writeChunk(output, _ihdr, Uint8List.fromList(header.getBytes()));
+    _writeChunk(output, _ihdr, header.getBytes());
 
     final Uint8List filtered = _filter(image);
     final Uint8List compressed = Uint8List.fromList(const ZlibCodec().encode(filtered, level: level));
     _writeChunk(output, _idat, compressed);
     _writeChunk(output, _iend, Uint8List(0));
-    return Uint8List.fromList(output.getBytes());
+    return output.takeBytes();
   }
 
   /// Applies the lowest-cost PNG predictor independently to every row.
+  /// Candidates are written into alternating scratch rows so the winning row
+  /// is copied once, and a candidate is abandoned as soon as its running cost
+  /// can no longer win.
   Uint8List _filter(Image image) {
-    final int rowLength = image.width * 4;
+    const int bytesPerPixel = 4;
+    final int rowLength = image.width * bytesPerPixel;
+    final Uint8List source = image.bytes;
     final Uint8List result = Uint8List((rowLength + 1) * image.height);
-    final Uint8List candidate = Uint8List(rowLength);
-    final Uint8List best = Uint8List(rowLength);
+    Uint8List candidate = Uint8List(rowLength);
+    Uint8List best = Uint8List(rowLength);
     for (int y = 0; y < image.height; y++) {
       final int sourceOffset = y * rowLength;
+      final int previousOffset = sourceOffset - rowLength;
       int bestFilter = 0;
-      int bestScore = 0x7fffffffffffffff;
+      int bestScore = -1;
       for (int filter = 0; filter <= 4; filter++) {
-        int score = 0;
-        for (int x = 0; x < rowLength; x++) {
-          final int value = image.bytes[sourceOffset + x];
-          final int left = x >= 4 ? image.bytes[sourceOffset + x - 4] : 0;
-          final int up = y > 0 ? image.bytes[sourceOffset - rowLength + x] : 0;
-          final int upperLeft = y > 0 && x >= 4 ? image.bytes[sourceOffset - rowLength + x - 4] : 0;
-          final int predictor = switch (filter) {
-            0 => 0,
-            1 => left,
-            2 => up,
-            3 => (left + up) >> 1,
-            4 => _paeth(left, up, upperLeft),
-            _ => throw StateError('Unknown PNG filter'),
-          };
-          final int filteredValue = (value - predictor) & 0xff;
-          candidate[x] = filteredValue;
-          score += filteredValue < 128 ? filteredValue : 256 - filteredValue;
-        }
-        if (score < bestScore) {
+        final int score = _applyFilter(source, candidate, sourceOffset, previousOffset, rowLength, bytesPerPixel, filter, y > 0, bestScore);
+        if (score >= 0 && (bestScore < 0 || score < bestScore)) {
           bestFilter = filter;
           bestScore = score;
-          best.setAll(0, candidate);
+          final Uint8List previousBest = best;
+          best = candidate;
+          candidate = previousBest;
         }
       }
       final int destinationOffset = y * (rowLength + 1);
@@ -90,6 +81,103 @@ final class PngEncoder extends RasterEncoder {
       result.setRange(destinationOffset + 1, destinationOffset + rowLength + 1, best);
     }
     return result;
+  }
+
+  /// Filters one row with [filter] and returns its absolute-difference score.
+  /// Returns -1 when the score passes [scoreLimit], which means the row can no
+  /// longer be the cheapest choice.
+  static int _applyFilter(
+    Uint8List source,
+    Uint8List destination,
+    int sourceOffset,
+    int previousOffset,
+    int rowLength,
+    int bytesPerPixel,
+    int filter,
+    bool hasPreviousRow,
+    int scoreLimit,
+  ) {
+    if (!hasPreviousRow && (filter == 2 || filter == 4)) {
+      // Without a previous row these filters degrade to filters already tried.
+      return -1;
+    }
+    final int leading = bytesPerPixel < rowLength ? bytesPerPixel : rowLength;
+    int score = 0;
+    switch (filter) {
+      case 0:
+        for (int x = 0; x < rowLength; x++) {
+          final int value = source[sourceOffset + x];
+          destination[x] = value;
+          score += value < 128 ? value : 256 - value;
+          if (scoreLimit >= 0 && score >= scoreLimit) {
+            return -1;
+          }
+        }
+      case 1:
+        for (int x = 0; x < leading; x++) {
+          final int value = source[sourceOffset + x];
+          destination[x] = value;
+          score += value < 128 ? value : 256 - value;
+        }
+        for (int x = bytesPerPixel; x < rowLength; x++) {
+          final int value = (source[sourceOffset + x] - source[sourceOffset + x - bytesPerPixel]) & 0xff;
+          destination[x] = value;
+          score += value < 128 ? value : 256 - value;
+          if (scoreLimit >= 0 && score >= scoreLimit) {
+            return -1;
+          }
+        }
+      case 2:
+        for (int x = 0; x < rowLength; x++) {
+          final int value = (source[sourceOffset + x] - source[previousOffset + x]) & 0xff;
+          destination[x] = value;
+          score += value < 128 ? value : 256 - value;
+          if (scoreLimit >= 0 && score >= scoreLimit) {
+            return -1;
+          }
+        }
+      case 3:
+        for (int x = 0; x < leading; x++) {
+          final int up = hasPreviousRow ? source[previousOffset + x] : 0;
+          final int value = (source[sourceOffset + x] - (up >> 1)) & 0xff;
+          destination[x] = value;
+          score += value < 128 ? value : 256 - value;
+        }
+        if (hasPreviousRow) {
+          for (int x = bytesPerPixel; x < rowLength; x++) {
+            final int value = (source[sourceOffset + x] - ((source[sourceOffset + x - bytesPerPixel] + source[previousOffset + x]) >> 1)) & 0xff;
+            destination[x] = value;
+            score += value < 128 ? value : 256 - value;
+            if (scoreLimit >= 0 && score >= scoreLimit) {
+              return -1;
+            }
+          }
+        } else {
+          for (int x = bytesPerPixel; x < rowLength; x++) {
+            final int value = (source[sourceOffset + x] - (source[sourceOffset + x - bytesPerPixel] >> 1)) & 0xff;
+            destination[x] = value;
+            score += value < 128 ? value : 256 - value;
+            if (scoreLimit >= 0 && score >= scoreLimit) {
+              return -1;
+            }
+          }
+        }
+      default:
+        for (int x = 0; x < leading; x++) {
+          final int value = (source[sourceOffset + x] - source[previousOffset + x]) & 0xff;
+          destination[x] = value;
+          score += value < 128 ? value : 256 - value;
+        }
+        for (int x = bytesPerPixel; x < rowLength; x++) {
+          final int value = (source[sourceOffset + x] - _paeth(source[sourceOffset + x - bytesPerPixel], source[previousOffset + x], source[previousOffset + x - bytesPerPixel])) & 0xff;
+          destination[x] = value;
+          score += value < 128 ? value : 256 - value;
+          if (scoreLimit >= 0 && score >= scoreLimit) {
+            return -1;
+          }
+        }
+    }
+    return score;
   }
 
   /// Predicts one byte from its left, upper, and upper-left neighbors.

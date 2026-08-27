@@ -74,14 +74,16 @@ shared `defaultMaxPixels` constant (100 million) is used unless a lower
 
 - BMP is encoded as a V4 32-bit bitmap with explicit RGBA bitfields. The
   decoder supports uncompressed palette, 16-bit, 24-bit, 32-bit, and bitfield
-  images; BMP RLE compression is not currently supported.
+  images, as well as RLE4 and RLE8 compressed palette images.
 - PNG is encoded as non-interlaced 8-bit RGBA with adaptive row filters. The
   decoder accepts standard grayscale, true-color, indexed, grayscale-alpha,
   and RGBA images, including Adam7 interlacing and 1- to 16-bit samples where
   the color type permits them.
 - JPEG output is baseline JPEG with selectable 4:4:4 or 4:2:0 chroma sampling.
   The decoder accepts baseline, extended sequential, and progressive Huffman
-  JPEG data. Transparency is composited against white during encoding.
+  JPEG data at any sampling ratio the format allows, and expands half-resolution
+  chroma with the same triangle filter reference decoders use. Transparency is
+  composited against white during encoding.
 - JPEG XL import supports bare codestreams and ISOBMFF containers, lossless
   Modular and lossy VarDCT images, alpha, orientation, embedded matrix/TRC ICC
   profiles, and the first visible animation frame. Output is lossless Modular
@@ -89,11 +91,13 @@ shared `defaultMaxPixels` constant (100 million) is used unless a lower
 - QOI is encoded and decoded losslessly according to the Quite OK Image
   specification.
 - TGA supports color-mapped, true-color, and grayscale input, with raw or RLE
-  pixel data. Output is 32-bit true-color and uses RLE by default.
-- TIFF import supports little- and big-endian baseline files, eight-bit RGB,
-  RGBA, grayscale, and palette pixels, strips, all eight orientations,
-  horizontal prediction, and uncompressed, PackBits, or LZW data. Planar,
-  tiled, JPEG-compressed, and samples wider than eight bits are not currently
+  pixel data. A 32-bit image whose attribute bytes are all zero is read as
+  opaque. Output is 32-bit true-color and uses RLE by default, with packets
+  confined to a single scanline as the format requires.
+- TIFF import supports little- and big-endian baseline files; RGB, RGBA,
+  grayscale, and palette pixels at 1, 2, 4, 8, or 16 bits per sample; strips;
+  all eight orientations; horizontal prediction; and uncompressed, PackBits, or
+  LZW data. Planar, tiled, and JPEG-compressed files are not currently
   supported. Output is little-endian, chunky, eight-bit RGBA using PackBits by
   default; pass `TiffCompression.none` for uncompressed output.
 - WebP output is lossless VP8L and preserves alpha. The decoder accepts VP8,

@@ -81,16 +81,16 @@ abstract final class ColorEncodingConstants {
   static bool validatePrimaries(int primaries) => primaries == srgbPrimaries || primaries == customPrimaries || primaries == bt2100Primaries || primaries == p3Primaries;
 
   /// Whether [whitePoint] identifies a supported white point.
-    static bool validateWhitePoint(int whitePoint) => whitePoint == d65WhitePoint || whitePoint == customWhitePoint || whitePoint == eWhitePoint || whitePoint == dciWhitePoint;
+  static bool validateWhitePoint(int whitePoint) => whitePoint == d65WhitePoint || whitePoint == customWhitePoint || whitePoint == eWhitePoint || whitePoint == dciWhitePoint;
 
   /// Whether [colorEncoding] identifies a supported color space.
-    static bool validateColorSpace(int colorEncoding) => colorEncoding >= 0 && colorEncoding <= 3;
+  static bool validateColorSpace(int colorEncoding) => colorEncoding >= 0 && colorEncoding <= 3;
 
   /// Whether [renderingIntent] identifies a valid ICC rendering intent.
-    static bool validateRenderingIntent(int renderingIntent) => renderingIntent >= 0 && renderingIntent <= 3;
+  static bool validateRenderingIntent(int renderingIntent) => renderingIntent >= 0 && renderingIntent <= 3;
 
   /// Whether [transfer] identifies a supported transfer function or gamma.
-    static bool validateTransferFunction(int transfer) {
+  static bool validateTransferFunction(int transfer) {
     if (transfer < 0) {
       return false;
     }
@@ -110,7 +110,7 @@ abstract final class ColorEncodingConstants {
   }
 
   /// Returns a human-readable name for [primaries].
-    static String describePrimaries(int primaries) => switch (primaries) {
+  static String describePrimaries(int primaries) => switch (primaries) {
     srgbPrimaries => 'sRGB / BT.709',
     bt2100Primaries => 'BT Rec.2100 / BT Rec.2020',
     p3Primaries => 'P3',
@@ -118,7 +118,7 @@ abstract final class ColorEncodingConstants {
   };
 
   /// Returns a human-readable name for [whitePoint].
-    static String describeWhitePoint(int whitePoint) => switch (whitePoint) {
+  static String describeWhitePoint(int whitePoint) => switch (whitePoint) {
     d65WhitePoint => 'D65',
     eWhitePoint => 'Standard Illuminant E',
     dciWhitePoint => 'DCI',
@@ -127,7 +127,7 @@ abstract final class ColorEncodingConstants {
   };
 
   /// Returns a human-readable name for [transfer].
-    static String describeTransferFunction(int transfer) {
+  static String describeTransferFunction(int transfer) {
     if (transfer < 1 << 24) {
       return 'Gamma ${transfer * 1e-7}';
     }
@@ -143,7 +143,7 @@ abstract final class ColorEncodingConstants {
   }
 
   /// Returns the CIE xy coordinates selected by [whitePoint].
-    static CieXy? whitePointCoordinates(int whitePoint) => switch (whitePoint) {
+  static CieXy? whitePointCoordinates(int whitePoint) => switch (whitePoint) {
     d65WhitePoint => const CieXy(x: 0.3127, y: 0.3290),
     eWhitePoint => const CieXy(x: 1 / 3, y: 1 / 3),
     dciWhitePoint => const CieXy(x: 0.314, y: 0.351),
@@ -152,7 +152,7 @@ abstract final class ColorEncodingConstants {
   };
 
   /// Returns the CIE xy primaries selected by [primaries].
-    static CiePrimaries? primariesCoordinates(int primaries) => switch (primaries) {
+  static CiePrimaries? primariesCoordinates(int primaries) => switch (primaries) {
     srgbPrimaries => const CiePrimaries(red: CieXy(x: 0.639998686, y: 0.330010138), green: CieXy(x: 0.300003784, y: 0.600003357), blue: CieXy(x: 0.150002046, y: 0.059997204)),
     bt2100Primaries => const CiePrimaries(red: CieXy(x: 0.708, y: 0.292), green: CieXy(x: 0.170, y: 0.797), blue: CieXy(x: 0.131, y: 0.046)),
     p3Primaries => const CiePrimaries(red: CieXy(x: 0.680, y: 0.320), green: CieXy(x: 0.265, y: 0.690), blue: CieXy(x: 0.150, y: 0.060)),
@@ -163,19 +163,19 @@ abstract final class ColorEncodingConstants {
 /// A CIE xy chromaticity coordinate.
 final class CieXy {
   /// Horizontal coordinate.
-    final double x;
+  final double x;
 
   /// Vertical coordinate.
-    final double y;
+  final double y;
 
   /// Creates a CIE xy.
-    const CieXy({
+  const CieXy({
     required this.x,
     required this.y,
   });
 
   /// Reads custom.
-    factory CieXy.readCustom({
+  factory CieXy.readCustom({
     required BitReader reader,
   }) {
     final int ux = reader.readU32(0, 19, 524288, 19, 1048576, 20, 2097152, 21);
@@ -184,7 +184,7 @@ final class CieXy {
   }
 
   /// Whether the supplied value matches this entry.
-    bool matches(CieXy other) => (x - other.x).abs() + (y - other.y).abs() < 1e-4;
+  bool matches(CieXy other) => (x - other.x).abs() + (y - other.y).abs() < 1e-4;
 
   @override
   String toString() => 'CieXy($x, $y)';
@@ -193,44 +193,44 @@ final class CieXy {
 /// Red/green/blue CIE xy primaries.
 final class CiePrimaries {
   /// CIE xy coordinates of the red primary.
-    final CieXy red;
+  final CieXy red;
 
   /// CIE xy coordinates of the green primary.
-    final CieXy green;
+  final CieXy green;
 
   /// CIE xy coordinates of the blue primary.
-    final CieXy blue;
+  final CieXy blue;
 
   /// Creates a CIE primaries.
-    const CiePrimaries({
+  const CiePrimaries({
     required this.red,
     required this.green,
     required this.blue,
   });
 
   /// Whether the supplied value matches this entry.
-    bool matches(CiePrimaries other) => red.matches(other.red) && green.matches(other.green) && blue.matches(other.blue);
+  bool matches(CiePrimaries other) => red.matches(other.red) && green.matches(other.green) && blue.matches(other.blue);
 }
 
 /// Represents tone mapping.
 final class ToneMapping {
   /// Target display luminance in candela per square metre.
-    final double intensityTarget;
+  final double intensityTarget;
 
   /// Minimum nits.
-    final double minNits;
+  final double minNits;
 
   /// Whether the tone mapping enables relative to max display.
-    final bool relativeToMaxDisplay;
+  final bool relativeToMaxDisplay;
 
   /// Fraction below which tone mapping remains linear.
-    final double linearBelow;
+  final double linearBelow;
 
   /// Creates a tone mapping.
-    const ToneMapping() : intensityTarget = 255, minNits = 0, relativeToMaxDisplay = false, linearBelow = 0;
+  const ToneMapping() : intensityTarget = 255, minNits = 0, relativeToMaxDisplay = false, linearBelow = 0;
 
   /// Reads this structure from the bitstream.
-    factory ToneMapping.read({
+  factory ToneMapping.read({
     required BitReader reader,
   }) {
     if (reader.readBool()) {
@@ -256,7 +256,7 @@ final class ToneMapping {
   }
 
   /// Creates a tone mapping.
-    const ToneMapping._({
+  const ToneMapping._({
     required this.intensityTarget,
     required this.minNits,
     required this.relativeToMaxDisplay,
@@ -267,31 +267,31 @@ final class ToneMapping {
 /// The `ColourEncoding` header bundle.
 final class ColorEncodingBundle {
   /// Whether the image uses an embedded ICC profile.
-    final bool useIccProfile;
+  final bool useIccProfile;
 
   /// Color-space identifier declared by the codestream.
-    final int colorEncoding;
+  final int colorEncoding;
 
   /// White-point identifier declared by the codestream.
-    final int whitePoint;
+  final int whitePoint;
 
   /// Decoded CIE xy coordinates of the white point.
-    final CieXy white;
+  final CieXy white;
 
   /// Color-primary identifier declared by the codestream.
-    final int primaries;
+  final int primaries;
 
   /// Decoded red, green, and blue primary coordinates.
-    final CiePrimaries prim;
+  final CiePrimaries prim;
 
   /// Transfer function applied to encoded color samples.
-    final int transferFunction;
+  final int transferFunction;
 
   /// ICC rendering-intent identifier declared by the codestream.
-    final int renderingIntent;
+  final int renderingIntent;
 
   /// Creates a color encoding bundle.
-    const ColorEncodingBundle()
+  const ColorEncodingBundle()
     : useIccProfile = false,
       colorEncoding = ColorEncodingConstants.colorSpaceRgb,
       whitePoint = ColorEncodingConstants.d65WhitePoint,
@@ -302,7 +302,7 @@ final class ColorEncodingBundle {
       renderingIntent = ColorEncodingConstants.relativeRenderingIntent;
 
   /// Reads this structure from the bitstream.
-    factory ColorEncodingBundle.read({
+  factory ColorEncodingBundle.read({
     required BitReader reader,
   }) {
     final bool allDefault = reader.readBool();
@@ -365,7 +365,7 @@ final class ColorEncodingBundle {
   }
 
   /// Creates a color encoding bundle.
-    const ColorEncodingBundle._({
+  const ColorEncodingBundle._({
     required this.useIccProfile,
     required this.colorEncoding,
     required this.whitePoint,

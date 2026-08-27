@@ -126,14 +126,14 @@ final class Frame {
   int lowFrequencyGroupRowStride = 0;
 
   /// Per-channel frame output, sized to the padded frame size.
-    late List<ImageBuffer> buffer;
+  late List<ImageBuffer> buffer;
 
   /// When set (JPEG reconstruction), the decode captures quantized DC/AC
   /// coefficients into [jpegCoefficientSink] via gated hooks in Lf/HighFrequencyCoefficients.
-    bool captureJpegReconstruction = false;
+  bool captureJpegReconstruction = false;
 
   /// Optional destination for quantized coefficients used by JPEG reconstruction.
-    JpegCoefficientSink? jpegCoefficientSink;
+  JpegCoefficientSink? jpegCoefficientSink;
 
   /// When set, the modular pass-group sections (the large, full-resolution
   /// Squeeze residual channels) are skipped: their target channels are
@@ -142,20 +142,20 @@ final class Frame {
   /// for a Squeeze (responsive) modular frame, where it yields a ~1:8-accurate
   /// image for a fraction of the decode cost — see the decoder's
   /// `_modularLowResImageFor` and doc/spec_notes.md's "Downscaled decode".
-    bool modularLowRes = false;
+  bool modularLowRes = false;
 
   /// The LF frame's channel buffers when this frame uses one
   /// (`FrameFlags.useLfFrame`).
-    List<ImageBuffer>? lowFrequencyFrame;
+  List<ImageBuffer>? lowFrequencyFrame;
 
   /// Creates a frame reader attached to image-wide metadata.
-    Frame({
+  Frame({
     required this.globalReader,
     required this.globalMetadata,
   });
 
   /// Number of TOC entries for this frame's structure.
-    int get tableOfContentsEntryCount {
+  int get tableOfContentsEntryCount {
     if (groupCount == 1 && header.passes.passCount == 1) {
       return 1;
     }
@@ -164,10 +164,10 @@ final class Frame {
   }
 
   /// Number of color channels in the frame representation (not the output).
-    int get colorChannelCount => globalMetadata.xybEncoded || header.encoding == FrameFlags.vardct ? 3 : globalMetadata.colorChannelCount;
+  int get colorChannelCount => globalMetadata.xybEncoded || header.encoding == FrameFlags.vardct ? 3 : globalMetadata.colorChannelCount;
 
   /// Returns the padded dimensions used for frame decoding.
-    ({int width, int height}) get paddedFrameSize {
+  ({int width, int height}) get paddedFrameSize {
     var factorY = 0;
     var factorX = 0;
     for (var i = 0; i < 3; i++) {
@@ -195,7 +195,7 @@ final class Frame {
   /// Allocates [jpegCoefficientSink], one entry per color channel (capture is keyed by
   /// JPEG component: DC channel `j` and AC channel `colorChannelOrder[j]`). Component `j`'s
   /// block grid follows the subsampling of its governing JXL channel.
-    void _allocateJpegCoefficientSink() {
+  void _allocateJpegCoefficientSink() {
     final ({int height, int width}) padded = paddedFrameSize;
     final int lumaWidthInBlocks = padded.width >> 3;
     final int lumaHeightInBlocks = padded.height >> 3;
@@ -209,7 +209,7 @@ final class Frame {
   }
 
   /// Builds the modular metadata inherited by each frame substream.
-    ModularFrameContext get modularContext => ModularFrameContext(
+  ModularFrameContext get modularContext => ModularFrameContext(
     frameWidth: boundsWidth,
     frameHeight: boundsHeight,
     groupDimension: header.groupDimension,
@@ -219,7 +219,7 @@ final class Frame {
   );
 
   /// Copies decoded global modular channels into the frame output buffers.
-    void _copyOutModular() {
+  void _copyOutModular() {
     final List<ModularChannel> channels = lowFrequencyGlobal.globalModularStream.channels;
     final int colors = colorChannelCount;
     for (var c = 0; c < channels.length; c++) {
@@ -258,26 +258,26 @@ final class Frame {
   }
 
   /// Returns the two-dimensional location of a coding group.
-    ({int y, int x}) getGroupLocation(int groupId) => (y: groupId ~/ groupRowStride, x: groupId % groupRowStride);
+  ({int y, int x}) getGroupLocation(int groupId) => (y: groupId ~/ groupRowStride, x: groupId % groupRowStride);
 
   /// Returns the two-dimensional location of a low-frequency group.
-    ({int y, int x}) lowFrequencyGroupLocation(int lowFrequencyGroupId) => (y: lowFrequencyGroupId ~/ lowFrequencyGroupRowStride, x: lowFrequencyGroupId % lowFrequencyGroupRowStride);
+  ({int y, int x}) lowFrequencyGroupLocation(int lowFrequencyGroupId) => (y: lowFrequencyGroupId ~/ lowFrequencyGroupRowStride, x: lowFrequencyGroupId % lowFrequencyGroupRowStride);
 
   /// Position of this group within its LF group, in group units.
-    ({int y, int x}) groupPositionInLowFrequencyGroup(int lowFrequencyGroupId, int groupId) {
+  ({int y, int x}) groupPositionInLowFrequencyGroup(int lowFrequencyGroupId, int groupId) {
     final ({int x, int y}) gr = getGroupLocation(groupId);
     final ({int x, int y}) lf = lowFrequencyGroupLocation(lowFrequencyGroupId);
     return (y: gr.y - (lf.y << 3), x: gr.x - (lf.x << 3));
   }
 
   /// Returns the low-frequency group containing [groupId].
-    LowFrequencyGroup lowFrequencyGroupFor(int groupId) {
+  LowFrequencyGroup lowFrequencyGroupFor(int groupId) {
     final ({int x, int y}) pos = getGroupLocation(groupId);
     return lowFrequencyGroups[(pos.y >> 3) * lowFrequencyGroupRowStride + (pos.x >> 3)]!;
   }
 
   /// Returns the clipped pixel dimensions of [groupId].
-    ({int height, int width}) groupSize(int groupId) {
+  ({int height, int width}) groupSize(int groupId) {
     final ({int x, int y}) pos = getGroupLocation(groupId);
     final ({int height, int width}) padded = paddedFrameSize;
     final int height = header.groupDimension < padded.height - pos.y * header.groupDimension ? header.groupDimension : padded.height - pos.y * header.groupDimension;
@@ -286,7 +286,7 @@ final class Frame {
   }
 
   /// Returns the clipped pixel dimensions of [lowFrequencyGroupId].
-    ({int height, int width}) lowFrequencyGroupSize(int lowFrequencyGroupId) {
+  ({int height, int width}) lowFrequencyGroupSize(int lowFrequencyGroupId) {
     final ({int x, int y}) pos = lowFrequencyGroupLocation(lowFrequencyGroupId);
     final ({int height, int width}) padded = paddedFrameSize;
     final int height = header.lowFrequencyGroupDimension < padded.height - pos.y * header.lowFrequencyGroupDimension
@@ -299,7 +299,7 @@ final class Frame {
   }
 
   /// Reads the frame table of contents.
-    void readTableOfContents({bool allowTruncated = false}) {
+  void readTableOfContents({bool allowTruncated = false}) {
     if (tableOfContentsEntryCount > 1 << 20) {
       throw const JpegXlInvalidBitstreamException(message: 'too many TOC sections');
     }
@@ -312,13 +312,13 @@ final class Frame {
 
   /// Streaming preview: decodes only LowFrequencyGlobal and the LF groups (the DC
   /// image for VarDCT frames). Requires those TOC sections to be present.
-    void decodeLfOnly() {
+  void decodeLfOnly() {
     lowFrequencyGlobal = LowFrequencyGlobal.read(reader: tableOfContents.sectionReader(0), frame: this);
     _decodeLfGroups();
   }
 
   /// Reads and validates the frame header.
-    FrameHeader readFrameHeader() {
+  FrameHeader readFrameHeader() {
     globalReader.zeroPadToByte();
     header = FrameHeader.read(reader: globalReader, parent: globalMetadata);
     boundsX0 = header.x0;
@@ -333,7 +333,7 @@ final class Frame {
   }
 
   /// Decodes this frame.
-    void decodeFrame({List<ImageBuffer>? lowFrequencyFrame, bool modularLowRes = false}) {
+  void decodeFrame({List<ImageBuffer>? lowFrequencyFrame, bool modularLowRes = false}) {
     this.lowFrequencyFrame = lowFrequencyFrame;
     this.modularLowRes = modularLowRes;
     const timings = bool.fromEnvironment('jxl.timings');
@@ -404,7 +404,7 @@ final class Frame {
 
   /// Inverts JPEG-style chroma subsampling by repeatedly doubling the
   /// subsampled color planes with a [0.25, 0.75] filter.
-    /// Neighbor taps mirror at the *visible* subsampled extent, matching
+  /// Neighbor taps mirror at the *visible* subsampled extent, matching
   /// libjxl's render pipeline: the padded DCT rows/columns beyond
   /// ceil(visible / 2) are never read. (jxlatte reads the padded samples
   /// instead, which shifts the final visible row on 4:2:0 images whose
@@ -454,7 +454,7 @@ final class Frame {
   }
 
   /// Decodes lf groups.
-    void _decodeLfGroups() {
+  void _decodeLfGroups() {
     if (captureJpegReconstruction && jpegCoefficientSink == null) {
       _allocateJpegCoefficientSink();
     }
@@ -496,7 +496,7 @@ final class Frame {
   }
 
   /// Decodes pass groups.
-    void _decodePassGroups() {
+  void _decodePassGroups() {
     final int passCount = passes.length;
     final isVarDct = header.encoding == FrameFlags.vardct;
     final passGroups = List<List<ModularStream>>.generate(passCount, (_) => []);
@@ -580,7 +580,7 @@ final class Frame {
   }
 
   /// Copies channel region.
-    static void _copyChannelRegion(ModularChannel src, ModularChannel dest) {
+  static void _copyChannelRegion(ModularChannel src, ModularChannel dest) {
     final Int32List sb = src.buffer!;
     final Int32List db = dest.buffer!;
     for (var y = 0; y < src.height; y++) {
@@ -590,5 +590,5 @@ final class Frame {
   }
 
   /// Whether this frame contributes visible output.
-    bool get isVisible => (header.type == FrameFlags.regularFrame || header.type == FrameFlags.skipProgressive) && (header.duration != 0 || header.isLast);
+  bool get isVisible => (header.type == FrameFlags.regularFrame || header.type == FrameFlags.skipProgressive) && (header.duration != 0 || header.isLast);
 }

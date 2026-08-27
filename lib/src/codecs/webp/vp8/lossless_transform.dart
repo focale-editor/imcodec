@@ -371,64 +371,64 @@ final class _Vp8LosslessTransform {
   static int _predictor8(Uint32List pixels, int left, int top) => _average2(pixels[top - 1], pixels[top]);
 
   /// Averages the top and upper-right neighbors.
-    static int _predictor9(Uint32List pixels, int left, int top) => _average2(pixels[top], pixels[top + 1]);
+  static int _predictor9(Uint32List pixels, int left, int top) => _average2(pixels[top], pixels[top + 1]);
 
   /// Averages all four adjacent reconstructed neighbors.
-    static int _predictor10(Uint32List pixels, int left, int top) => _average4(left, pixels[top - 1], pixels[top], pixels[top + 1]);
+  static int _predictor10(Uint32List pixels, int left, int top) => _average4(left, pixels[top - 1], pixels[top], pixels[top + 1]);
 
   /// Selects between the top and left neighbors.
-    static int _predictor11(Uint32List pixels, int left, int top) => _select(pixels[top], left, pixels[top - 1]);
+  static int _predictor11(Uint32List pixels, int left, int top) => _select(pixels[top], left, pixels[top - 1]);
 
   /// Applies the full clamped gradient predictor.
-    static int _predictor12(Uint32List pixels, int left, int top) => _clampedAddSubtractFull(left, pixels[top], pixels[top - 1]);
+  static int _predictor12(Uint32List pixels, int left, int top) => _clampedAddSubtractFull(left, pixels[top], pixels[top - 1]);
 
   /// Applies the half-strength clamped gradient predictor.
-    static int _predictor13(Uint32List pixels, int left, int top) => _clampedAddSubtractHalf(left, pixels[top], pixels[top - 1]);
+  static int _predictor13(Uint32List pixels, int left, int top) => _clampedAddSubtractHalf(left, pixels[top], pixels[top - 1]);
 }
 
 /// Stores the three signed cross-channel multipliers of a VP8L tile.
 final class _Vp8LosslessMultipliers {
   /// Multipliers stored as bytes so negative values wrap modulo 256.
-    final Uint8List _values = Uint8List(3);
+  final Uint8List _values = Uint8List(3);
 
   /// Creates zeroed channel multipliers.
-    _Vp8LosslessMultipliers();
+  _Vp8LosslessMultipliers();
 
   /// Multiplier applied from green to red.
-    int get greenToRed => _values[0];
+  int get greenToRed => _values[0];
 
   /// Changes the multiplier applied from green to red.
-    set greenToRed(int multiplier) => _values[0] = multiplier;
+  set greenToRed(int multiplier) => _values[0] = multiplier;
 
   /// Multiplier applied from green to blue.
-    int get greenToBlue => _values[1];
+  int get greenToBlue => _values[1];
 
   /// Changes the multiplier applied from green to blue.
-    set greenToBlue(int multiplier) => _values[1] = multiplier;
+  set greenToBlue(int multiplier) => _values[1] = multiplier;
 
   /// Multiplier applied from red to blue.
-    int get redToBlue => _values[2];
+  int get redToBlue => _values[2];
 
   /// Changes the multiplier applied from red to blue.
-    set redToBlue(int multiplier) => _values[2] = multiplier;
+  set redToBlue(int multiplier) => _values[2] = multiplier;
 
   /// Resets all channel multipliers to zero.
-    void clear() {
+  void clear() {
     _values.fillRange(0, _values.length, 0);
   }
 
   /// Unpacks the three multipliers from [colorCode].
-    set colorCode(int colorCode) {
+  set colorCode(int colorCode) {
     _values[0] = colorCode & 0xff;
     _values[1] = (colorCode >> 8) & 0xff;
     _values[2] = (colorCode >> 16) & 0xff;
   }
 
   /// Packs the three multipliers into a color-code word.
-    int get colorCode => 0xff000000 | (_values[2] << 16) | (_values[1] << 8) | _values[0];
+  int get colorCode => 0xff000000 | (_values[2] << 16) | (_values[1] << 8) | _values[0];
 
   /// Reverses cross-channel decorrelation for one packed [color].
-    int transformColor(int color) {
+  int transformColor(int color) {
     final int green = (color >> 8) & 0xff;
     int red = (color >> 16) & 0xff;
     int blue = color & 0xff;
@@ -438,7 +438,7 @@ final class _Vp8LosslessMultipliers {
   }
 
   /// Calculates one signed fixed-point cross-channel adjustment.
-    int _colorTransformDelta(int multiplier, int color) {
+  int _colorTransformDelta(int multiplier, int color) {
     final int a = _unsignedByteToSigned(multiplier);
     final int b = _unsignedByteToSigned(color);
     return _signedInt32ToUnsigned(a * b) >> 5;

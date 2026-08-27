@@ -60,10 +60,10 @@ final class _JpegEncodingSession {
   late final JpegHuffmanCodeTable _chrominanceAcHuffmanTable;
 
   /// Reusable output storage for transformed and quantized coefficients.
-  final List<int?> _quantizedCoefficients = List<int?>.filled(64, null);
+  final Int32List _quantizedCoefficients = Int32List(64);
 
   /// Reusable zigzag-ordered data-unit coefficients.
-  final List<int?> _zigzagCoefficients = List<int?>.filled(64, null);
+  final Int32List _zigzagCoefficients = Int32List(64);
 
   /// Fixed-point products used by RGB-to-YUV conversion.
   final Int32List _rgbToYuvTable = Int32List(2048);
@@ -558,16 +558,16 @@ final class _JpegEncodingSession {
       }
     }
 
-    /////////////////////////////////////////////////////////////
-    // Do the bit alignment of the EOI marker
-    if (_bytePos >= 0) {
+    // Pad the final entropy byte with one bits, but only when one is partly
+    // written: a byte-aligned stream needs no padding at all.
+    if (_bytePos < 7) {
       final int fillBitCount = _bytePos + 1;
       _writeBits(output, (1 << fillBitCount) - 1, fillBitCount);
     }
 
     _writeMarker(output, JpegMarker.endOfImage);
 
-    return output.getBytes();
+    return output.takeBytes();
   }
 
   /// Converts one 8 by 8 RGBA block to centered Y, U, and V samples.
@@ -840,7 +840,7 @@ final class _JpegEncodingSession {
   }
 
   /// Applies the forward discrete cosine transform and quantizes one block.
-  List<int?> _transformAndQuantize(List<double> data, List<double> transformFactors) {
+  Int32List _transformAndQuantize(Float32List data, Float32List transformFactors) {
     // Pass 1: process rows.
     int dataOffset = 0;
     for (int i = 0; i < 8; ++i) {
@@ -1075,20 +1075,20 @@ final class _JpegEncodingSession {
   /// Transforms and entropy-encodes one data unit, returning its DC value.
   int _encodeDataUnit(
     OutputBuffer out,
-    List<double> coefficients,
-    List<double> transformFactors,
+    Float32List coefficients,
+    Float32List transformFactors,
     int previousDcCoefficient,
     JpegHuffmanCodeTable dcHuffmanTable,
     JpegHuffmanCodeTable acHuffmanTable,
   ) {
-    final List<int?> quantizedCoefficients = _transformAndQuantize(coefficients, transformFactors);
+    final Int32List quantizedCoefficients = _transformAndQuantize(coefficients, transformFactors);
 
     // ZigZag reorder
     for (int j = 0; j < 64; ++j) {
       _zigzagCoefficients[jpegNaturalToZigZagOrder[j]] = quantizedCoefficients[j];
     }
 
-    final int currentDcCoefficient = _zigzagCoefficients[0]!;
+    final int currentDcCoefficient = _zigzagCoefficients[0];
     final int dcDifference = currentDcCoefficient - previousDcCoefficient;
     final int dcMagnitudeBitCount = jpegMagnitudeBitCount(dcDifference);
     _writeHuffmanSymbol(out, dcHuffmanTable, dcMagnitudeBitCount);
@@ -1119,7 +1119,7 @@ final class _JpegEncodingSession {
         }
         zeroCount = zeroCount & 0xF;
       }
-      final int coefficient = _zigzagCoefficients[i]!;
+      final int coefficient = _zigzagCoefficients[i];
       final int magnitudeBitCount = jpegMagnitudeBitCount(coefficient);
       _writeHuffmanSymbol(out, acHuffmanTable, (zeroCount << 4) + magnitudeBitCount);
       _writeBits(out, jpegMagnitudeValue(coefficient, magnitudeBitCount), magnitudeBitCount);
@@ -1140,13 +1140,15 @@ final class _JpegEncodingSession {
 
   /// Appends [bitCount] high-to-low bits while applying JPEG byte stuffing.
   void _writeBits(OutputBuffer out, int value, int bitCount) {
-    int bitPosition = bitCount - 1;
-    while (bitPosition >= 0) {
-      if ((value & (1 << bitPosition)) != 0) {
-        _byteNew |= 1 << _bytePos;
-      }
-      bitPosition--;
-      _bytePos--;
+    if (bitCount == 0) {
+      return;
+    }
+    int pending = bitCount;
+    while (pending > 0) {
+      final int taken = pending <= _bytePos + 1 ? pending : _bytePos + 1;
+      pending -= taken;
+      _byteNew |= ((value >>> pending) & ((1 << taken) - 1)) << (_bytePos + 1 - taken);
+      _bytePos -= taken;
       if (_bytePos < 0) {
         if (_byteNew == 0xff) {
           out

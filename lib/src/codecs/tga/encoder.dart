@@ -42,30 +42,35 @@ final class TgaEncoder extends RasterEncoder {
     output
       ..writeBytes(Uint8List(8))
       ..writeBytes(_footerSignature);
-    return Uint8List.fromList(output.getBytes());
+    return output.takeBytes();
   }
 
-  /// Writes packets of repeated or raw pixels, each capped at 128 pixels.
+  /// Writes run-length packets, restarting at every scanline.
+  /// The TGA 2.0 specification forbids packets that span two rows, so each
+  /// row is encoded independently.
   void _writeRunLengthPixels(OutputBuffer output, Image image) {
-    final int pixelCount = image.width * image.height;
-    int pixel = 0;
-    while (pixel < pixelCount) {
-      final int repeated = _runLength(image.bytes, pixel, pixelCount);
-      if (repeated >= 2) {
-        output.writeByte(0x80 | (repeated - 1));
-        _writePixel(output, image.bytes, pixel);
-        pixel += repeated;
-        continue;
-      }
+    for (int y = 0; y < image.height; y++) {
+      final int rowStart = y * image.width;
+      final int rowEnd = rowStart + image.width;
+      int pixel = rowStart;
+      while (pixel < rowEnd) {
+        final int repeated = _runLength(image.bytes, pixel, rowEnd);
+        if (repeated >= 2) {
+          output.writeByte(0x80 | (repeated - 1));
+          _writePixel(output, image.bytes, pixel);
+          pixel += repeated;
+          continue;
+        }
 
-      final int start = pixel;
-      pixel++;
-      while (pixel < pixelCount && pixel - start < 128 && _runLength(image.bytes, pixel, pixelCount) < 2) {
+        final int start = pixel;
         pixel++;
-      }
-      output.writeByte(pixel - start - 1);
-      for (int rawPixel = start; rawPixel < pixel; rawPixel++) {
-        _writePixel(output, image.bytes, rawPixel);
+        while (pixel < rowEnd && pixel - start < 128 && _runLength(image.bytes, pixel, rowEnd) < 2) {
+          pixel++;
+        }
+        output.writeByte(pixel - start - 1);
+        for (int rawPixel = start; rawPixel < pixel; rawPixel++) {
+          _writePixel(output, image.bytes, rawPixel);
+        }
       }
     }
   }

@@ -122,9 +122,8 @@ final class PngDecoder extends RasterDecoder {
 
       position = checksumOffset + 4;
       if (hasEnd) {
-        if (position != bytes.length) {
-          throw const ImageCodecException('PNG contains data after its end chunk');
-        }
+        // Trailing bytes after IEND are ignored, matching common decoders:
+        // some writers pad the file and the image itself is still complete.
         break;
       }
     }
@@ -269,23 +268,11 @@ final class PngDecoder extends RasterDecoder {
       final int rowLength = (passWidth * header.bitsPerPixel + 7) ~/ 8;
       final int predictorBytes = ((header.bitsPerPixel + 7) ~/ 8).clamp(1, 8);
       Uint8List previousRow = Uint8List(rowLength);
+      Uint8List row = Uint8List(rowLength);
       for (int passY = 0; passY < passHeight; passY++) {
         final int filter = inflated[sourceOffset++];
-        final Uint8List row = Uint8List(rowLength);
-        for (int byte = 0; byte < rowLength; byte++) {
-          final int left = byte >= predictorBytes ? row[byte - predictorBytes] : 0;
-          final int above = previousRow[byte];
-          final int upperLeft = byte >= predictorBytes ? previousRow[byte - predictorBytes] : 0;
-          final int predictor = switch (filter) {
-            0 => 0,
-            1 => left,
-            2 => above,
-            3 => (left + above) >> 1,
-            4 => _paeth(left, above, upperLeft),
-            _ => throw ImageCodecException('Unsupported PNG row filter: $filter'),
-          };
-          row[byte] = (inflated[sourceOffset++] + predictor) & 0xff;
-        }
+        _unfilterRow(inflated, sourceOffset, row, previousRow, rowLength, predictorBytes, filter);
+        sourceOffset += rowLength;
         _writeRow(
           row,
           rgba,
@@ -299,11 +286,55 @@ final class PngDecoder extends RasterDecoder {
           transparentGray,
           transparentColor,
         );
+        final Uint8List swap = previousRow;
         previousRow = row;
+        row = swap;
       }
     }
     if (sourceOffset != inflated.length) {
       throw const ImageCodecException('PNG decompression produced unexpected trailing bytes');
+    }
+  }
+
+  /// Reverses one row filter, using a dedicated loop for each filter type.
+  void _unfilterRow(
+    Uint8List inflated,
+    int sourceOffset,
+    Uint8List row,
+    Uint8List previousRow,
+    int rowLength,
+    int predictorBytes,
+    int filter,
+  ) {
+    switch (filter) {
+      case 0:
+        row.setRange(0, rowLength, inflated, sourceOffset);
+      case 1:
+        final int leading = predictorBytes < rowLength ? predictorBytes : rowLength;
+        row.setRange(0, leading, inflated, sourceOffset);
+        for (int byte = predictorBytes; byte < rowLength; byte++) {
+          row[byte] = (inflated[sourceOffset + byte] + row[byte - predictorBytes]) & 0xff;
+        }
+      case 2:
+        for (int byte = 0; byte < rowLength; byte++) {
+          row[byte] = (inflated[sourceOffset + byte] + previousRow[byte]) & 0xff;
+        }
+      case 3:
+        for (int byte = 0; byte < predictorBytes && byte < rowLength; byte++) {
+          row[byte] = (inflated[sourceOffset + byte] + (previousRow[byte] >> 1)) & 0xff;
+        }
+        for (int byte = predictorBytes; byte < rowLength; byte++) {
+          row[byte] = (inflated[sourceOffset + byte] + ((row[byte - predictorBytes] + previousRow[byte]) >> 1)) & 0xff;
+        }
+      case 4:
+        for (int byte = 0; byte < predictorBytes && byte < rowLength; byte++) {
+          row[byte] = (inflated[sourceOffset + byte] + previousRow[byte]) & 0xff;
+        }
+        for (int byte = predictorBytes; byte < rowLength; byte++) {
+          row[byte] = (inflated[sourceOffset + byte] + _paeth(row[byte - predictorBytes], previousRow[byte], previousRow[byte - predictorBytes])) & 0xff;
+        }
+      default:
+        throw ImageCodecException('Unsupported PNG row filter: $filter');
     }
   }
 
@@ -321,6 +352,24 @@ final class PngDecoder extends RasterDecoder {
     int? transparentGray,
     _PngTransparentColor? transparentColor,
   ) {
+    if (header.bitDepth == 8 && stepX == 1 && startX == 0) {
+      final int destination = destinationY * header.width * 4;
+      if (header.colorType == 6) {
+        rgba.setRange(destination, destination + passWidth * 4, row);
+        return;
+      }
+      if (header.colorType == 2 && transparentColor == null) {
+        int source = 0;
+        for (int offset = destination; offset < destination + passWidth * 4; offset += 4) {
+          rgba[offset] = row[source];
+          rgba[offset + 1] = row[source + 1];
+          rgba[offset + 2] = row[source + 2];
+          rgba[offset + 3] = 255;
+          source += 3;
+        }
+        return;
+      }
+    }
     int sample = 0;
     for (int passX = 0; passX < passWidth; passX++) {
       final int destinationX = startX + passX * stepX;

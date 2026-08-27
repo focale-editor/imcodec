@@ -44,11 +44,13 @@ final class TiffDecoder extends RasterDecoder {
     final int compression = _scalar(fields, 259, fallback: 1);
     final int photometric = _requiredScalar(fields, 262);
     final int orientation = _scalar(fields, 274, fallback: 1);
-    final int samplesPerPixel = _scalar(fields, 277, fallback: 1);
+    final List<int> bitsPerSampleValues = _values(fields[258]) ?? const [1];
+    // Some writers omit SamplesPerPixel; BitsPerSample already implies it.
+    final int samplesPerPixel = _scalar(fields, 277, fallback: bitsPerSampleValues.length);
     final int rowsPerStrip = _scalar(fields, 278, fallback: height);
     final int planarConfiguration = _scalar(fields, 284, fallback: 1);
     final int predictor = _scalar(fields, 317, fallback: 1);
-    final List<int> bitsPerSample = _values(fields[258]) ?? [1];
+    final List<int> bitsPerSample = bitsPerSampleValues;
     final List<int> stripOffsets = _requiredValues(fields, 273);
     final List<int> stripByteCounts = _requiredValues(fields, 279);
     final List<int> extraSamples = _values(fields[338]) ?? const [];
@@ -71,25 +73,34 @@ final class TiffDecoder extends RasterDecoder {
     if (bitsPerSample.length != 1 && bitsPerSample.length != samplesPerPixel) {
       throw const ImageCodecException('TIFF BitsPerSample does not match SamplesPerPixel');
     }
-    if (bitsPerSample.any((bits) => bits != 8)) {
-      throw const ImageCodecException('Only eight-bit TIFF samples are supported');
+    final int sampleBits = bitsPerSample.first;
+    if (bitsPerSample.any((bits) => bits != sampleBits)) {
+      throw const ImageCodecException('TIFF samples of mixed widths are not supported');
+    }
+    if (![1, 2, 4, 8, 16].contains(sampleBits)) {
+      throw ImageCodecException('Unsupported TIFF sample width: $sampleBits bits');
+    }
+    if (predictor == 2 && sampleBits != 8 && sampleBits != 16) {
+      throw const ImageCodecException('The TIFF horizontal predictor requires eight-bit or sixteen-bit samples');
     }
 
+    // Rows are padded to whole bytes, so narrow samples need their own stride.
+    final int packedRowBytes = (width * samplesPerPixel * sampleBits + 7) ~/ 8;
     final int rowBytes = width * samplesPerPixel;
     final Uint8List samples = Uint8List(rowBytes * height);
     int decodedRow = 0;
     for (int strip = 0; strip < stripOffsets.length && decodedRow < height; strip++) {
       final int rowCount = _minimum(rowsPerStrip, height - decodedRow);
-      final int expectedLength = rowCount * rowBytes;
+      final int expectedLength = rowCount * packedRowBytes;
       final Uint8List encoded = _slice(bytes, stripOffsets[strip], stripByteCounts[strip]);
       final Uint8List decoded = _decodeStrip(encoded, compression, expectedLength);
       if (decoded.length != expectedLength) {
         throw const ImageCodecException('A TIFF strip has an unexpected decoded size');
       }
       if (predictor == 2) {
-        _undoHorizontalPredictor(decoded, rowBytes, samplesPerPixel);
+        _undoHorizontalPredictor(decoded, packedRowBytes, samplesPerPixel * (sampleBits ~/ 8), sampleBits, endian);
       }
-      samples.setRange(decodedRow * rowBytes, (decodedRow + rowCount) * rowBytes, decoded);
+      _expandSamples(decoded, samples, decodedRow * rowBytes, rowCount, rowBytes, packedRowBytes, sampleBits, endian, photometric == 3);
       decodedRow += rowCount;
     }
     if (decodedRow != height) {
@@ -232,59 +243,86 @@ final class TiffDecoder extends RasterDecoder {
   }
 
   /// Decodes TIFF-flavoured LZW with early code-width changes.
+  /// Dictionary entries are stored as prefix and suffix links rather than as
+  /// byte lists, so growing the dictionary never copies previous entries.
   Uint8List _decodeLzw(Uint8List encoded, int expectedLength) {
-    final _TiffBitReader reader = _TiffBitReader(bytes: encoded);
+    const int clearCode = 256;
+    const int endCode = 257;
+    const int maximumCode = 4096;
+    final Int32List prefixes = Int32List(maximumCode);
+    final Uint8List suffixes = Uint8List(maximumCode);
+    final Uint8List lengths = Uint8List(maximumCode);
+    final Uint8List stack = Uint8List(maximumCode);
     final Uint8List output = Uint8List(expectedLength);
-    List<Uint8List> dictionary = _initialLzwDictionary();
     int codeWidth = 9;
     int nextCode = 258;
     int outputPosition = 0;
-    Uint8List? previous;
-    while (true) {
-      final int? code = reader.read(codeWidth);
-      if (code == null) {
-        break;
+    int previousCode = -1;
+    int bitPosition = 0;
+    final int bitLimit = encoded.length * 8;
+
+    while (bitPosition + codeWidth <= bitLimit) {
+      int code = 0;
+      for (int bit = 0; bit < codeWidth; bit++) {
+        code = (code << 1) | ((encoded[bitPosition >>> 3] >>> (7 - (bitPosition & 7))) & 1);
+        bitPosition++;
       }
-      if (code == 256) {
-        dictionary = _initialLzwDictionary();
+      if (code == clearCode) {
         codeWidth = 9;
         nextCode = 258;
-        previous = null;
+        previousCode = -1;
         continue;
       }
-      if (code == 257) {
+      if (code == endCode) {
         break;
       }
-      final Uint8List value;
-      if (code < dictionary.length && dictionary[code].isNotEmpty) {
-        value = dictionary[code];
-      } else if (code == nextCode && previous != null) {
-        value = Uint8List(previous.length + 1)
-          ..setRange(0, previous.length, previous)
-          ..last = previous.first;
+
+      final int entry;
+      if (code < 256) {
+        entry = code;
+      } else if (code < nextCode) {
+        entry = code;
+      } else if (code == nextCode && previousCode >= 0) {
+        entry = -1;
       } else {
         throw const ImageCodecException('Invalid TIFF LZW code');
       }
-      if (outputPosition > expectedLength - value.length) {
+
+      // Unwind the dictionary chain onto a stack, then emit it in order.
+      int stackTop = 0;
+      if (entry < 0) {
+        stack[stackTop++] = _firstByte(prefixes, suffixes, previousCode);
+        int current = previousCode;
+        while (current >= 256) {
+          stack[stackTop++] = suffixes[current];
+          current = prefixes[current];
+        }
+        stack[stackTop++] = current;
+      } else {
+        int current = entry;
+        while (current >= 256) {
+          stack[stackTop++] = suffixes[current];
+          current = prefixes[current];
+        }
+        stack[stackTop++] = current;
+      }
+      if (outputPosition > expectedLength - stackTop) {
         throw const ImageCodecException('TIFF LZW output exceeds the strip size');
       }
-      output.setRange(outputPosition, outputPosition + value.length, value);
-      outputPosition += value.length;
-      if (previous != null && nextCode < 4096) {
-        final Uint8List addition = Uint8List(previous.length + 1)
-          ..setRange(0, previous.length, previous)
-          ..last = value.first;
-        if (nextCode == dictionary.length) {
-          dictionary.add(addition);
-        } else {
-          dictionary[nextCode] = addition;
-        }
+      for (int index = stackTop - 1; index >= 0; index--) {
+        output[outputPosition++] = stack[index];
+      }
+
+      if (previousCode >= 0 && nextCode < maximumCode) {
+        prefixes[nextCode] = previousCode;
+        suffixes[nextCode] = stack[stackTop - 1];
+        lengths[nextCode] = 0;
         nextCode++;
         if (nextCode == (1 << codeWidth) - 1 && codeWidth < 12) {
           codeWidth++;
         }
       }
-      previous = value;
+      previousCode = code;
     }
     if (outputPosition != expectedLength) {
       throw const ImageCodecException('A TIFF LZW strip is truncated');
@@ -292,18 +330,72 @@ final class TiffDecoder extends RasterDecoder {
     return output;
   }
 
-  /// Creates the initial single-byte LZW dictionary plus control placeholders.
-  List<Uint8List> _initialLzwDictionary() => List<Uint8List>.generate(
-    258,
-    (index) => index < 256 ? Uint8List.fromList([index]) : Uint8List(0),
-    growable: true,
-  );
+  /// Returns the first byte produced by a dictionary [code].
+  int _firstByte(Int32List prefixes, Uint8List suffixes, int code) {
+    int current = code;
+    while (current >= 256) {
+      current = prefixes[current];
+    }
+    return current;
+  }
 
   /// Reverses the horizontal differencing predictor in-place.
-  void _undoHorizontalPredictor(Uint8List bytes, int rowBytes, int samplesPerPixel) {
+  void _undoHorizontalPredictor(Uint8List bytes, int rowBytes, int pixelBytes, int sampleBits, Endian endian) {
+    if (sampleBits == 16) {
+      final ByteData data = ByteData.sublistView(bytes);
+      for (int rowOffset = 0; rowOffset < bytes.length; rowOffset += rowBytes) {
+        for (int offset = rowOffset + pixelBytes; offset + 1 < rowOffset + rowBytes; offset += 2) {
+          final int previous = data.getUint16(offset - pixelBytes, endian);
+          data.setUint16(offset, (data.getUint16(offset, endian) + previous) & 0xffff, endian);
+        }
+      }
+      return;
+    }
     for (int rowOffset = 0; rowOffset < bytes.length; rowOffset += rowBytes) {
-      for (int offset = rowOffset + samplesPerPixel; offset < rowOffset + rowBytes; offset++) {
-        bytes[offset] = (bytes[offset] + bytes[offset - samplesPerPixel]) & 0xff;
+      for (int offset = rowOffset + pixelBytes; offset < rowOffset + rowBytes; offset++) {
+        bytes[offset] = (bytes[offset] + bytes[offset - pixelBytes]) & 0xff;
+      }
+    }
+  }
+
+  /// Expands packed samples of any supported width to one byte per sample.
+  /// Palette indices keep their raw value; other samples are scaled to the
+  /// full eight-bit range so that narrow grayscale images stay correct.
+  void _expandSamples(
+    Uint8List packed,
+    Uint8List samples,
+    int destination,
+    int rowCount,
+    int rowBytes,
+    int packedRowBytes,
+    int sampleBits,
+    Endian endian,
+    bool paletteIndices,
+  ) {
+    if (sampleBits == 8) {
+      samples.setRange(destination, destination + rowCount * rowBytes, packed);
+      return;
+    }
+    if (sampleBits == 16) {
+      final ByteData data = ByteData.sublistView(packed);
+      int target = destination;
+      for (int row = 0; row < rowCount; row++) {
+        int source = row * packedRowBytes;
+        for (int sample = 0; sample < rowBytes; sample++) {
+          samples[target++] = (data.getUint16(source, endian) * 255 + 32767) ~/ 65535;
+          source += 2;
+        }
+      }
+      return;
+    }
+    final int maximum = (1 << sampleBits) - 1;
+    int target = destination;
+    for (int row = 0; row < rowCount; row++) {
+      final int rowStart = row * packedRowBytes;
+      for (int sample = 0; sample < rowBytes; sample++) {
+        final int bitOffset = sample * sampleBits;
+        final int value = (packed[rowStart + (bitOffset >>> 3)] >>> (8 - sampleBits - (bitOffset & 7))) & maximum;
+        samples[target++] = paletteIndices ? value : (value * 255 + (maximum >> 1)) ~/ maximum;
       }
     }
   }
@@ -452,31 +544,5 @@ final class _TiffField {
       4 => data.getUint32(offset + index * 4, endian),
       _ => throw ImageCodecException('TIFF field type $type is not an unsigned integer'),
     };
-  }
-}
-
-/// Reads most-significant-bit-first codes from a TIFF LZW strip.
-final class _TiffBitReader {
-  /// Encoded strip bytes.
-  final Uint8List bytes;
-
-  /// Current bit offset.
-  int _bitPosition = 0;
-
-  /// Creates a TIFF bit reader.
-  _TiffBitReader({required this.bytes});
-
-  /// Reads [width] bits or returns `null` when the strip has ended.
-  int? read(int width) {
-    if (_bitPosition + width > bytes.length * 8) {
-      return null;
-    }
-    int value = 0;
-    for (int bit = 0; bit < width; bit++) {
-      final int byte = bytes[_bitPosition >>> 3];
-      value = (value << 1) | ((byte >>> (7 - (_bitPosition & 7))) & 1);
-      _bitPosition++;
-    }
-    return value;
   }
 }

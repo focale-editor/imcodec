@@ -37,14 +37,14 @@ abstract final class FrameFlags {
   static const blendReplace = 0;
 
   /// Blending-mode identifier for add.
-    static const blendAdd = 1;
+  static const blendAdd = 1;
 
   /// Blending-mode identifier for blend.
-    static const blendBlend = 2;
+  static const blendBlend = 2;
 
   /// Blending-mode identifier for mul add.
-    static const blendMulAdd = 3;
+  static const blendMulAdd = 3;
 
   /// Blending-mode identifier for multiply.
-    static const blendMultiply = 4;
+  static const blendMultiply = 4;
 }

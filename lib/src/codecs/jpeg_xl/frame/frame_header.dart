@@ -15,111 +15,111 @@ final class FrameHeader {
   int groupDimension = 256;
 
   /// Optional frame-header extension payloads.
-    Extensions extensions = const Extensions();
+  Extensions extensions = const Extensions();
 
   /// Type identifier defined by the JPEG XL specification.
-    int type = FrameFlags.regularFrame;
+  int type = FrameFlags.regularFrame;
 
   /// Encoding identifier for the frame header.
-    int encoding = FrameFlags.vardct;
+  int encoding = FrameFlags.vardct;
 
   /// Bit flags defined for the frame header.
-    int flags = 0;
+  int flags = 0;
 
   /// Whether color channels are represented as YCbCr.
-    bool usesYcbcr = false;
+  bool usesYcbcr = false;
 
   /// Vertical JPEG subsampling shift for each color channel.
-    final List<int> jpegVerticalUpsamplingShift = [0, 0, 0];
+  final List<int> jpegVerticalUpsamplingShift = [0, 0, 0];
 
   /// Horizontal JPEG subsampling shift for each color channel.
-    final List<int> jpegHorizontalUpsamplingShift = [0, 0, 0];
+  final List<int> jpegHorizontalUpsamplingShift = [0, 0, 0];
 
   /// Upsampling factor applied to color channels.
-    int upsampling = 1;
+  int upsampling = 1;
 
   /// Upsampling factor for each extra channel.
-    List<int> extraChannelUpsampling = const [];
+  List<int> extraChannelUpsampling = const [];
 
   /// Exponent selecting the coding-group dimension.
-    int groupSizeShift = 1;
+  int groupSizeShift = 1;
 
   /// Restoration filters applied after frame reconstruction.
-    RestorationFilter restorationFilter = RestorationFilter.defaults();
+  RestorationFilter restorationFilter = RestorationFilter.defaults();
 
   /// Low-frequency group dimension in pixels.
-    int lowFrequencyGroupDimension = 2048;
+  int lowFrequencyGroupDimension = 2048;
 
   /// Base-two logarithm of [groupDimension].
-    int logGroupDimension = 8;
+  int logGroupDimension = 8;
 
   /// Base-two logarithm of [lowFrequencyGroupDimension].
-    int logLowFrequencyGroupDimension = 11;
+  int logLowFrequencyGroupDimension = 11;
 
   /// Quantization scale for the opsin X channel.
-    int xQuantizationScale = 2;
+  int xQuantizationScale = 2;
 
   /// Quantization scale for the opsin B channel.
-    int bQuantizationScale = 2;
+  int bQuantizationScale = 2;
 
   /// Progressive-pass configuration for this frame.
-    ProgressivePasses passes = ProgressivePasses.defaults();
+  ProgressivePasses passes = ProgressivePasses.defaults();
 
   /// Progressive low-frequency frame level.
-    int lowFrequencyLevel = 0;
+  int lowFrequencyLevel = 0;
 
   /// Whether explicit frame bounds are encoded.
-    bool hasCrop = false;
+  bool hasCrop = false;
 
   /// Horizontal origin of the decoded frame bounds.
-    /// The origin can be negative; width and height are the decoded
+  /// The origin can be negative; width and height are the decoded
   /// frame size (after the upsampling/lowFrequencyLevel adjustments).
   int x0 = 0;
 
   /// Vertical origin of the frame crop.
-    int y0 = 0;
+  int y0 = 0;
 
   /// Width in pixels.
-    int width = 0;
+  int width = 0;
 
   /// Whether any JPEG color channel is subsampled.
-    bool isSubsampled = false;
+  bool isSubsampled = false;
 
   /// Whether the decoded bounds cover the complete image canvas.
-    bool coversFullCanvas = true;
+  bool coversFullCanvas = true;
 
   /// Blending settings for the color channels.
-    BlendingInfo blendingInfo = const BlendingInfo.defaults();
+  BlendingInfo blendingInfo = const BlendingInfo.defaults();
 
   /// Blending settings for each extra channel.
-    List<BlendingInfo> ecBlendingInfo = const [];
+  List<BlendingInfo> ecBlendingInfo = const [];
 
   /// Frame duration in animation ticks.
-    int duration = 0;
+  int duration = 0;
 
   /// Presentation timecode carried by the frame.
-    int timecode = 0;
+  int timecode = 0;
 
   /// Whether this is the last frame.
-    bool isLast = true;
+  bool isLast = true;
 
   /// Reference-frame slot receiving this frame.
-    int referenceSlot = 0;
+  int referenceSlot = 0;
 
   /// Whether the reference frame is saved before color transforms.
-    bool saveBeforeColorTransform = false;
+  bool saveBeforeColorTransform = false;
 
   /// Name carried by the codestream.
-    String name = '';
+  String name = '';
 
   /// Height in pixels.
-    int height = 0;
+  int height = 0;
 
   /// Creates a frame header with specification defaults.
-    FrameHeader._();
+  FrameHeader._();
 
   /// Reads this structure from the bitstream.
-    factory FrameHeader.read({
+  factory FrameHeader.read({
     required BitReader reader,
     required ImageHeader parent,
   }) {

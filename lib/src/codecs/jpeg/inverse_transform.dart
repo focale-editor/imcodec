@@ -188,220 +188,175 @@ void _inverseTransformBlock(Int16List quantizationTable, Int32List coefBlock, Ui
 
 /// Converts decoded JPEG components into an oriented RGBA image.
 Image _renderJpeg(_JpegData jpeg) {
+  final int sourceWidth = jpeg.width;
+  final int sourceHeight = jpeg.height;
   final int orientation = jpeg.orientation;
-
-  final int w = jpeg.width;
-  final int h = jpeg.height;
-  final bool flipWidthHeight = orientation >= 5 && orientation <= 8;
-  final int width = flipWidthHeight ? h : w;
-  final int height = flipWidthHeight ? w : h;
-
-  final Image image = Image(width: width, height: height);
-
-  _JpegComponentData component1;
-  _JpegComponentData component2;
-  _JpegComponentData component3;
-  _JpegComponentData component4;
-  Uint8List? component1Line;
-  Uint8List? component2Line;
-  Uint8List? component3Line;
-  Uint8List? component4Line;
-  bool colorTransform = false;
-
-  switch (jpeg.components.length) {
-    case 1:
-      component1 = jpeg.components[0];
-      final List<Uint8List> lines = component1.lines;
-      final int hShift1 = component1.horizontalScaleShift;
-      final int vShift1 = component1.verticalScaleShift;
-      for (var y = 0; y < h; y++) {
-        final int y1 = y >> vShift1;
-        component1Line = lines[y1];
-        for (var x = 0; x < w; x++) {
-          final int x1 = x >> hShift1;
-          final int cy = component1Line[x1];
-
-          _setOrientedPixel(
-            image: image,
-            orientation: orientation,
-            sourceWidth: w,
-            sourceHeight: h,
-            x: x,
-            y: y,
-            red: cy,
-            green: cy,
-            blue: cy,
-          );
-        }
-      }
-      break;
-    case 3:
-      colorTransform = jpeg.adobeMarker == null || jpeg.adobeMarker!.transformCode == 1;
-
-      component1 = jpeg.components[0];
-      component2 = jpeg.components[1];
-      component3 = jpeg.components[2];
-
-      final List<Uint8List> lines1 = component1.lines;
-      final List<Uint8List> lines2 = component2.lines;
-      final List<Uint8List> lines3 = component3.lines;
-
-      final int hShift1 = component1.horizontalScaleShift;
-      final int vShift1 = component1.verticalScaleShift;
-      final int hShift2 = component2.horizontalScaleShift;
-      final int vShift2 = component2.verticalScaleShift;
-      final int hShift3 = component3.horizontalScaleShift;
-      final int vShift3 = component3.verticalScaleShift;
-
-      for (var y = 0; y < h; y++) {
-        final int y1 = y >> vShift1;
-        final int y2 = y >> vShift2;
-        final int y3 = y >> vShift3;
-
-        component1Line = lines1[y1];
-        component2Line = lines2[y2];
-        component3Line = lines3[y3];
-
-        for (var x = 0; x < w; x++) {
-          final int x1 = x >> hShift1;
-          final int x2 = x >> hShift2;
-          final int x3 = x >> hShift3;
-
-          int red = component1Line[x1];
-          int green = component2Line[x2];
-          int blue = component3Line[x3];
-          if (colorTransform) {
-            final int luminance = red << 8;
-            final int blueDifference = green - 128;
-            final int redDifference = blue - 128;
-            red = ((luminance + 359 * redDifference + 128) >> 8).clamp(0, 255);
-            green = ((luminance - 88 * blueDifference - 183 * redDifference + 128) >> 8).clamp(0, 255);
-            blue = ((luminance + 454 * blueDifference + 128) >> 8).clamp(0, 255);
-          }
-
-          _setOrientedPixel(
-            image: image,
-            orientation: orientation,
-            sourceWidth: w,
-            sourceHeight: h,
-            x: x,
-            y: y,
-            red: red,
-            green: green,
-            blue: blue,
-          );
-        }
-      }
-      break;
-    case 4:
-      if (jpeg.adobeMarker == null) {
-        throw const ImageCodecException('Unsupported color mode (4 components)');
-      }
-      // The default transform for four components is false
-      colorTransform = false;
-      // The adobe transform marker overrides any previous setting
-      if (jpeg.adobeMarker!.transformCode != 0) {
-        colorTransform = true;
-      }
-
-      component1 = jpeg.components[0];
-      component2 = jpeg.components[1];
-      component3 = jpeg.components[2];
-      component4 = jpeg.components[3];
-
-      final List<Uint8List> lines1 = component1.lines;
-      final List<Uint8List> lines2 = component2.lines;
-      final List<Uint8List> lines3 = component3.lines;
-      final List<Uint8List> lines4 = component4.lines;
-
-      final int hShift1 = component1.horizontalScaleShift;
-      final int vShift1 = component1.verticalScaleShift;
-      final int hShift2 = component2.horizontalScaleShift;
-      final int vShift2 = component2.verticalScaleShift;
-      final int hShift3 = component3.horizontalScaleShift;
-      final int vShift3 = component3.verticalScaleShift;
-      final int hShift4 = component4.horizontalScaleShift;
-      final int vShift4 = component4.verticalScaleShift;
-
-      for (var y = 0; y < jpeg.height; y++) {
-        final int y1 = y >> vShift1;
-        final int y2 = y >> vShift2;
-        final int y3 = y >> vShift3;
-        final int y4 = y >> vShift4;
-        component1Line = lines1[y1];
-        component2Line = lines2[y2];
-        component3Line = lines3[y3];
-        component4Line = lines4[y4];
-        for (var x = 0; x < jpeg.width; x++) {
-          final int x1 = x >> hShift1;
-          final int x2 = x >> hShift2;
-          final int x3 = x >> hShift3;
-          final int x4 = x >> hShift4;
-          int cc;
-          int cm;
-          int cy;
-          int ck;
-          if (!colorTransform) {
-            cc = component1Line[x1];
-            cm = component2Line[x2];
-            cy = component3Line[x3];
-            ck = component4Line[x4];
-          } else {
-            cy = component1Line[x1];
-            final int cb = component2Line[x2];
-            final int cr = component3Line[x3];
-            ck = component4Line[x4];
-
-            cc = 255 - (cy + 1.402 * (cr - 128)).toInt().clamp(0, 255);
-            cm = 255 - (cy - 0.3441363 * (cb - 128) - 0.71413636 * (cr - 128)).toInt().clamp(0, 255);
-            cy = 255 - (cy + 1.772 * (cb - 128)).toInt().clamp(0, 255);
-          }
-          final int r = (cc * ck) >> 8;
-          final int g = (cm * ck) >> 8;
-          final int b = (cy * ck) >> 8;
-
-          _setOrientedPixel(
-            image: image,
-            orientation: orientation,
-            sourceWidth: w,
-            sourceHeight: h,
-            x: x,
-            y: y,
-            red: r,
-            green: g,
-            blue: b,
-          );
-        }
-      }
-      break;
-    default:
-      throw const ImageCodecException('Unsupported color mode');
+  final bool swapsAxes = orientation >= 5 && orientation <= 8;
+  final Image image = Image(
+    width: swapsAxes ? sourceHeight : sourceWidth,
+    height: swapsAxes ? sourceWidth : sourceHeight,
+  );
+  final Uint8List rgba = _renderComponents(jpeg, sourceWidth, sourceHeight);
+  if (orientation == 1) {
+    image.bytes.setAll(0, rgba);
+    return image;
   }
-
+  _applyOrientation(rgba, image.bytes, sourceWidth, sourceHeight, orientation, image.width);
   return image;
 }
 
-/// Writes a source pixel after applying its EXIF [orientation].
-void _setOrientedPixel({
-  required Image image,
-  required int orientation,
-  required int sourceWidth,
-  required int sourceHeight,
-  required int x,
-  required int y,
-  required int red,
-  required int green,
-  required int blue,
+/// Converts component samples to opaque RGBA pixels in stream order.
+Uint8List _renderComponents(_JpegData jpeg, int width, int height) {
+  final Uint8List rgba = Uint8List(width * height * 4);
+  switch (jpeg.components.length) {
+    case 1:
+      _renderGrayscale(jpeg.components[0], rgba, width, height);
+    case 3:
+      _renderYCbCr(
+        jpeg.components[0],
+        jpeg.components[1],
+        jpeg.components[2],
+        rgba,
+        width,
+        height,
+        colorTransform: jpeg.adobeMarker == null || jpeg.adobeMarker!.transformCode != 0,
+      );
+    case 4:
+      final _JpegAdobeMarker? adobeMarker = jpeg.adobeMarker;
+      if (adobeMarker == null) {
+        throw const ImageCodecException('Four-component JPEG data requires an Adobe marker');
+      }
+      _renderCmyk(
+        jpeg.components[0],
+        jpeg.components[1],
+        jpeg.components[2],
+        jpeg.components[3],
+        rgba,
+        width,
+        height,
+        colorTransform: adobeMarker.transformCode != 0,
+      );
+    default:
+      throw const ImageCodecException('Unsupported JPEG color mode');
+  }
+  return rgba;
+}
+
+/// Expands one luminance component to gray RGBA pixels.
+void _renderGrayscale(_JpegComponentData component, Uint8List rgba, int width, int height) {
+  final Uint8List plane = component.plane;
+  int destination = 0;
+  for (int sample = 0; sample < width * height; sample++) {
+    final int gray = plane[sample];
+    rgba[destination] = gray;
+    rgba[destination + 1] = gray;
+    rgba[destination + 2] = gray;
+    rgba[destination + 3] = 255;
+    destination += 4;
+  }
+}
+
+/// Converts three components to RGBA, optionally undoing the YCbCr transform.
+void _renderYCbCr(
+  _JpegComponentData luminance,
+  _JpegComponentData blueChroma,
+  _JpegComponentData redChroma,
+  Uint8List rgba,
+  int width,
+  int height, {
+  required bool colorTransform,
 }) {
-  final (int destinationX, int destinationY) = switch (orientation) {
-    2 => (sourceWidth - 1 - x, y),
-    3 => (sourceWidth - 1 - x, sourceHeight - 1 - y),
-    4 => (x, sourceHeight - 1 - y),
-    5 => (y, x),
-    6 => (sourceHeight - 1 - y, x),
-    7 => (sourceHeight - 1 - y, sourceWidth - 1 - x),
-    8 => (y, sourceWidth - 1 - x),
-    _ => (x, y),
-  };
-  image.setPixelRgb(destinationX, destinationY, red, green, blue);
+  final Uint8List clip = _dctClip;
+  final Uint8List luminancePlane = luminance.plane;
+  final Uint8List bluePlane = blueChroma.plane;
+  final Uint8List redPlane = redChroma.plane;
+  final int sampleCount = width * height;
+  int destination = 0;
+  for (int sample = 0; sample < sampleCount; sample++) {
+    if (colorTransform) {
+      final int scaledLuminance = luminancePlane[sample] << 8;
+      final int blueDifference = bluePlane[sample] - 128;
+      final int redDifference = redPlane[sample] - 128;
+      rgba[destination] = clip[_dctClipOffset + ((scaledLuminance + 359 * redDifference + 128) >> 8)];
+      rgba[destination + 1] = clip[_dctClipOffset + ((scaledLuminance - 88 * blueDifference - 183 * redDifference + 128) >> 8)];
+      rgba[destination + 2] = clip[_dctClipOffset + ((scaledLuminance + 454 * blueDifference + 128) >> 8)];
+    } else {
+      rgba[destination] = luminancePlane[sample];
+      rgba[destination + 1] = bluePlane[sample];
+      rgba[destination + 2] = redPlane[sample];
+    }
+    rgba[destination + 3] = 255;
+    destination += 4;
+  }
+}
+
+/// Converts four components to RGBA through the Adobe CMYK inversion.
+void _renderCmyk(
+  _JpegComponentData first,
+  _JpegComponentData second,
+  _JpegComponentData third,
+  _JpegComponentData fourth,
+  Uint8List rgba,
+  int width,
+  int height, {
+  required bool colorTransform,
+}) {
+  final Uint8List clip = _dctClip;
+  final Uint8List firstPlane = first.plane;
+  final Uint8List secondPlane = second.plane;
+  final Uint8List thirdPlane = third.plane;
+  final Uint8List fourthPlane = fourth.plane;
+  final int sampleCount = width * height;
+  int destination = 0;
+  for (int sample = 0; sample < sampleCount; sample++) {
+    int cyan = firstPlane[sample];
+    int magenta = secondPlane[sample];
+    int yellow = thirdPlane[sample];
+    final int black = fourthPlane[sample];
+    if (colorTransform) {
+      final int scaledLuminance = cyan << 8;
+      final int blueDifference = magenta - 128;
+      final int redDifference = yellow - 128;
+      cyan = 255 - clip[_dctClipOffset + ((scaledLuminance + 359 * redDifference + 128) >> 8)];
+      magenta = 255 - clip[_dctClipOffset + ((scaledLuminance - 88 * blueDifference - 183 * redDifference + 128) >> 8)];
+      yellow = 255 - clip[_dctClipOffset + ((scaledLuminance + 454 * blueDifference + 128) >> 8)];
+    }
+    rgba[destination] = (cyan * black + 127) ~/ 255;
+    rgba[destination + 1] = (magenta * black + 127) ~/ 255;
+    rgba[destination + 2] = (yellow * black + 127) ~/ 255;
+    rgba[destination + 3] = 255;
+    destination += 4;
+  }
+}
+
+/// Copies pixels into their oriented positions on the destination canvas.
+void _applyOrientation(
+  Uint8List source,
+  Uint8List destination,
+  int width,
+  int height,
+  int orientation,
+  int destinationWidth,
+) {
+  int sourceOffset = 0;
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      final (int destinationX, int destinationY) = switch (orientation) {
+        2 => (width - 1 - x, y),
+        3 => (width - 1 - x, height - 1 - y),
+        4 => (x, height - 1 - y),
+        5 => (y, x),
+        6 => (height - 1 - y, x),
+        7 => (height - 1 - y, width - 1 - x),
+        8 => (y, width - 1 - x),
+        _ => (x, y),
+      };
+      final int destinationOffset = (destinationY * destinationWidth + destinationX) * 4;
+      destination[destinationOffset] = source[sourceOffset];
+      destination[destinationOffset + 1] = source[sourceOffset + 1];
+      destination[destinationOffset + 2] = source[sourceOffset + 2];
+      destination[destinationOffset + 3] = source[sourceOffset + 3];
+      sourceOffset += 4;
+    }
+  }
 }
