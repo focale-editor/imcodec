@@ -1,7 +1,7 @@
 part of '../jpeg_xl.dart';
 
-/// Encodes and decodes JPEG XL images synchronously.
-final class JpegXlCodec extends RasterCodec {
+/// Encodes and decodes JPEG XL images.
+final class JpegXlCodec extends RasterCodec<JpegXlEncoder, JpegXlDecoder> with ParallelRasterCodec<JpegXlEncoder, JpegXlDecoder> {
   @override
   final JpegXlEncoder rasterEncoder;
 

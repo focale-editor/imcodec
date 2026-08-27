@@ -5,8 +5,6 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:imcodec/imcodec.dart';
-import 'package:imcodec/src/codecs/jpeg.dart' show JpegDecoder, JpegEncoder;
-import 'package:imcodec/src/codecs/jpeg_xl.dart' show JpegXlDecoder, JpegXlEncoder;
 import 'package:imcodec/src/codecs/png.dart' show PngDecoder, PngEncoder;
 import 'package:imcodec/src/codecs/tga.dart' show TgaDecoder, TgaEncoder;
 import 'package:imcodec/src/codecs/tiff.dart' show TiffDecoder, TiffEncoder;

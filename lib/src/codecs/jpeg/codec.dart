@@ -1,7 +1,7 @@
 part of '../jpeg.dart';
 
-/// Encodes and decodes Joint Photographic Experts Group images synchronously.
-final class JpegCodec extends RasterCodec {
+/// Encodes and decodes Joint Photographic Experts Group images.
+final class JpegCodec extends RasterCodec<JpegEncoder, JpegDecoder> with ParallelRasterCodec<JpegEncoder, JpegDecoder> {
   @override
   final JpegEncoder rasterEncoder;
 

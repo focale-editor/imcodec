@@ -258,6 +258,7 @@ final class AnsAliasTable {
   }
 
   /// Returns the 12-bit slot for [symbol] at its frequency [offset].
+  @pragma('vm:prefer-inline')
   int slot(int symbol, int offset) => _encTable[symbol][offset];
 }
 
@@ -265,17 +266,14 @@ final class AnsAliasTable {
 /// raw hybrid-uint extra bits the decoder reads after each symbol. Symbols
 /// are consumed in reverse; a forward decode reproduces them in order.
 final class AnsEncoder {
-  /// Alias-table index selected for each queued symbol.
-  final IntBuffer _tableIndices = IntBuffer(1 << 12);
+  /// Bit chunks collected while symbols are prepended in reverse order.
+  final IntBuffer _chunkBits;
 
-  /// Hybrid-integer token for each queued symbol.
-  final IntBuffer _tokens = IntBuffer(1 << 12);
+  /// Width of each chunk in [_chunkBits].
+  final IntBuffer _chunkLengths;
 
-  /// Expanded hybrid-integer payload for each queued symbol.
-  final IntBuffer _extraValues = IntBuffer(1 << 12);
-
-  /// Number of raw payload bits carried by each queued symbol.
-  final IntBuffer _extraBitCounts = IntBuffer(1 << 12);
+  /// Current reverse-encoding state.
+  int _state = _ansFinalState;
 
   /// Encoding tables shared by all queued symbols.
   final List<AnsAliasTable> aliasTables;
@@ -283,46 +281,96 @@ final class AnsEncoder {
   /// Creates an encoder backed by the supplied alias tables.
   AnsEncoder({
     required this.aliasTables,
-  });
+    int expectedSymbols = 1 << 12,
+  }) : _chunkBits = IntBuffer(expectedSymbols),
+       _chunkLengths = IntBuffer(expectedSymbols);
 
-  /// Queues one token and its optional hybrid-integer payload.
-  void addSymbol(int tableIndex, int token, {int extra = 0, int extraBits = 0}) {
-    _tableIndices.add(tableIndex);
-    _tokens.add(token);
-    _extraValues.add(extra);
-    _extraBitCounts.add(extraBits);
+  /// Prepends one token while traversing the source stream in reverse.
+  @pragma('vm:prefer-inline')
+  void prependSymbol(int tableIndex, int token, {int extra = 0, int extraBits = 0}) {
+    if (extraBits > 0) {
+      _chunkBits.add(extra);
+      _chunkLengths.add(extraBits);
+    }
+    final AnsAliasTable table = aliasTables[tableIndex];
+    final int frequency = table.frequencies[token];
+    if (frequency == _precision) {
+      return;
+    }
+    const int maximumState = (_ansRenormLower >> _precisionBits) << 16;
+    while (_state >= maximumState * frequency) {
+      _chunkBits.add(_state & 0xFFFF);
+      _chunkLengths.add(16);
+      _state >>= 16;
+    }
+    _state = ((_state ~/ frequency) << _precisionBits) | table.slot(token, _state % frequency);
   }
 
   /// Appends the encoded stream to [w]: a 32-bit initial state, then the
   /// renorm words and raw extra bits interleaved exactly as the decoder
   /// reads them.
   void finish(BitWriter w) {
-    // Chunks are collected during the reverse pass, then reversed to get the
-    // forward stream. For value k the forward order is [refill?][extra];
-    // reversed, that means appending extra first, then the renorm word.
-    final chunkBits = IntBuffer(1 << 12);
-    final chunkLen = IntBuffer(1 << 12);
-    const int xMax = (_ansRenormLower >> _precisionBits) << 16;
-    int state = _ansFinalState;
-    for (int k = _tokens.length - 1; k >= 0; k--) {
-      if (_extraBitCounts[k] > 0) {
-        chunkBits.add(_extraValues[k]);
-        chunkLen.add(_extraBitCounts[k]);
-      }
-      final AnsAliasTable table = aliasTables[_tableIndices[k]];
-      final int s = _tokens[k];
-      final int f = table.frequencies[s];
-      while (state >= xMax * f) {
-        chunkBits.add(state & 0xFFFF);
-        chunkLen.add(16);
-        state >>= 16;
-      }
-      state = ((state ~/ f) << _precisionBits) | table.slot(s, state % f);
+    w.writeBits(_state & 0xFFFF, 16);
+    w.writeBits((_state >> 16) & 0xFFFF, 16);
+    for (int index = _chunkBits.length - 1; index >= 0; index--) {
+      w.writeBits(_chunkBits[index], _chunkLengths[index]);
     }
-    w.writeBits(state & 0xFFFF, 16);
-    w.writeBits((state >> 16) & 0xFFFF, 16);
-    for (int i = chunkBits.length - 1; i >= 0; i--) {
-      w.writeBits(chunkBits[i], chunkLen[i]);
+  }
+}
+
+/// Encodes h410 values with one packed chunk buffer.
+///
+/// JPEG XL integer images contain at most 16-bit samples, so h410 payloads
+/// never exceed 16 bits. Packing each payload or renormalization word with its
+/// width halves the hot stream's buffer traffic compared with [AnsEncoder].
+final class AnsEncoderH410 {
+  /// Packed `(bit width, value)` chunks collected in reverse order.
+  final IntBuffer _chunks;
+
+  /// Current reverse-encoding state.
+  int _state = _ansFinalState;
+
+  /// Encoding tables shared by all values.
+  final List<AnsAliasTable> aliasTables;
+
+  /// Creates an h410 encoder backed by the supplied alias tables.
+  AnsEncoderH410({
+    required this.aliasTables,
+    int expectedSymbols = 1 << 12,
+  }) : _chunks = IntBuffer(expectedSymbols);
+
+  /// Prepends one packed unsigned value while traversing a section in reverse.
+  @pragma('vm:prefer-inline')
+  void prependValue(int tableIndex, int value) {
+    final int token;
+    if (value < 16) {
+      token = value;
+    } else {
+      final int extraBitCount = value.bitLength - 2;
+      assert(extraBitCount <= 16, 'h410 payload exceeds the integer encoder range');
+      token = 16 + ((extraBitCount - 3) << 1) + ((value >> extraBitCount) & 1);
+      _chunks.add((extraBitCount << 16) | (value & ((1 << extraBitCount) - 1)));
+    }
+    final AnsAliasTable table = aliasTables[tableIndex];
+    final int frequency = table.frequencies[token];
+    if (frequency == _precision) {
+      return;
+    }
+    const int maximumState = (_ansRenormLower >> _precisionBits) << 16;
+    while (_state >= maximumState * frequency) {
+      _chunks.add((16 << 16) | (_state & 0xffff));
+      _state >>= 16;
+    }
+    _state = ((_state ~/ frequency) << _precisionBits) | table.slot(token, _state % frequency);
+  }
+
+  /// Appends the final state and the collected chunks to [writer].
+  void finish(BitWriter writer) {
+    writer.writeBits(_state & 0xffff, 16);
+    writer.writeBits((_state >> 16) & 0xffff, 16);
+    for (int index = _chunks.length - 1; index >= 0; index--) {
+      final int chunk = _chunks[index];
+      writer.writeBits(chunk & 0xffff, chunk >> 16);
     }
   }
 }

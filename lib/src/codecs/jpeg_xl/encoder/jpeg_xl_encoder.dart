@@ -6,6 +6,7 @@ import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/encoder/context_tree.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/encoder/effort.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/encoder/entropy_encoder.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/encoder/group_task.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/encoder/header_encoder.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/encoder/var_dct_encoder.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/encoder/weighted_predictor.dart';
@@ -13,6 +14,7 @@ import 'package:imcodec/src/codecs/jpeg_xl/entropy/hybrid_uint.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/header/image_header.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/image.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_writer.dart';
+import 'package:imcodec/src/parallel_runner.dart';
 
 /// Encodes JPEG XL codestreams entirely in Dart.
 /// The output decodes bit-exact with any conforming decoder; every file is
@@ -22,43 +24,91 @@ final class JpegXlCodestreamEncoder {
   /// [pixels] layout is `width * height * channelCount` bytes where the
   /// channel count is 1 (gray), 2 (gray+alpha), 3 (RGB) or 4 (RGBA)
   /// according to [grayscale] and [hasAlpha].
+  /// A fully opaque alpha channel is omitted because the decoder recreates
+  /// the same maximum alpha values when no alpha channel is present.
   static Uint8List encodeLossless(Uint8List pixels, {required int width, required int height, bool grayscale = false, bool hasAlpha = false, JpegXlEffort effort = JpegXlEffort.balanced}) {
-    final setup = JpegXlEncodeSetup(width: width, height: height, bitsPerSample: 8, grayscale: grayscale, hasAlpha: hasAlpha);
-    final int n = setup.channelCount;
-    if (pixels.length != width * height * n) {
-      throw ArgumentError(
-        'expected ${width * height * n} bytes, '
-        'got ${pixels.length}',
-      );
-    }
-    final List<Int32List> planes = [for (var c = 0; c < n; c++) Int32List(width * height)];
-    for (var c = 0; c < n; c++) {
-      final Int32List plane = planes[c];
-      for (var i = 0; i < width * height; i++) {
-        plane[i] = pixels[i * n + c];
-      }
-    }
+    final (JpegXlEncodeSetup setup, List<Int32List> planes) = _losslessPlanes(pixels, width: width, height: height, grayscale: grayscale, hasAlpha: hasAlpha);
     return _encodeModular(setup, planes, effort);
   }
 
-  /// Losslessly encodes interleaved 16-bit pixels (same layout as
-  /// [encodeLossless]).
-  static Uint8List encodeLossless16(Uint16List pixels, {required int width, required int height, bool grayscale = false, bool hasAlpha = false, JpegXlEffort effort = JpegXlEffort.balanced}) {
-    final setup = JpegXlEncodeSetup(width: width, height: height, bitsPerSample: 16, grayscale: grayscale, hasAlpha: hasAlpha);
-    final int n = setup.channelCount;
-    if (pixels.length != width * height * n) {
+  /// Splits interleaved 8-bit [pixels] into one plane per channel.
+  static (JpegXlEncodeSetup, List<Int32List>) _losslessPlanes(Uint8List pixels, {required int width, required int height, required bool grayscale, required bool hasAlpha}) {
+    final JpegXlEncodeSetup sourceSetup = JpegXlEncodeSetup(width: width, height: height, bitsPerSample: 8, grayscale: grayscale, hasAlpha: hasAlpha);
+    final int sourceChannelCount = sourceSetup.channelCount;
+    if (pixels.length != width * height * sourceChannelCount) {
       throw ArgumentError(
-        'expected ${width * height * n} samples, '
+        'expected ${width * height * sourceChannelCount} bytes, '
         'got ${pixels.length}',
       );
     }
-    final List<Int32List> planes = [for (var c = 0; c < n; c++) Int32List(width * height)];
-    for (var c = 0; c < n; c++) {
-      final Int32List plane = planes[c];
-      for (var i = 0; i < width * height; i++) {
-        plane[i] = pixels[i * n + c];
+    bool opaqueAlpha = hasAlpha;
+    if (hasAlpha) {
+      for (int pixel = 0; pixel < width * height; pixel++) {
+        if (pixels[pixel * sourceChannelCount + sourceChannelCount - 1] != 255) {
+          opaqueAlpha = false;
+          break;
+        }
       }
     }
+    final int encodedChannelCount = sourceChannelCount - (opaqueAlpha ? 1 : 0);
+    final List<Int32List> planes = [for (int channel = 0; channel < encodedChannelCount; channel++) Int32List(width * height)];
+    for (int channel = 0; channel < encodedChannelCount; channel++) {
+      final Int32List plane = planes[channel];
+      for (int pixel = 0; pixel < width * height; pixel++) {
+        plane[pixel] = pixels[pixel * sourceChannelCount + channel];
+      }
+    }
+    final JpegXlEncodeSetup setup = opaqueAlpha ? JpegXlEncodeSetup(width: width, height: height, bitsPerSample: 8, grayscale: grayscale, hasAlpha: false) : sourceSetup;
+    return (setup, planes);
+  }
+
+  /// Losslessly encodes interleaved 8-bit pixels, running each group's share
+  /// of the work through [runner].
+  ///
+  /// Produces the same bytes as [encodeLossless] with the same [effort]; only
+  /// the execution of the independent per-group work differs.
+  static Future<Uint8List> encodeLosslessWith(
+    ParallelRunner runner,
+    Uint8List pixels, {
+    required int width,
+    required int height,
+    bool grayscale = false,
+    bool hasAlpha = false,
+    JpegXlEffort effort = JpegXlEffort.balanced,
+  }) {
+    final (JpegXlEncodeSetup setup, List<Int32List> planes) = _losslessPlanes(pixels, width: width, height: height, grayscale: grayscale, hasAlpha: hasAlpha);
+    return _encodeModularWith(runner, setup, planes, effort);
+  }
+
+  /// Losslessly encodes interleaved 16-bit pixels (same layout as
+  /// [encodeLossless]), omitting a fully opaque alpha channel in the same way.
+  static Uint8List encodeLossless16(Uint16List pixels, {required int width, required int height, bool grayscale = false, bool hasAlpha = false, JpegXlEffort effort = JpegXlEffort.balanced}) {
+    final JpegXlEncodeSetup sourceSetup = JpegXlEncodeSetup(width: width, height: height, bitsPerSample: 16, grayscale: grayscale, hasAlpha: hasAlpha);
+    final int sourceChannelCount = sourceSetup.channelCount;
+    if (pixels.length != width * height * sourceChannelCount) {
+      throw ArgumentError(
+        'expected ${width * height * sourceChannelCount} samples, '
+        'got ${pixels.length}',
+      );
+    }
+    bool opaqueAlpha = hasAlpha;
+    if (hasAlpha) {
+      for (int pixel = 0; pixel < width * height; pixel++) {
+        if (pixels[pixel * sourceChannelCount + sourceChannelCount - 1] != 65535) {
+          opaqueAlpha = false;
+          break;
+        }
+      }
+    }
+    final int encodedChannelCount = sourceChannelCount - (opaqueAlpha ? 1 : 0);
+    final List<Int32List> planes = [for (int channel = 0; channel < encodedChannelCount; channel++) Int32List(width * height)];
+    for (int channel = 0; channel < encodedChannelCount; channel++) {
+      final Int32List plane = planes[channel];
+      for (int pixel = 0; pixel < width * height; pixel++) {
+        plane[pixel] = pixels[pixel * sourceChannelCount + channel];
+      }
+    }
+    final JpegXlEncodeSetup setup = opaqueAlpha ? JpegXlEncodeSetup(width: width, height: height, bitsPerSample: 16, grayscale: grayscale, hasAlpha: false) : sourceSetup;
     return _encodeModular(setup, planes, effort);
   }
 
@@ -124,6 +174,23 @@ const _config = HybridIntegerConfig(splitExponent: 4, msbInToken: 1, lsbInToken:
 /// chosen config is serialized into each entropy stream's header.
 const _hybridConfigs = [HybridIntegerConfig(splitExponent: 4, msbInToken: 1, lsbInToken: 0), HybridIntegerConfig(splitExponent: 4, msbInToken: 2, lsbInToken: 0)];
 
+/// Shared empty typed buffer for fast-path jobs that do not collect samples.
+final Int32List _emptyInt32List = Int32List(0);
+
+/// Number of token slots needed by packed signed 32-bit residuals under h410.
+const int _fastTokenCapacity = 80;
+
+/// Packs an h410 token and its extra-bit count into one small integer.
+@pragma('vm:prefer-inline')
+int _fastTokenInformation(int value) {
+  if (value < 16) {
+    return value;
+  }
+  final int extraBitCount = value.bitLength - 2;
+  final int token = 16 + ((extraBitCount - 3) << 1) + ((value >> extraBitCount) & 1);
+  return token | (extraBitCount << 8);
+}
+
 /// Packs signed.
 int _packSigned(int v) => v >= 0 ? v << 1 : (-v << 1) - 1;
 
@@ -148,18 +215,47 @@ void _tileResiduals(
   List<int> properties, {
   int channelIndex = 0,
   Int32List? priorPlane,
-}) {
-  final tile = Int32List(tw * th);
+}) => _tileResidualsFromTile(
+  _extractTile(plane, imageWidth, ox, oy, tw, th),
+  priorPlane == null ? null : _extractTile(priorPlane, imageWidth, ox, oy, tw, th),
+  tw,
+  th,
+  valuesOut,
+  maxErrOut,
+  trainProps,
+  trainTokens,
+  stride,
+  strideState,
+  useWp,
+  properties,
+  channelIndex: channelIndex,
+);
+
+/// Copies the [tw] by [th] tile at ([ox], [oy]) out of [plane].
+Int32List _extractTile(Int32List plane, int imageWidth, int ox, int oy, int tw, int th) {
+  final Int32List tile = Int32List(tw * th);
   for (var y = 0; y < th; y++) {
     tile.setRange(y * tw, y * tw + tw, plane, (oy + y) * imageWidth + ox);
   }
-  Int32List? priorTile;
-  if (priorPlane != null) {
-    priorTile = Int32List(tw * th);
-    for (var y = 0; y < th; y++) {
-      priorTile.setRange(y * tw, y * tw + tw, priorPlane, (oy + y) * imageWidth + ox);
-    }
-  }
+  return tile;
+}
+
+/// Pass A over an already extracted tile.
+void _tileResidualsFromTile(
+  Int32List tile,
+  Int32List? priorTile,
+  int tw,
+  int th,
+  IntBuffer valuesOut,
+  IntBuffer? maxErrOut,
+  IntBuffer trainProps,
+  IntBuffer trainTokens,
+  int stride,
+  List<int> strideState,
+  bool useWp,
+  List<int> properties, {
+  int channelIndex = 0,
+}) {
   Int32List? wpRes;
   Int32List? wpErr;
   if (useWp) {
@@ -209,21 +305,208 @@ void _tileResiduals(
   strideState[0] = counter;
 }
 
+/// Computes clamped-gradient residuals without collecting tree properties.
+({Int32List values, List<Int32List> tokenCounts, Int32List extraBitCounts}) _fastGradientResiduals(
+  List<Int32List> planes,
+  int sourceWidth,
+  int sourceX,
+  int sourceY,
+  int tileWidth,
+  int tileHeight,
+) {
+  final int samplesPerTile = tileWidth * tileHeight;
+  final Int32List values = Int32List(samplesPerTile * planes.length);
+  final List<Int32List> tokenCounts = <Int32List>[
+    for (int plane = 0; plane < planes.length; plane++) Int32List(_fastTokenCapacity),
+  ];
+  final Int32List extraBitCounts = Int32List(planes.length);
+  int destination = 0;
+  for (int planeIndex = 0; planeIndex < planes.length; planeIndex++) {
+    final Int32List plane = planes[planeIndex];
+    final Int32List counts = tokenCounts[planeIndex];
+    int planeExtraBitCount = 0;
+    final int firstRow = sourceY * sourceWidth + sourceX;
+    int current = plane[firstRow];
+    int packed = current >= 0 ? current << 1 : (-current << 1) - 1;
+    values[destination++] = packed;
+    int tokenInformation = _fastTokenInformation(packed);
+    counts[tokenInformation & 0xff]++;
+    planeExtraBitCount += tokenInformation >> 8;
+    for (int x = 1; x < tileWidth; x++) {
+      final int residual = plane[firstRow + x] - plane[firstRow + x - 1];
+      packed = residual >= 0 ? residual << 1 : (-residual << 1) - 1;
+      values[destination++] = packed;
+      tokenInformation = _fastTokenInformation(packed);
+      counts[tokenInformation & 0xff]++;
+      planeExtraBitCount += tokenInformation >> 8;
+    }
+    for (int y = 1; y < tileHeight; y++) {
+      final int row = (sourceY + y) * sourceWidth + sourceX;
+      current = plane[row];
+      int residual = current - plane[row - sourceWidth];
+      packed = residual >= 0 ? residual << 1 : (-residual << 1) - 1;
+      values[destination++] = packed;
+      tokenInformation = _fastTokenInformation(packed);
+      counts[tokenInformation & 0xff]++;
+      planeExtraBitCount += tokenInformation >> 8;
+      for (int x = 1; x < tileWidth; x++) {
+        final int offset = row + x;
+        final int west = plane[offset - 1];
+        final int north = plane[offset - sourceWidth];
+        final int northWest = plane[offset - sourceWidth - 1];
+        final int gradient = west + north - northWest;
+        final int minimum = west < north ? west : north;
+        final int maximum = west > north ? west : north;
+        final int prediction = gradient < minimum
+            ? minimum
+            : gradient > maximum
+            ? maximum
+            : gradient;
+        residual = plane[offset] - prediction;
+        packed = residual >= 0 ? residual << 1 : (-residual << 1) - 1;
+        values[destination++] = packed;
+        tokenInformation = _fastTokenInformation(packed);
+        counts[tokenInformation & 0xff]++;
+        planeExtraBitCount += tokenInformation >> 8;
+      }
+    }
+    extraBitCounts[planeIndex] = planeExtraBitCount;
+  }
+  return (values: values, tokenCounts: tokenCounts, extraBitCounts: extraBitCounts);
+}
+
+/// Runs one group's residual pass.
+///
+/// Top level and free of shared state so that a caller may run it on another
+/// isolate; the job carries every input it needs.
+ModularResidualResult runModularResidualJob(ModularResidualJob job) {
+  if (!job.useWeightedPredictor && job.properties.isEmpty) {
+    final ({Int32List values, List<Int32List> tokenCounts, Int32List extraBitCounts}) result = _fastGradientResiduals(
+      job.tiles,
+      job.sourceWidth,
+      job.sourceX,
+      job.sourceY,
+      job.tileWidth,
+      job.tileHeight,
+    );
+    return ModularResidualResult(
+      values: result.values,
+      maximumErrors: null,
+      trainingProperties: _emptyInt32List,
+      trainingTokens: _emptyInt32List,
+      tokenCounts: result.tokenCounts,
+      extraBitCounts: result.extraBitCounts,
+    );
+  }
+  final int sampleCount = job.tileWidth * job.tileHeight * job.tiles.length;
+  final IntBuffer values = IntBuffer(sampleCount < 1 ? 1 : sampleCount);
+  final IntBuffer? maximumErrors = job.useWeightedPredictor ? IntBuffer(sampleCount < 1 ? 1 : sampleCount) : null;
+  final IntBuffer trainingProperties = IntBuffer(1 << 10);
+  final IntBuffer trainingTokens = IntBuffer(1 << 8);
+  final List<int> strideState = [job.strideCounter];
+  for (var pi = 0; pi < job.tiles.length; pi++) {
+    _tileResidualsFromTile(
+      job.tiles[pi],
+      job.crossChannel && pi > 0 ? job.tiles[pi - 1] : null,
+      job.tileWidth,
+      job.tileHeight,
+      values,
+      maximumErrors,
+      trainingProperties,
+      trainingTokens,
+      job.stride,
+      strideState,
+      job.useWeightedPredictor,
+      job.properties,
+      channelIndex: job.crossChannel ? pi : 0,
+    );
+  }
+  return ModularResidualResult(
+    values: values.view(),
+    maximumErrors: maximumErrors?.view(),
+    trainingProperties: trainingProperties.view(),
+    trainingTokens: trainingTokens.view(),
+    tokenCounts: null,
+    extraBitCounts: null,
+  );
+}
+
+/// Runs one group's context pass.
+///
+/// Top level and free of shared state, like [runModularResidualJob].
+Int32List runModularContextJob(ModularContextJob job) {
+  final int? samplesPerChannel = job.samplesPerChannel;
+  if (samplesPerChannel != null) {
+    final Int32List contexts = Int32List(job.sampleCount);
+    final int channelCount = job.sampleCount ~/ samplesPerChannel;
+    final Int32List properties = Int32List(1);
+    for (int channel = 0; channel < channelCount; channel++) {
+      properties[0] = channel;
+      final int context = contextFor(job.tree, properties);
+      contexts.fillRange(channel * samplesPerChannel, (channel + 1) * samplesPerChannel, context);
+    }
+    return contexts;
+  }
+  final int? constantContext = job.constantContext;
+  if (constantContext != null) {
+    return Int32List(job.sampleCount)..fillRange(0, job.sampleCount, constantContext);
+  }
+  final IntBuffer contexts = IntBuffer(job.sampleCount < 1 ? 1 : job.sampleCount);
+  final IntBuffer? maximumErrors = job.maximumErrors == null ? null : (IntBuffer(job.maximumErrors!.length)..addAll(job.maximumErrors!));
+  for (var pi = 0; pi < job.tiles.length; pi++) {
+    _tileContextsFromTile(
+      job.tiles[pi],
+      job.crossChannel && pi > 0 ? job.tiles[pi - 1] : null,
+      job.tileWidth,
+      job.tileHeight,
+      job.tree,
+      contexts,
+      maximumErrors,
+      channelIndex: job.crossChannel ? pi : 0,
+    );
+  }
+  return contexts.view();
+}
+
+/// Learns one predictor's context tree.
+///
+/// Top level and free of shared state, like the group passes.
+ContextTree runModularTreeJob(ModularTreeJob job) =>
+    job.fixedChannelCount > 0 ? createChannelContextTree(job.fixedChannelCount) : learnContextTree(job.trainingProperties, job.trainingTokens, job.properties);
+
+/// Advances the training-sample counter across [pixelCount] pixels.
+///
+/// Pass A samples every [stride]-th pixel, and the counter that tracks this
+/// runs across every group in order. Reproducing it in closed form lets each
+/// group start from a known counter, which is what makes the groups
+/// independent — and therefore safe to run in any order — while still
+/// selecting exactly the same training samples as one sequential pass.
+int _advanceStrideCounter(int counter, int pixelCount, int stride) {
+  if (counter >= pixelCount) {
+    return counter - pixelCount;
+  }
+  final int sampleCount = (pixelCount - counter + stride - 1) ~/ stride;
+  final int lastSample = counter + (sampleCount - 1) * stride;
+  return stride - (pixelCount - lastSample);
+}
+
 /// Pass B over a tile: assigns each pixel a context by walking [tree]. The
 /// per-pixel max-error (property 15) is read from [maxErrIn] (filled by Pass
 /// A in the same order) so the weighted predictor isn't recomputed.
-void _tileContexts(Int32List plane, int imageWidth, int ox, int oy, int tw, int th, ContextTree tree, IntBuffer contextsOut, IntBuffer? maxErrIn, {int channelIndex = 0, Int32List? priorPlane}) {
-  final tile = Int32List(tw * th);
-  for (var y = 0; y < th; y++) {
-    tile.setRange(y * tw, y * tw + tw, plane, (oy + y) * imageWidth + ox);
-  }
-  Int32List? priorTile;
-  if (priorPlane != null) {
-    priorTile = Int32List(tw * th);
-    for (var y = 0; y < th; y++) {
-      priorTile.setRange(y * tw, y * tw + tw, priorPlane, (oy + y) * imageWidth + ox);
-    }
-  }
+void _tileContexts(Int32List plane, int imageWidth, int ox, int oy, int tw, int th, ContextTree tree, IntBuffer contextsOut, IntBuffer? maxErrIn, {int channelIndex = 0, Int32List? priorPlane}) =>
+    _tileContextsFromTile(
+      _extractTile(plane, imageWidth, ox, oy, tw, th),
+      priorPlane == null ? null : _extractTile(priorPlane, imageWidth, ox, oy, tw, th),
+      tw,
+      th,
+      tree,
+      contextsOut,
+      maxErrIn,
+      channelIndex: channelIndex,
+    );
+
+/// Pass B over an already extracted tile.
+void _tileContextsFromTile(Int32List tile, Int32List? priorTile, int tw, int th, ContextTree tree, IntBuffer contextsOut, IntBuffer? maxErrIn, {int channelIndex = 0}) {
   final props = Int32List(tree.properties.length);
   for (var y = 0; y < th; y++) {
     for (var x = 0; x < tw; x++) {
@@ -307,12 +590,51 @@ const _kPredictorMargin = 1.02;
 /// [ContextTree.trainingBits]) before the expensive Pass B + entropy coding,
 /// and so the loser's per-pixel residuals stay available for per-leaf predictor
 /// selection (the winning tree's leaves may switch to the loser's predictor).
-typedef _Prep = ({int predictor, List<int> properties, ContextTree tree, List<Int32List> groupValues, List<IntBuffer>? groupMaxErr, Int32List metaValues, IntBuffer? metaMaxErr});
+typedef _Prep = ({
+  int predictor,
+  List<int> properties,
+  ContextTree tree,
+  List<Int32List> groupValues,
+  List<IntBuffer>? groupMaxErr,
+  Int32List metaValues,
+  IntBuffer? metaMaxErr,
+  List<Int32List>? tokenCounts,
+  Int32List? extraBitCounts,
+});
+
+/// Inputs and palette metadata produced before residual jobs are executed.
+typedef _ResidualPass = ({
+  List<ModularResidualJob> jobs,
+  IntBuffer trainProps,
+  IntBuffer trainTokens,
+  IntBuffer metaValues,
+  IntBuffer? metaMaxErr,
+  List<Int32List>? metaTokenCounts,
+  Int32List? metaExtraBitCounts,
+});
+
+/// Residual-job outputs combined in deterministic group order.
+typedef _GatheredResiduals = ({
+  ModularTreeJob treeJob,
+  List<Int32List> groupValues,
+  List<IntBuffer>? groupMaxErr,
+  List<Int32List>? planeTokenCounts,
+  Int32List? planeExtraBitCounts,
+});
+
+/// Constant context runs, represented by their context ids and exclusive ends.
+typedef _ContextRuns = ({Int32List contexts, Int32List ends});
 
 /// Pass B output for one prep: the per-region leaf contexts (reused to build
 /// the mixed value stream) plus the same contexts already grouped into
-/// entropy-coding sections.
-typedef _PassB = ({Int32List metaContexts, List<Int32List> groupContexts, List<List<int>> sectionContexts});
+/// entropy-coding sections. Fixed fast contexts use [sectionRuns] instead of
+/// materializing one context id per sample.
+typedef _PassB = ({
+  Int32List metaContexts,
+  List<Int32List> groupContexts,
+  List<List<int>> sectionContexts,
+  List<_ContextRuns>? sectionRuns,
+});
 
 /// Estimates the zero-order entropy of one slice of [histogram].
 double _histogramEntropy(Int32List histogram, int offset, int width, int total) {
@@ -468,6 +790,9 @@ Uint8List _encodeModular(JpegXlEncodeSetup setup, List<Int32List> planes, JpegXl
   if (setup.grayscale) {
     final List<int>? palette = _detectPaletteGray(planes[0], _kPaletteMaxColorsGray);
     final bool worthTrying = palette != null && _grayPaletteWorthTrying(palette);
+    if (effort == JpegXlEffort.fast) {
+      return _encodeModularCore(setup, planes, worthTrying ? palette : null, false, effort, paletteChannels: 1);
+    }
     final Uint8List grayBytes = _encodeModularCore(setup, planes, null, false, effort);
     if (!worthTrying) {
       return grayBytes;
@@ -476,16 +801,48 @@ Uint8List _encodeModular(JpegXlEncodeSetup setup, List<Int32List> planes, JpegXl
     return palBytes.length < grayBytes.length ? palBytes : grayBytes;
   }
   final List<int>? palette = _detectPalette(planes, _kPaletteMaxColors);
-  final Uint8List rctBytes = _encodeModularCore(setup, _copyPlanes(planes), null, true, effort);
   if (palette == null) {
-    return rctBytes;
+    return _encodeModularCore(setup, planes, null, true, effort);
   }
+  if (effort == JpegXlEffort.fast) {
+    return _encodeModularCore(setup, planes, palette, false, effort);
+  }
+  final Uint8List rctBytes = _encodeModularCore(setup, _copyPlanes(planes), null, true, effort);
   final Uint8List palBytes = _encodeModularCore(setup, _copyPlanes(planes), palette, false, effort);
   return palBytes.length < rctBytes.length ? palBytes : rctBytes;
 }
 
+/// Colour modular encode driven by a [ParallelRunner].
+///
+/// Mirrors [_encodeModular] step for step, so both produce the same bytes.
+Future<Uint8List> _encodeModularWith(ParallelRunner runner, JpegXlEncodeSetup setup, List<Int32List> planes, JpegXlEffort effort) async {
+  if (setup.grayscale) {
+    final List<int>? palette = _detectPaletteGray(planes[0], _kPaletteMaxColorsGray);
+    final bool worthTrying = palette != null && _grayPaletteWorthTrying(palette);
+    if (effort == JpegXlEffort.fast) {
+      return _encodeModularCoreWith(runner, setup, planes, worthTrying ? palette : null, false, effort, paletteChannels: 1);
+    }
+    final Uint8List grayBytes = await _encodeModularCoreWith(runner, setup, planes, null, false, effort);
+    if (!worthTrying) {
+      return grayBytes;
+    }
+    final Uint8List palBytes = await _encodeModularCoreWith(runner, setup, _copyPlanes(planes), palette, false, effort, paletteChannels: 1);
+    return palBytes.length < grayBytes.length ? palBytes : grayBytes;
+  }
+  final List<int>? palette = _detectPalette(planes, _kPaletteMaxColors);
+  if (palette == null) {
+    return _encodeModularCoreWith(runner, setup, planes, null, true, effort);
+  }
+  if (effort == JpegXlEffort.fast) {
+    return _encodeModularCoreWith(runner, setup, planes, palette, false, effort);
+  }
+  final Uint8List rctBytes = await _encodeModularCoreWith(runner, setup, _copyPlanes(planes), null, true, effort);
+  final Uint8List palBytes = await _encodeModularCoreWith(runner, setup, _copyPlanes(planes), palette, false, effort);
+  return palBytes.length < rctBytes.length ? palBytes : rctBytes;
+}
+
 /// Encodes modular core.
-Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlanes, List<int>? palette, bool applyRct, JpegXlEffort effort, {int paletteChannels = 3}) {
+_ModularSteps _modularSteps(JpegXlEncodeSetup setup, List<Int32List> inputPlanes, List<int>? palette, bool applyRct, JpegXlEffort effort, {int paletteChannels = 3}) {
   List<Int32List> planes = inputPlanes;
   const groupDimension = 256;
   final int width = setup.width;
@@ -496,14 +853,6 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
   final int lowFrequencyGroupCount = ceilDiv(width, groupDimension << 3) * ceilDiv(height, groupDimension << 3);
   final singleSection = groupCount == 1;
   final bool globalChannels = width <= groupDimension && height <= groupDimension;
-
-  /// Number of samples group [g] contributes across [planeCount] planes.
-  int groupSampleCount(int g, int planeCount) {
-    final int tileWidth = (width - (g % groupsX) * groupDimension).clamp(0, groupDimension);
-    final int tileHeight = (height - (g ~/ groupsX) * groupDimension).clamp(0, groupDimension);
-    final int count = tileWidth * tileHeight * planeCount;
-    return count < 1 ? 1 : count;
-  }
 
   // Transform application (the palette-vs-RCT *decision* is [_encodeModular]'s;
   // here it is a given). Palette: replace the 3 colour planes with one index
@@ -561,63 +910,200 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
   // learned trees can be compared (via [ContextTree.trainingBits]) before the
   // expensive Pass B + entropy-coding + assembly runs — see the decision
   // below `prep`/`finish`.
-  _Prep prep(bool useWp) {
-    final predictor = useWp ? 6 : 5;
-    // On the RCT colour path the tree may condition on channel index and on
-    // the prior channel (cross-channel context); grayscale/palette can't.
-    final List<int> properties = useRct ? (useWp ? rctWpProperties : rctGradProperties) : (useWp ? wpProperties : gradProperties);
+  /// Tiles of every plane for group [g], copied when isolation requires it.
+  List<Int32List> groupTiles(int g, bool copyTiles) {
+    if (!copyTiles) {
+      return planes;
+    }
+    final int ox = (g % groupsX) * groupDimension;
+    final int oy = (g ~/ groupsX) * groupDimension;
+    final int tw = (width - ox).clamp(0, groupDimension);
+    final int th = (height - oy).clamp(0, groupDimension);
+    return [for (var pi = 0; pi < planes.length; pi++) _extractTile(planes[pi], width, ox, oy, tw, th)];
+  }
+
+  /// Width of group [g]'s tile.
+  int groupWidth(int g) => (width - (g % groupsX) * groupDimension).clamp(0, groupDimension);
+
+  /// Height of group [g]'s tile.
+  int groupHeight(int g) => (height - (g ~/ groupsX) * groupDimension).clamp(0, groupDimension);
+
+  /// Builds the residual jobs for one predictor, in group order.
+  ///
+  /// Each job receives the counter the sequential pass would have reached, so
+  /// running the jobs in any order still selects the same training samples.
+  _ResidualPass residualJobs(bool useWp, bool copyTiles) {
+    final List<int> properties = !effort.learnsContextTree
+        ? const <int>[]
+        : useRct
+        ? (useWp ? rctWpProperties : rctGradProperties)
+        : (useWp ? wpProperties : gradProperties);
     final strideState = [0];
     final trainProps = IntBuffer(1 << 16);
     final trainTokens = IntBuffer(1 << 12);
-
-    // Pass A: residuals per group (and the palette meta channel) plus a
-    // strided training set for the context tree. For WP, the max-error
-    // (property 15) is captured here so Pass B needn't recompute it.
     final metaValues = IntBuffer(pal == null ? 1 : palette!.length * paletteChannels);
     final IntBuffer? metaMaxErr = useWp ? IntBuffer(pal == null ? 1 : palette!.length * paletteChannels) : null;
+    List<Int32List>? metaTokenCounts;
+    Int32List? metaExtraBitCounts;
     if (pal != null) {
-      _tileResiduals(pal, palette!.length, 0, 0, palette.length, paletteChannels, metaValues, metaMaxErr, trainProps, trainTokens, stride, strideState, useWp, properties);
+      if (properties.isEmpty) {
+        final ({Int32List values, List<Int32List> tokenCounts, Int32List extraBitCounts}) result = _fastGradientResiduals(
+          <Int32List>[pal],
+          palette!.length,
+          0,
+          0,
+          palette.length,
+          paletteChannels,
+        );
+        metaValues.addAll(result.values);
+        metaTokenCounts = result.tokenCounts;
+        metaExtraBitCounts = result.extraBitCounts;
+      } else {
+        _tileResiduals(pal, palette!.length, 0, 0, palette.length, paletteChannels, metaValues, metaMaxErr, trainProps, trainTokens, stride, strideState, useWp, properties);
+      }
     }
-    // Every group's residual count is known up front, so each buffer is sized
-    // once instead of doubling its way to a few million entries.
-    final List<IntBuffer> groupValues = List<IntBuffer>.generate(groupCount, (g) => IntBuffer(groupSampleCount(g, planes.length)));
-    final List<IntBuffer>? groupMaxErr = useWp ? List<IntBuffer>.generate(groupCount, (g) => IntBuffer(groupSampleCount(g, planes.length))) : null;
+    int counter = strideState[0];
+    final List<ModularResidualJob> jobs = <ModularResidualJob>[];
     for (var g = 0; g < groupCount; g++) {
       final int ox = (g % groupsX) * groupDimension;
       final int oy = (g ~/ groupsX) * groupDimension;
-      final int tw = (width - ox).clamp(0, groupDimension);
-      final int th = (height - oy).clamp(0, groupDimension);
-      for (var pi = 0; pi < planes.length; pi++) {
-        _tileResiduals(
-          planes[pi],
-          width,
-          ox,
-          oy,
-          tw,
-          th,
-          groupValues[g],
-          groupMaxErr?[g],
-          trainProps,
-          trainTokens,
-          stride,
-          strideState,
-          useWp,
-          properties,
-          channelIndex: useRct ? pi : 0,
-          priorPlane: useRct && pi > 0 ? planes[pi - 1] : null,
-        );
+      final int tw = groupWidth(g);
+      final int th = groupHeight(g);
+      jobs.add(
+        ModularResidualJob(
+          tiles: groupTiles(g, copyTiles),
+          tileWidth: tw,
+          tileHeight: th,
+          sourceWidth: copyTiles ? tw : width,
+          sourceX: copyTiles ? 0 : ox,
+          sourceY: copyTiles ? 0 : oy,
+          useWeightedPredictor: useWp,
+          properties: properties,
+          stride: stride,
+          strideCounter: counter,
+          crossChannel: useRct,
+        ),
+      );
+      counter = _advanceStrideCounter(counter, tw * th * planes.length, stride);
+    }
+    return (
+      jobs: jobs,
+      trainProps: trainProps,
+      trainTokens: trainTokens,
+      metaValues: metaValues,
+      metaMaxErr: metaMaxErr,
+      metaTokenCounts: metaTokenCounts,
+      metaExtraBitCounts: metaExtraBitCounts,
+    );
+  }
+
+  /// Gathers finished residual jobs into the inputs the tree learner needs.
+  _GatheredResiduals gatherResiduals(
+    bool useWp,
+    List<ModularResidualResult> results,
+    IntBuffer trainProps,
+    IntBuffer trainTokens,
+  ) {
+    final List<int> properties = !effort.learnsContextTree
+        ? const <int>[]
+        : useRct
+        ? (useWp ? rctWpProperties : rctGradProperties)
+        : (useWp ? wpProperties : gradProperties);
+    final List<Int32List> groupValues = <Int32List>[];
+    final List<IntBuffer>? groupMaxErr = useWp ? <IntBuffer>[] : null;
+    final List<Int32List>? firstTokenCounts = results.isEmpty ? null : results.first.tokenCounts;
+    final List<Int32List>? planeTokenCounts = firstTokenCounts == null
+        ? null
+        : <Int32List>[
+            for (final Int32List counts in firstTokenCounts) Int32List(counts.length),
+          ];
+    final Int32List? planeExtraBitCounts = firstTokenCounts == null ? null : Int32List(firstTokenCounts.length);
+    for (final ModularResidualResult result in results) {
+      groupValues.add(result.values);
+      if (groupMaxErr != null) {
+        final Int32List errors = result.maximumErrors!;
+        groupMaxErr.add(IntBuffer(errors.isEmpty ? 1 : errors.length)..addAll(errors));
+      }
+      trainProps.addAll(result.trainingProperties);
+      trainTokens.addAll(result.trainingTokens);
+      if (planeTokenCounts != null) {
+        final List<Int32List>? resultTokenCounts = result.tokenCounts;
+        final Int32List? resultExtraBitCounts = result.extraBitCounts;
+        if (resultTokenCounts == null || resultExtraBitCounts == null || resultTokenCounts.length != planeTokenCounts.length) {
+          throw StateError('Fast residual jobs returned inconsistent token statistics.');
+        }
+        for (int plane = 0; plane < planeTokenCounts.length; plane++) {
+          final Int32List destinationCounts = planeTokenCounts[plane];
+          final Int32List sourceCounts = resultTokenCounts[plane];
+          for (int token = 0; token < sourceCounts.length; token++) {
+            destinationCounts[token] += sourceCounts[token];
+          }
+          planeExtraBitCounts![plane] += resultExtraBitCounts[plane];
+        }
       }
     }
-
-    final ContextTree tree = learnContextTree(trainProps.view(), trainTokens.view(), properties);
     return (
-      predictor: predictor,
-      properties: properties,
-      tree: tree,
-      groupValues: [for (final IntBuffer values in groupValues) values.view()],
+      treeJob: ModularTreeJob(
+        trainingProperties: trainProps.view(),
+        trainingTokens: trainTokens.view(),
+        properties: properties,
+        fixedChannelCount: !effort.learnsContextTree && useRct ? planes.length : 0,
+      ),
+      groupValues: groupValues,
       groupMaxErr: groupMaxErr,
-      metaValues: metaValues.view(),
-      metaMaxErr: metaMaxErr,
+      planeTokenCounts: planeTokenCounts,
+      planeExtraBitCounts: planeExtraBitCounts,
+    );
+  }
+
+  /// Completes one predictor's preparation around its learned tree.
+  _Prep prepFrom(bool useWp, ContextTree tree, _GatheredResiduals gathered, _ResidualPass pass) {
+    final Int32List metaValues = pass.metaValues.view();
+    final List<Int32List>? planeTokenCounts = gathered.planeTokenCounts;
+    List<Int32List>? contextTokenCounts;
+    Int32List? contextExtraBitCounts;
+    if (planeTokenCounts != null && (metaValues.isEmpty || pass.metaTokenCounts != null)) {
+      contextTokenCounts = <Int32List>[
+        for (int context = 0; context < tree.contexts; context++) Int32List(_fastTokenCapacity),
+      ];
+      contextExtraBitCounts = Int32List(tree.contexts);
+
+      final List<Int32List>? metaTokenCounts = pass.metaTokenCounts;
+      final Int32List? metaExtraBitCounts = pass.metaExtraBitCounts;
+      if (metaTokenCounts != null && metaExtraBitCounts != null) {
+        final Int32List sourceCounts = metaTokenCounts.single;
+        final Int32List destinationCounts = contextTokenCounts[0];
+        for (int token = 0; token < sourceCounts.length; token++) {
+          destinationCounts[token] += sourceCounts[token];
+        }
+        contextExtraBitCounts[0] += metaExtraBitCounts.single;
+      }
+
+      final int channelProperty = tree.properties.indexOf(0);
+      final Int32List propertyValues = Int32List(tree.properties.length);
+      for (int plane = 0; plane < planeTokenCounts.length; plane++) {
+        if (channelProperty >= 0) {
+          propertyValues[channelProperty] = plane;
+        }
+        final int context = contextFor(tree, propertyValues);
+        final Int32List sourceCounts = planeTokenCounts[plane];
+        final Int32List destinationCounts = contextTokenCounts[context];
+        for (int token = 0; token < sourceCounts.length; token++) {
+          destinationCounts[token] += sourceCounts[token];
+        }
+        contextExtraBitCounts[context] += gathered.planeExtraBitCounts![plane];
+      }
+    }
+    return (
+      predictor: useWp ? 6 : 5,
+      properties: tree.properties,
+      tree: tree,
+      groupValues: gathered.groupValues,
+      groupMaxErr: gathered.groupMaxErr,
+      metaValues: metaValues,
+      metaMaxErr: pass.metaMaxErr,
+      tokenCounts: contextTokenCounts,
+      extraBitCounts: contextExtraBitCounts,
     );
   }
 
@@ -638,25 +1124,124 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
   // are predictor-independent (they depend only on the tree and each pixel's
   // causal neighbourhood), so they are computed once per prep and reused for
   // both the single-predictor baseline and the per-leaf-mixed value stream.
-  _PassB passB(_Prep p) {
+  /// Builds the context jobs for one prepared predictor, in group order.
+  (IntBuffer, List<ModularContextJob>) contextJobs(_Prep p) {
     final ContextTree tree = p.tree;
     final metaContexts = IntBuffer(pal == null ? 1 : palette!.length * paletteChannels);
-    if (pal != null) {
+    final bool fixedContexts = !effort.learnsContextTree;
+    if (fixedContexts) {
+      return (metaContexts, const <ModularContextJob>[]);
+    } else if (pal != null) {
       _tileContexts(pal, palette!.length, 0, 0, palette.length, paletteChannels, tree, metaContexts, p.metaMaxErr);
     }
-    final List<IntBuffer> groupContexts = List<IntBuffer>.generate(groupCount, (g) => IntBuffer(groupSampleCount(g, planes.length)));
-    for (var g = 0; g < groupCount; g++) {
-      final int ox = (g % groupsX) * groupDimension;
-      final int oy = (g ~/ groupsX) * groupDimension;
-      final int tw = (width - ox).clamp(0, groupDimension);
-      final int th = (height - oy).clamp(0, groupDimension);
-      for (var pi = 0; pi < planes.length; pi++) {
-        _tileContexts(planes[pi], width, ox, oy, tw, th, tree, groupContexts[g], p.groupMaxErr?[g], channelIndex: useRct ? pi : 0, priorPlane: useRct && pi > 0 ? planes[pi - 1] : null);
+    return (
+      metaContexts,
+      [
+        for (var g = 0; g < groupCount; g++)
+          ModularContextJob(
+            tiles: fixedContexts ? const <Int32List>[] : groupTiles(g, true),
+            tileWidth: groupWidth(g),
+            tileHeight: groupHeight(g),
+            tree: tree,
+            maximumErrors: p.groupMaxErr?[g].view(),
+            crossChannel: useRct,
+            sampleCount: p.groupValues[g].length,
+            constantContext: fixedContexts && !useRct ? 0 : null,
+            samplesPerChannel: fixedContexts && useRct ? groupWidth(g) * groupHeight(g) : null,
+          ),
+      ],
+    );
+  }
+
+  /// Assembles the context pass from its finished jobs.
+  _PassB passBFrom(_Prep prep, IntBuffer metaContexts, List<Int32List> groupContexts) {
+    if (!effort.learnsContextTree) {
+      final ContextTree tree = prep.tree;
+      final Int32List channelContexts = Int32List(planes.length);
+      final int channelProperty = tree.properties.indexOf(0);
+      final Int32List propertyValues = Int32List(tree.properties.length);
+      for (int channel = 0; channel < planes.length; channel++) {
+        if (channelProperty >= 0) {
+          propertyValues[channelProperty] = channel;
+        }
+        channelContexts[channel] = contextFor(tree, propertyValues);
       }
+
+      /// Builds the compact context runs for one entropy section.
+      _ContextRuns buildRuns({
+        required bool includeMetadata,
+        int? group,
+        required bool includeAllGroups,
+      }) {
+        final IntBuffer contexts = IntBuffer(planes.length + 1);
+        final IntBuffer ends = IntBuffer(planes.length + 1);
+
+        /// Appends a run, merging it with an adjacent identical context.
+        void appendRun(int context, int length) {
+          if (length == 0) {
+            return;
+          }
+          final int end = (ends.isEmpty ? 0 : ends[ends.length - 1]) + length;
+          if (!contexts.isEmpty && contexts[contexts.length - 1] == context) {
+            ends[ends.length - 1] = end;
+          } else {
+            contexts.add(context);
+            ends.add(end);
+          }
+        }
+
+        if (includeMetadata) {
+          appendRun(0, prep.metaValues.length);
+        }
+        if (!includeAllGroups && group == null) {
+          return (contexts: contexts.view(), ends: ends.view());
+        }
+        final int firstGroup = includeAllGroups ? 0 : group!;
+        final int lastGroup = includeAllGroups ? groupCount : firstGroup + 1;
+        for (int currentGroup = firstGroup; currentGroup < lastGroup; currentGroup++) {
+          final int samplesPerChannel = groupWidth(currentGroup) * groupHeight(currentGroup);
+          for (int channel = 0; channel < planes.length; channel++) {
+            appendRun(channelContexts[channel], samplesPerChannel);
+          }
+        }
+        return (contexts: contexts.view(), ends: ends.view());
+      }
+
+      final List<_ContextRuns> sectionRuns = globalChannels
+          ? <_ContextRuns>[
+              buildRuns(
+                includeMetadata: true,
+                includeAllGroups: true,
+              ),
+            ]
+          : <_ContextRuns>[
+              buildRuns(
+                includeMetadata: true,
+                includeAllGroups: false,
+              ),
+              for (int group = 0; group < groupCount; group++)
+                buildRuns(
+                  includeMetadata: false,
+                  includeAllGroups: false,
+                  group: group,
+                ),
+            ];
+      return (
+        metaContexts: _emptyInt32List,
+        groupContexts: const <Int32List>[],
+        sectionContexts: <List<int>>[
+          for (int section = 0; section < sectionRuns.length; section++) const <int>[],
+        ],
+        sectionRuns: sectionRuns,
+      );
     }
     final Int32List metaContextValues = metaContexts.view();
-    final List<Int32List> groupContextValues = [for (final IntBuffer contexts in groupContexts) contexts.view()];
-    return (metaContexts: metaContextValues, groupContexts: groupContextValues, sectionContexts: mkSections(metaContextValues, groupContextValues));
+    return (
+      metaContexts: metaContextValues,
+      groupContexts: groupContexts,
+      sectionContexts: mkSections(metaContextValues, groupContexts),
+      sectionRuns: null,
+    );
   }
 
   // Entropy-codes and assembles the smallest real codestream for one
@@ -675,6 +1260,8 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
     List<List<int>> sectionValues,
     List<int>? leafPredictors, {
     (int, bool, bool, bool)? only,
+    EntropyCodes? preparedPlainCodes,
+    List<_ContextRuns>? sectionContextRuns,
   }) {
     final int contextCount = tree.contexts;
     // LZ77 is an expensive hash-chain pass, so each effort is computed lazily
@@ -687,12 +1274,27 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
 
     Uint8List assemble(EntropyCodes codes, bool ans, bool lz, List<Lz77Operations> ops) {
       void writeSectionPayload(BitWriter w, int s) {
+        final _ContextRuns? contextRuns = sectionContextRuns?[s];
         if (ans && lz) {
           codes.encodeAnsLz77Section(w, ops[s]);
         } else if (ans) {
-          codes.encodeAnsSection(w, sectionContexts[s], sectionValues[s]);
+          if (contextRuns == null) {
+            codes.encodeAnsSection(w, sectionContexts[s], sectionValues[s]);
+          } else {
+            codes.encodeAnsSectionRuns(w, contextRuns.contexts, contextRuns.ends, sectionValues[s]);
+          }
         } else if (lz) {
           codes.writeOps(w, ops[s]);
+        } else if (contextRuns != null) {
+          int start = 0;
+          for (int run = 0; run < contextRuns.contexts.length; run++) {
+            final int end = contextRuns.ends[run];
+            final int context = contextRuns.contexts[run];
+            for (int index = start; index < end; index++) {
+              codes.writeToken(w, context, sectionValues[s][index]);
+            }
+            start = end;
+          }
         } else {
           for (var i = 0; i < sectionValues[s].length; i++) {
             codes.writeToken(w, sectionContexts[s][i], sectionValues[s][i]);
@@ -762,40 +1364,25 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
         '${lz ? (deep ? "lzd" : "lz") : "plain"}+${ans ? "ans" : "prefix"}'
         '/h${cfg.splitExponent}${cfg.msbInToken}${cfg.lsbInToken}';
 
-    // Flattening allocates a list the size of the whole image, so it is sized
-    // up front and computed at most once per assembly instead of once per
-    // candidate.
-    Int32List flatten(List<List<int>> sections) {
-      int length = 0;
-      for (final s in sections) {
-        length += s.length;
-      }
-      final flat = Int32List(length);
-      int offset = 0;
-      for (final s in sections) {
-        flat.setRange(offset, offset + s.length, s);
-        offset += s.length;
-      }
-      return flat;
-    }
-
-    Int32List? flatContextsCache;
-    Int32List? flatValuesCache;
-    Int32List flatContexts() => flatContextsCache ??= flatten(sectionContexts);
-    Int32List flatValues() => flatValuesCache ??= flatten(sectionValues);
-
     if (only != null) {
       final (int cfgI, bool lz, bool ans, bool deep) = only;
       final HybridIntegerConfig cfg = _hybridConfigs[cfgI];
-      final ops = deep ? sectionOpsDeep : sectionOpsShallow;
+      final List<Lz77Operations> ops = lz
+          ? deep
+                ? sectionOpsDeep
+                : sectionOpsShallow
+          : const <Lz77Operations>[];
       final codes = lz
           ? EntropyCodes.buildLz77(contextCount: contextCount, sections: ops, config: cfg)
-          : EntropyCodes.build(contextCount: contextCount, contexts: flatContexts(), values: flatValues(), config: cfg);
+          : EntropyCodes.buildSections(
+              contextCount: contextCount,
+              contextSections: sectionContexts,
+              valueSections: sectionValues,
+              config: cfg,
+            );
       return (assemble(codes, ans, lz, ops), modeStr(cfg, lz, ans, deep), cfgI, lz, ans, deep);
     }
 
-    final Int32List allContexts = flatContexts();
-    final Int32List allValues = flatValues();
     // For each candidate hybrid-uint config, build the {plain, LZ77} x
     // {prefix, ANS} entropy codes and their size estimates. ANS spends
     // fractional bits (no 1-bit-per-symbol floor); LZ77 copies repeated runs;
@@ -808,18 +1395,19 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
     final int configCount = effort.triesEveryEntropyConfig ? _hybridConfigs.length : 1;
     for (var ci = 0; ci < configCount; ci++) {
       final HybridIntegerConfig cfg = _hybridConfigs[ci];
-      final lzCodes = EntropyCodes.buildLz77(contextCount: contextCount, sections: sectionOpsShallow, config: cfg);
-      final plainCodes = EntropyCodes.build(contextCount: contextCount, contexts: allContexts, values: allValues, config: cfg);
+      final EntropyCodes plainCodes = ci == 0 && preparedPlainCodes != null
+          ? preparedPlainCodes
+          : EntropyCodes.buildSections(
+              contextCount: contextCount,
+              contextSections: sectionContexts,
+              valueSections: sectionValues,
+              config: cfg,
+            );
       final double plainEst = plainCodes.estimatedBits();
-      final double lzEst = lzCodes.estimatedBits();
       if (plainEst < bestPlain) {
         bestPlain = plainEst;
       }
-      if (lzEst < bestShallowLz) {
-        bestShallowLz = lzEst;
-      }
       candidates.add((plainCodes, false, false, ci, false, plainEst));
-      candidates.add((lzCodes, false, true, ci, false, lzEst));
       if (plainCodes.ansViable) {
         final double e = plainCodes.ansEstimatedBits();
         if (e < bestPlain) {
@@ -827,12 +1415,20 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
         }
         candidates.add((plainCodes, true, false, ci, false, e));
       }
-      if (lzCodes.ansViable) {
-        final double e = lzCodes.ansEstimatedBits();
-        if (e < bestShallowLz) {
-          bestShallowLz = e;
+      if (effort.triesLz77) {
+        final EntropyCodes lzCodes = EntropyCodes.buildLz77(contextCount: contextCount, sections: sectionOpsShallow, config: cfg);
+        final double lzEst = lzCodes.estimatedBits();
+        if (lzEst < bestShallowLz) {
+          bestShallowLz = lzEst;
         }
-        candidates.add((lzCodes, true, true, ci, false, e));
+        candidates.add((lzCodes, false, true, ci, false, lzEst));
+        if (lzCodes.ansViable) {
+          final double e = lzCodes.ansEstimatedBits();
+          if (e < bestShallowLz) {
+            bestShallowLz = e;
+          }
+          candidates.add((lzCodes, true, true, ci, false, e));
+        }
       }
     }
     // Deep matcher only when LZ77 is already the mode to beat: a greedy parse's
@@ -868,7 +1464,12 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
       if (est > threshold) {
         continue;
       }
-      final Uint8List bytes = assemble(codes, ans, lz, deep ? sectionOpsDeep : sectionOpsShallow);
+      final List<Lz77Operations> ops = lz
+          ? deep
+                ? sectionOpsDeep
+                : sectionOpsShallow
+          : const <Lz77Operations>[];
+      final Uint8List bytes = assemble(codes, ans, lz, ops);
       if (bestBytes == null || bytes.length < bestBytes.length) {
         bestBytes = bytes;
         bestMode = modeStr(codes.config, lz, ans, deep);
@@ -880,7 +1481,12 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
     }
     if (bestBytes == null) {
       final (EntropyCodes codes, bool ans, bool lz, int ci, bool deep, _) = candidates.first;
-      bestBytes = assemble(codes, ans, lz, deep ? sectionOpsDeep : sectionOpsShallow);
+      final List<Lz77Operations> ops = lz
+          ? deep
+                ? sectionOpsDeep
+                : sectionOpsShallow
+          : const <Lz77Operations>[];
+      bestBytes = assemble(codes, ans, lz, ops);
       bestMode = modeStr(codes.config, lz, ans, deep);
       bestCfg = ci;
       bestLz = lz;
@@ -892,8 +1498,25 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
 
   // Single-predictor baseline for one prep; also returns its winning entropy
   // mode so per-leaf refinement can re-use it.
-  (Uint8List, String, (int, bool, bool, bool)) baselineOf(_Prep p, List<List<int>> sectionContexts) {
-    final (Uint8List bytes, String mode, int cfg, bool lz, bool ans, bool deep) = assembleStream(p.tree, p.predictor, sectionContexts, mkSections(p.metaValues, p.groupValues), null);
+  (Uint8List, String, (int, bool, bool, bool)) baselineOf(_Prep p, _PassB contexts) {
+    final List<Int32List>? tokenCounts = p.tokenCounts;
+    final Int32List? extraBitCounts = p.extraBitCounts;
+    final EntropyCodes? preparedPlainCodes = tokenCounts == null || extraBitCounts == null
+        ? null
+        : EntropyCodes.fromTokenCounts(
+            tokenCounts: tokenCounts,
+            extraBitCounts: extraBitCounts,
+            config: _hybridConfigs.first,
+          );
+    final (Uint8List bytes, String mode, int cfg, bool lz, bool ans, bool deep) = assembleStream(
+      p.tree,
+      p.predictor,
+      contexts.sectionContexts,
+      mkSections(p.metaValues, p.groupValues),
+      null,
+      preparedPlainCodes: preparedPlainCodes,
+      sectionContextRuns: contexts.sectionRuns,
+    );
     return (bytes, '${p.predictor == 6 ? "wp" : "grad"}/$mode', (cfg, lz, ans, deep));
   }
 
@@ -939,54 +1562,180 @@ Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlane
   // of the chosen predictor, per-leaf selection refines that one tree, letting
   // individual leaves switch to the other predictor where it codes their pixels
   // smaller.
+  // Finishes the codestream once the residual and context passes are done.
+  // [primaryContexts] belongs to the predictor assembled first, and
+  // [secondaryContexts] is only supplied when a near-tie refines both.
+  Uint8List finish(_Prep gradPrep, _Prep? wpPrep, _Prep primaryPrep, _PassB primaryContexts, _PassB? secondaryContexts) {
+    if (wpPrep == null) {
+      final (Uint8List bytes, String mode, _) = baselineOf(primaryPrep, primaryContexts);
+      if (const bool.fromEnvironment('jxl.encdebug')) {
+        // ignore: avoid_print
+        print('palette=${palette?.length} rct=$useRct chose=$mode');
+      }
+      return bytes;
+    }
+    final double gBits = gradPrep.tree.trainingBits;
+    final double wBits = wpPrep.tree.trainingBits;
+    final Uint8List chosen;
+    final String debug;
+    if (secondaryContexts == null) {
+      final _Prep win = primaryPrep;
+      final _Prep lose = identical(win, wpPrep) ? gradPrep : wpPrep;
+      final (Uint8List bb, String bl, (int, bool, bool, bool) sel) = baselineOf(win, primaryContexts);
+      final (Uint8List bytes, String mode) = effort.refinesLeafPredictors ? refineOf(win, lose, primaryContexts, bb, bl, sel) : (bb, bl);
+      chosen = bytes;
+      debug =
+          'chose=$mode (skip loser tree; trainBits '
+          'g=${gBits.round()} w=${wBits.round()})';
+    } else {
+      // Near-tie: per-leaf-refine BOTH trees and keep the smaller. The raw
+      // single-predictor baselines don't reliably predict which tree refines
+      // smaller (a tree whose raw baseline loses can win after per-leaf mixing —
+      // e.g. a manga page where raw WP beats raw gradient but the refined
+      // gradient tree beats the refined WP tree), and each refinement's mixed
+      // stream is assembled in just its baseline's winning mode, so refining both
+      // is cheap.
+      final (Uint8List gbb, String gbl, (int, bool, bool, bool) gsel) = baselineOf(gradPrep, primaryContexts);
+      final (Uint8List gradBytes, String gradMode) = refineOf(gradPrep, wpPrep, primaryContexts, gbb, gbl, gsel);
+      final (Uint8List wbb, String wbl, (int, bool, bool, bool) wsel) = baselineOf(wpPrep, secondaryContexts);
+      final (Uint8List wpBytes, String wpMode) = refineOf(wpPrep, gradPrep, secondaryContexts, wbb, wbl, wsel);
+      final bool wpWins = wpBytes.length < gradBytes.length;
+      chosen = wpWins ? wpBytes : gradBytes;
+      debug =
+          'chose=${wpWins ? wpMode : gradMode} (near-tie, refined both; '
+          'grad=${gradBytes.length} wp=${wpBytes.length})';
+    }
+    if (const bool.fromEnvironment('jxl.encdebug')) {
+      // ignore: avoid_print
+      print('palette=${palette?.length} rct=$useRct $debug');
+    }
+    return chosen;
+  }
+
+  // Whether a near-tie in training entropy means both predictors get refined.
+  bool refinesBoth(_Prep gradPrep, _Prep wpPrep) {
+    final double gBits = gradPrep.tree.trainingBits;
+    final double wBits = wpPrep.tree.trainingBits;
+    return effort.refinesBothPredictors && gBits * _kPredictorMargin >= wBits && wBits * _kPredictorMargin >= gBits;
+  }
+
+  return (
+    effort: effort,
+    residualJobs: residualJobs,
+    gatherResiduals: gatherResiduals,
+    prepFrom: prepFrom,
+    contextJobs: contextJobs,
+    passBFrom: passBFrom,
+    finish: finish,
+    refinesBoth: refinesBoth,
+  );
+}
+
+/// The per-group phases of one modular encode, plus the sequential steps that
+/// join them. Exposing the phases this way lets the sequential encoder and the
+/// runner-driven one share every decision and differ only in how they execute
+/// each batch of independent group jobs.
+typedef _ModularSteps = ({
+  JpegXlEffort effort,
+  _ResidualPass Function(bool useWp, bool copyTiles) residualJobs,
+  _GatheredResiduals Function(bool useWp, List<ModularResidualResult> results, IntBuffer trainProps, IntBuffer trainTokens) gatherResiduals,
+  _Prep Function(bool useWp, ContextTree tree, _GatheredResiduals gathered, _ResidualPass pass) prepFrom,
+  (IntBuffer, List<ModularContextJob>) Function(_Prep prep) contextJobs,
+  _PassB Function(_Prep prep, IntBuffer metaContexts, List<Int32List> groupContexts) passBFrom,
+  Uint8List Function(_Prep gradPrep, _Prep? wpPrep, _Prep primaryPrep, _PassB primaryContexts, _PassB? secondaryContexts) finish,
+  bool Function(_Prep gradPrep, _Prep wpPrep) refinesBoth,
+});
+
+/// Encodes one modular variant, running every group on the current isolate.
+Uint8List _encodeModularCore(JpegXlEncodeSetup setup, List<Int32List> inputPlanes, List<int>? palette, bool applyRct, JpegXlEffort effort, {int paletteChannels = 3}) {
+  final _ModularSteps steps = _modularSteps(setup, inputPlanes, palette, applyRct, effort, paletteChannels: paletteChannels);
+  _Prep prep(bool useWp) {
+    final _ResidualPass pass = steps.residualJobs(
+      useWp,
+      effort.learnsContextTree,
+    );
+    final _GatheredResiduals gathered = steps.gatherResiduals(
+      useWp,
+      [for (final ModularResidualJob job in pass.jobs) runModularResidualJob(job)],
+      pass.trainProps,
+      pass.trainTokens,
+    );
+    return steps.prepFrom(useWp, runModularTreeJob(gathered.treeJob), gathered, pass);
+  }
+
+  _PassB passB(_Prep prep) {
+    final (IntBuffer metaContexts, List<ModularContextJob> jobs) = steps.contextJobs(prep);
+    return steps.passBFrom(prep, metaContexts, [for (final ModularContextJob job in jobs) runModularContextJob(job)]);
+  }
+
   final _Prep gradPrep = prep(false);
   if (!effort.triesBothPredictors) {
     // One residual pass, one tree, one assembly: the fast level skips the
     // second predictor entirely rather than measuring which one wins.
-    final _PassB ctx = passB(gradPrep);
-    final (Uint8List bytes, _, _) = baselineOf(gradPrep, ctx.sectionContexts);
-    return bytes;
+    final _PassB contexts = passB(gradPrep);
+    return steps.finish(gradPrep, null, gradPrep, contexts, null);
   }
   final _Prep wpPrep = prep(true);
-  final double gBits = gradPrep.tree.trainingBits;
-  final double wBits = wpPrep.tree.trainingBits;
+  final bool both = steps.refinesBoth(gradPrep, wpPrep);
+  final _Prep primary = both || gradPrep.tree.trainingBits <= wpPrep.tree.trainingBits ? gradPrep : wpPrep;
+  return steps.finish(gradPrep, wpPrep, primary, passB(primary), both ? passB(wpPrep) : null);
+}
 
-  final Uint8List chosen;
-  final String debug;
-  if (!effort.refinesBothPredictors || gBits * _kPredictorMargin < wBits || wBits * _kPredictorMargin < gBits) {
-    final bool useWp = wBits < gBits;
-    final win = useWp ? wpPrep : gradPrep;
-    final lose = useWp ? gradPrep : wpPrep;
-    final _PassB ctx = passB(win);
-    final (Uint8List bb, String bl, (int, bool, bool, bool) sel) = baselineOf(win, ctx.sectionContexts);
-    final (Uint8List bytes, String mode) = effort.refinesLeafPredictors ? refineOf(win, lose, ctx, bb, bl, sel) : (bb, bl);
-    chosen = bytes;
-    debug =
-        'chose=$mode (skip loser tree; trainBits '
-        'g=${gBits.round()} w=${wBits.round()})';
-  } else {
-    // Near-tie: per-leaf-refine BOTH trees and keep the smaller. The raw
-    // single-predictor baselines don't reliably predict which tree refines
-    // smaller (a tree whose raw baseline loses can win after per-leaf mixing —
-    // e.g. a manga page where raw WP beats raw gradient but the refined
-    // gradient tree beats the refined WP tree), and each refinement's mixed
-    // stream is assembled in just its baseline's winning mode, so refining both
-    // is cheap.
-    final _PassB gctx = passB(gradPrep);
-    final (Uint8List gbb, String gbl, (int, bool, bool, bool) gsel) = baselineOf(gradPrep, gctx.sectionContexts);
-    final (Uint8List gradBytes, String gradMode) = refineOf(gradPrep, wpPrep, gctx, gbb, gbl, gsel);
-    final _PassB wctx = passB(wpPrep);
-    final (Uint8List wbb, String wbl, (int, bool, bool, bool) wsel) = baselineOf(wpPrep, wctx.sectionContexts);
-    final (Uint8List wpBytes, String wpMode) = refineOf(wpPrep, gradPrep, wctx, wbb, wbl, wsel);
-    final bool wpWins = wpBytes.length < gradBytes.length;
-    chosen = wpWins ? wpBytes : gradBytes;
-    debug =
-        'chose=${wpWins ? wpMode : gradMode} (near-tie, refined both; '
-        'grad=${gradBytes.length} wp=${wpBytes.length})';
+/// Encodes one modular variant, handing each phase's group jobs to [runner].
+///
+/// The phases are the same as [_encodeModularCore]'s and run in the same
+/// order, so both produce identical bytes; only the execution of each batch of
+/// independent jobs differs.
+Future<Uint8List> _encodeModularCoreWith(
+  ParallelRunner runner,
+  JpegXlEncodeSetup setup,
+  List<Int32List> inputPlanes,
+  List<int>? palette,
+  bool applyRct,
+  JpegXlEffort effort, {
+  int paletteChannels = 3,
+}) async {
+  final _ModularSteps steps = _modularSteps(setup, inputPlanes, palette, applyRct, effort, paletteChannels: paletteChannels);
+
+  Future<_PassB> passB(_Prep prep) async {
+    final (IntBuffer metaContexts, List<ModularContextJob> jobs) = steps.contextJobs(prep);
+    return steps.passBFrom(prep, metaContexts, await runner<ModularContextJob, Int32List>(jobs, runModularContextJob));
   }
-  if (const bool.fromEnvironment('jxl.encdebug')) {
-    // ignore: avoid_print
-    print('palette=${palette?.length} rct=$useRct $debug');
+
+  final _ResidualPass gradPass = steps.residualJobs(false, true);
+  if (!effort.triesBothPredictors) {
+    final List<ModularResidualResult> results = await runner<ModularResidualJob, ModularResidualResult>(gradPass.jobs, runModularResidualJob);
+    final _GatheredResiduals gathered = steps.gatherResiduals(false, results, gradPass.trainProps, gradPass.trainTokens);
+    final List<ContextTree> trees = await runner<ModularTreeJob, ContextTree>(<ModularTreeJob>[gathered.treeJob], runModularTreeJob);
+    final _Prep gradPrep = steps.prepFrom(false, trees.first, gathered, gradPass);
+    return steps.finish(gradPrep, null, gradPrep, await passB(gradPrep), null);
   }
-  return chosen;
+
+  // Both predictors' groups go out as one batch, which doubles the work a
+  // runner can spread across isolates in this phase.
+  final _ResidualPass wpPass = steps.residualJobs(true, true);
+  final List<ModularResidualResult> results = await runner<ModularResidualJob, ModularResidualResult>(
+    <ModularResidualJob>[...gradPass.jobs, ...wpPass.jobs],
+    runModularResidualJob,
+  );
+  final _GatheredResiduals gradGathered = steps.gatherResiduals(
+    false,
+    results.sublist(0, gradPass.jobs.length),
+    gradPass.trainProps,
+    gradPass.trainTokens,
+  );
+  final _GatheredResiduals wpGathered = steps.gatherResiduals(
+    true,
+    results.sublist(gradPass.jobs.length),
+    wpPass.trainProps,
+    wpPass.trainTokens,
+  );
+  // Learning is the other phase that runs once per predictor, so the two trees
+  // go out together as well.
+  final List<ContextTree> trees = await runner<ModularTreeJob, ContextTree>(<ModularTreeJob>[gradGathered.treeJob, wpGathered.treeJob], runModularTreeJob);
+  final _Prep gradPrep = steps.prepFrom(false, trees[0], gradGathered, gradPass);
+  final _Prep wpPrep = steps.prepFrom(true, trees[1], wpGathered, wpPass);
+  final bool both = steps.refinesBoth(gradPrep, wpPrep);
+  final _Prep primary = both || gradPrep.tree.trainingBits <= wpPrep.tree.trainingBits ? gradPrep : wpPrep;
+  return steps.finish(gradPrep, wpPrep, primary, await passB(primary), both ? await passB(wpPrep) : null);
 }

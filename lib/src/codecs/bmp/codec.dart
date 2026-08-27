@@ -1,7 +1,7 @@
 part of '../bmp.dart';
 
-/// Encodes and decodes Bitmap images synchronously.
-final class BmpCodec extends RasterCodec {
+/// Encodes and decodes Bitmap images.
+final class BmpCodec extends RasterCodec<BmpEncoder, BmpDecoder> {
   @override
   final BmpEncoder rasterEncoder;
 

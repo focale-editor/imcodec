@@ -1,9 +1,113 @@
 part of '../webp.dart';
 
+/// Logarithm of the 32-pixel VP8L predictor block size.
+const int _webPPredictorSizeBits = 5;
+
+/// Number of pixels along one VP8L predictor block edge.
+const int _webPPredictorBlockSize = 1 << _webPPredictorSizeBits;
+
+/// Small WebP images do not cover isolate startup and transfer overhead.
+const int _minimumWebPParallelPixels = 512 * 512;
+
+/// Maximum number of independently transformed predictor-block bands.
+const int _maximumWebPParallelJobs = 4;
+
+/// Carries predictor-block rows and their optional upper halo row.
+final class _WebPTransformJob {
+  /// Interleaved RGBA rows, including an upper halo when needed.
+  final Uint8List pixels;
+
+  /// Number of pixels in each source row.
+  final int width;
+
+  /// First target row in the full image.
+  final int firstRow;
+
+  /// Number of target rows, excluding the optional halo.
+  final int rowCount;
+
+  /// Whether [pixels] starts with the row preceding [firstRow].
+  final bool hasPreviousRow;
+
+  /// Creates one self-contained VP8L transform job.
+  const _WebPTransformJob({
+    required this.pixels,
+    required this.width,
+    required this.firstRow,
+    required this.rowCount,
+    required this.hasPreviousRow,
+  });
+}
+
+/// Holds transformed channel rows and predictor modes for one band.
+final class _WebPTransformBand {
+  /// Predictor residuals for the red channel after subtract-green.
+  final Uint8List red;
+
+  /// Predictor residuals for the green channel.
+  final Uint8List green;
+
+  /// Predictor residuals for the blue channel after subtract-green.
+  final Uint8List blue;
+
+  /// Predictor residuals for the alpha channel.
+  final Uint8List alpha;
+
+  /// Chosen predictor modes in block-row order.
+  final Uint8List modes;
+
+  /// Whether a target pixel has non-opaque alpha.
+  final bool hasTransparency;
+
+  /// Creates one completed transform band.
+  const _WebPTransformBand({
+    required this.red,
+    required this.green,
+    required this.blue,
+    required this.alpha,
+    required this.modes,
+    required this.hasTransparency,
+  });
+}
+
+/// Holds all inputs needed by the sequential VP8L tokenization pass.
+final class _WebPTransformResult {
+  /// Full transformed red plane.
+  final Uint8List red;
+
+  /// Full transformed green plane.
+  final Uint8List green;
+
+  /// Full transformed blue plane.
+  final Uint8List blue;
+
+  /// Full transformed alpha plane.
+  final Uint8List alpha;
+
+  /// Predictor mode chosen for every 32 by 32 block.
+  final Uint8List modes;
+
+  /// Whether the source contains translucent pixels.
+  final bool hasTransparency;
+
+  /// Creates the complete transformed representation.
+  const _WebPTransformResult({
+    required this.red,
+    required this.green,
+    required this.blue,
+    required this.alpha,
+    required this.modes,
+    required this.hasTransparency,
+  });
+}
+
+/// Runs one WebP predictor band without shared mutable state.
+_WebPTransformBand _runWebPTransformJob(_WebPTransformJob job) => const WebPEncoder()._transformBand(job);
+
 /// Encodes images as lossless WebP data.
 /// Uses the VP8L lossless bitstream format wrapped in a RIFF/WebP container.
 /// Applies the subtract-green transform and LZ77 back-references.
-final class WebPEncoder extends RasterEncoder {
+final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
   /// Maps nearby two-dimensional pixel offsets to VP8L distance plane codes.
   static const List<int> _distancePlaneLookup = <int>[
     // yoffset=0 (xoffset 8..1, then 0..-7 which are unused=255)
@@ -30,19 +134,47 @@ final class WebPEncoder extends RasterEncoder {
   /// Encodes [image] as a lossless VP8L WebP image.
   @override
   Uint8List encode(Image image) {
-    final int width = image.width;
-    final int height = image.height;
-    if (width > 16384 || height > 16384) {
+    _checkInput(image);
+    final _WebPTransformResult transformed = _transformImage(image);
+    return _wrapVp8l(
+      _encodeVp8l(
+        transformed,
+        width: image.width,
+        height: image.height,
+      ),
+    );
+  }
+
+  @override
+  Future<Uint8List> encodeWith(ParallelRunner runner, Image input) async {
+    _checkInput(input);
+    final int predictorBlockRowCount = (input.height + _webPPredictorBlockSize - 1) ~/ _webPPredictorBlockSize;
+    if (input.width * input.height < _minimumWebPParallelPixels || predictorBlockRowCount < 2) {
+      return encode(input);
+    }
+    final _WebPTransformResult transformed = await _transformImageWith(
+      runner,
+      input,
+      predictorBlockRowCount: predictorBlockRowCount,
+    );
+    return _wrapVp8l(
+      _encodeVp8l(
+        transformed,
+        width: input.width,
+        height: input.height,
+      ),
+    );
+  }
+
+  /// Rejects dimensions that VP8L cannot represent.
+  void _checkInput(Image image) {
+    if (image.width > 16384 || image.height > 16384) {
       throw const ImageCodecException('Lossless WebP dimensions may not exceed 16384 pixels');
     }
+  }
 
-    final Uint8List vp8lData = _encodeVp8l(
-      image: image,
-      width: width,
-      height: height,
-    );
-
-    // Wrap in RIFF/WebP container
+  /// Wraps a raw VP8L stream in a RIFF/WebP container.
+  Uint8List _wrapVp8l(Uint8List vp8lData) {
     final OutputBuffer output = OutputBuffer();
     final int paddedLength = vp8lData.length + (vp8lData.length.isOdd ? 1 : 0);
     final int fileSize = 4 /* WEBP */ + 8 /* VP8L and chunk size */ + paddedLength;
@@ -60,9 +192,9 @@ final class WebPEncoder extends RasterEncoder {
     return output.takeBytes();
   }
 
-  /// Encodes [image] as a raw VP8L lossless bitstream.
-  Uint8List _encodeVp8l({
-    required Image image,
+  /// Encodes transformed channel data as a raw VP8L lossless bitstream.
+  Uint8List _encodeVp8l(
+    _WebPTransformResult transformed, {
     required int width,
     required int height,
   }) {
@@ -70,8 +202,7 @@ final class WebPEncoder extends RasterEncoder {
 
     // VP8L image header: signature byte 0x2f + 28-bit header (w-1, h-1,
     // alpha_is_used, version=0) packed little-endian.
-    final bool hasAlpha = _hasTransparency(image);
-    final int header = (width - 1) | ((height - 1) << 14) | ((hasAlpha ? 1 : 0) << 28);
+    final int header = (width - 1) | ((height - 1) << 14) | ((transformed.hasTransparency ? 1 : 0) << 28);
     output
       ..writeByte(0x2f)
       ..writeByte(header & 0xff)
@@ -79,59 +210,14 @@ final class WebPEncoder extends RasterEncoder {
       ..writeByte((header >> 16) & 0xff)
       ..writeByte((header >> 24) & 0xff);
 
-    // Collect pixel data first (needed for predictor mode selection).
-    const int predictorSizeBits = 5;
-    const int predictorBlockSize = 1 << predictorSizeBits;
-    final int predictorBlockWidth = (width + predictorBlockSize - 1) ~/ predictorBlockSize;
-    final int predictorBlockHeight = (height + predictorBlockSize - 1) ~/ predictorBlockSize;
+    final int predictorBlockWidth = (width + _webPPredictorBlockSize - 1) ~/ _webPPredictorBlockSize;
+    final int predictorBlockHeight = (height + _webPPredictorBlockSize - 1) ~/ _webPPredictorBlockSize;
     final int pixelCount = width * height;
-    final Uint8List green = Uint8List(pixelCount);
-    final Uint8List red = Uint8List(pixelCount);
-    final Uint8List blue = Uint8List(pixelCount);
-    final Uint8List alpha = Uint8List(pixelCount);
-
-    for (int pixelIndex = 0; pixelIndex < pixelCount; pixelIndex++) {
-      final int offset = pixelIndex * 4;
-      red[pixelIndex] = image.bytes[offset];
-      green[pixelIndex] = image.bytes[offset + 1];
-      blue[pixelIndex] = image.bytes[offset + 2];
-      alpha[pixelIndex] = image.bytes[offset + 3];
-    }
-
-    // Apply Subtract Green Transform
-    _applySubtractGreenTransform(
-      red: red,
-      green: green,
-      blue: blue,
-      pixelCount: pixelCount,
-    );
-
-    // Choose best predictor mode per 32×32 block.
-    // This is done on the subtracted data.
-    final List<int> predictorModes = _selectPredictorModes(
-      red: red,
-      green: green,
-      blue: blue,
-      alpha: alpha,
-      width: width,
-      height: height,
-      blockWidth: predictorBlockWidth,
-      blockHeight: predictorBlockHeight,
-      blockSize: predictorBlockSize,
-    );
-
-    // Apply Predictor Transform
-    _applyPredictorTransform(
-      red: red,
-      green: green,
-      blue: blue,
-      alpha: alpha,
-      width: width,
-      height: height,
-      blockWidth: predictorBlockWidth,
-      blockSize: predictorBlockSize,
-      modes: predictorModes,
-    );
+    final Uint8List green = transformed.green;
+    final Uint8List red = transformed.red;
+    final Uint8List blue = transformed.blue;
+    final Uint8List alpha = transformed.alpha;
+    final Uint8List predictorModes = transformed.modes;
 
     final _Vp8lBitWriter bitWriter = _Vp8lBitWriter()
       // Write Subtract Green Transform
@@ -140,7 +226,7 @@ final class WebPEncoder extends RasterEncoder {
       // Write Predictor Transform
       ..writeBits(1, 1) // has_transform = 1
       ..writeBits(0, 2) // transform_type = 0 (PREDICTOR)
-      ..writeBits(predictorSizeBits - 2, 3);
+      ..writeBits(_webPPredictorSizeBits - 2, 3);
     _writePredictorSubImage(
       bitWriter: bitWriter,
       blockWidth: predictorBlockWidth,
@@ -336,17 +422,157 @@ final class WebPEncoder extends RasterEncoder {
   // Transforms
   // ---------------------------------------------------------------------------
 
-  /// Reports whether any pixel is translucent.
-  /// The alpha flag is a container hint, so an opaque image must not claim to
-  /// carry transparency.
-  bool _hasTransparency(Image image) {
-    final Uint8List bytes = image.bytes;
-    for (int offset = 3; offset < bytes.length; offset += 4) {
-      if (bytes[offset] != 255) {
-        return true;
-      }
+  /// Transforms a complete image on the current isolate.
+  _WebPTransformResult _transformImage(Image image) {
+    final _WebPTransformBand band = _transformBand(
+      _WebPTransformJob(
+        pixels: image.bytes,
+        width: image.width,
+        firstRow: 0,
+        rowCount: image.height,
+        hasPreviousRow: false,
+      ),
+    );
+    return _WebPTransformResult(
+      red: band.red,
+      green: band.green,
+      blue: band.blue,
+      alpha: band.alpha,
+      modes: band.modes,
+      hasTransparency: band.hasTransparency,
+    );
+  }
+
+  /// Splits predictor-block rows, then restores their transformed planes in
+  /// the original image order.
+  Future<_WebPTransformResult> _transformImageWith(
+    ParallelRunner runner,
+    Image image, {
+    required int predictorBlockRowCount,
+  }) async {
+    final int jobCount = predictorBlockRowCount < _maximumWebPParallelJobs ? predictorBlockRowCount : _maximumWebPParallelJobs;
+    final int sourceRowLength = image.width * 4;
+    final List<_WebPTransformJob> jobs = <_WebPTransformJob>[];
+    for (int jobIndex = 0; jobIndex < jobCount; jobIndex++) {
+      final int firstBlockRow = jobIndex * predictorBlockRowCount ~/ jobCount;
+      final int lastBlockRow = (jobIndex + 1) * predictorBlockRowCount ~/ jobCount;
+      final int firstRow = firstBlockRow * _webPPredictorBlockSize;
+      final int unclampedLastRow = lastBlockRow * _webPPredictorBlockSize;
+      final int lastRow = unclampedLastRow < image.height ? unclampedLastRow : image.height;
+      final bool hasPreviousRow = firstRow > 0;
+      final int firstSourceRow = hasPreviousRow ? firstRow - 1 : firstRow;
+      jobs.add(
+        _WebPTransformJob(
+          pixels: Uint8List.fromList(
+            Uint8List.sublistView(
+              image.bytes,
+              firstSourceRow * sourceRowLength,
+              lastRow * sourceRowLength,
+            ),
+          ),
+          width: image.width,
+          firstRow: firstRow,
+          rowCount: lastRow - firstRow,
+          hasPreviousRow: hasPreviousRow,
+        ),
+      );
     }
-    return false;
+
+    final List<_WebPTransformBand> bands = await runner<_WebPTransformJob, _WebPTransformBand>(
+      jobs,
+      _runWebPTransformJob,
+    );
+    final int pixelCount = image.width * image.height;
+    final int predictorBlockWidth = (image.width + _webPPredictorBlockSize - 1) ~/ _webPPredictorBlockSize;
+    final Uint8List red = Uint8List(pixelCount);
+    final Uint8List green = Uint8List(pixelCount);
+    final Uint8List blue = Uint8List(pixelCount);
+    final Uint8List alpha = Uint8List(pixelCount);
+    final Uint8List modes = Uint8List(predictorBlockWidth * predictorBlockRowCount);
+    int pixelDestination = 0;
+    int modeDestination = 0;
+    bool hasTransparency = false;
+    for (final _WebPTransformBand band in bands) {
+      red.setRange(pixelDestination, pixelDestination + band.red.length, band.red);
+      green.setRange(pixelDestination, pixelDestination + band.green.length, band.green);
+      blue.setRange(pixelDestination, pixelDestination + band.blue.length, band.blue);
+      alpha.setRange(pixelDestination, pixelDestination + band.alpha.length, band.alpha);
+      modes.setRange(modeDestination, modeDestination + band.modes.length, band.modes);
+      pixelDestination += band.red.length;
+      modeDestination += band.modes.length;
+      hasTransparency = hasTransparency || band.hasTransparency;
+    }
+    return _WebPTransformResult(
+      red: red,
+      green: green,
+      blue: blue,
+      alpha: alpha,
+      modes: modes,
+      hasTransparency: hasTransparency,
+    );
+  }
+
+  /// Selects predictors and transforms one block-aligned row band.
+  _WebPTransformBand _transformBand(_WebPTransformJob job) {
+    final int haloRowCount = job.hasPreviousRow ? 1 : 0;
+    final int totalRowCount = job.rowCount + haloRowCount;
+    final int pixelCount = job.width * totalRowCount;
+    final Uint8List red = Uint8List(pixelCount);
+    final Uint8List green = Uint8List(pixelCount);
+    final Uint8List blue = Uint8List(pixelCount);
+    final Uint8List alpha = Uint8List(pixelCount);
+    for (int pixelIndex = 0; pixelIndex < pixelCount; pixelIndex++) {
+      final int offset = pixelIndex * 4;
+      red[pixelIndex] = job.pixels[offset];
+      green[pixelIndex] = job.pixels[offset + 1];
+      blue[pixelIndex] = job.pixels[offset + 2];
+      alpha[pixelIndex] = job.pixels[offset + 3];
+    }
+    bool hasTransparency = false;
+    for (int pixelIndex = haloRowCount * job.width; pixelIndex < pixelCount && !hasTransparency; pixelIndex++) {
+      hasTransparency = alpha[pixelIndex] != 255;
+    }
+
+    _applySubtractGreenTransform(
+      red: red,
+      green: green,
+      blue: blue,
+      pixelCount: pixelCount,
+    );
+    final int predictorBlockWidth = (job.width + _webPPredictorBlockSize - 1) ~/ _webPPredictorBlockSize;
+    final Uint8List modes = _selectPredictorModes(
+      red: red,
+      green: green,
+      blue: blue,
+      width: job.width,
+      firstLocalRow: haloRowCount,
+      firstImageRow: job.firstRow,
+      rowCount: job.rowCount,
+      blockWidth: predictorBlockWidth,
+      blockSize: _webPPredictorBlockSize,
+    );
+    _applyPredictorTransform(
+      red: red,
+      green: green,
+      blue: blue,
+      alpha: alpha,
+      width: job.width,
+      firstLocalRow: haloRowCount,
+      firstImageRow: job.firstRow,
+      rowCount: job.rowCount,
+      blockWidth: predictorBlockWidth,
+      blockSize: _webPPredictorBlockSize,
+      modes: modes,
+    );
+    final int firstTargetPixel = haloRowCount * job.width;
+    return _WebPTransformBand(
+      red: firstTargetPixel == 0 ? red : Uint8List.fromList(Uint8List.sublistView(red, firstTargetPixel)),
+      green: firstTargetPixel == 0 ? green : Uint8List.fromList(Uint8List.sublistView(green, firstTargetPixel)),
+      blue: firstTargetPixel == 0 ? blue : Uint8List.fromList(Uint8List.sublistView(blue, firstTargetPixel)),
+      alpha: firstTargetPixel == 0 ? alpha : Uint8List.fromList(Uint8List.sublistView(alpha, firstTargetPixel)),
+      modes: modes,
+      hasTransparency: hasTransparency,
+    );
   }
 
   /// Subtracts the green channel from the red and blue channels in place.
@@ -364,40 +590,43 @@ final class WebPEncoder extends RasterEncoder {
 
   /// Selects the best predictor mode for each predictor block.
   /// Tries modes 1, 2, 7, 11 and picks the one minimising |residuals|.
-  List<int> _selectPredictorModes({
+  Uint8List _selectPredictorModes({
     required Uint8List red,
     required Uint8List green,
     required Uint8List blue,
-    required Uint8List alpha,
     required int width,
-    required int height,
+    required int firstLocalRow,
+    required int firstImageRow,
+    required int rowCount,
     required int blockWidth,
-    required int blockHeight,
     required int blockSize,
   }) {
     const List<int> candidates = [1, 2, 7, 11];
-    final List<int> modes = List<int>.filled(blockWidth * blockHeight, 11);
+    final int blockHeight = (rowCount + blockSize - 1) ~/ blockSize;
+    final Uint8List modes = Uint8List(blockWidth * blockHeight);
     for (int blockY = 0; blockY < blockHeight; blockY++) {
       for (int blockX = 0; blockX < blockWidth; blockX++) {
         final int x0 = blockX * blockSize;
-        final int y0 = blockY * blockSize;
+        final int y0 = firstLocalRow + blockY * blockSize;
         final int x1 = (x0 + blockSize).clamp(0, width);
-        final int y1 = (y0 + blockSize).clamp(0, height);
+        final int lastLocalRow = firstLocalRow + rowCount;
+        final int y1 = (y0 + blockSize).clamp(firstLocalRow, lastLocalRow);
         int bestMode = 11;
         int bestCost = 0x7fffffff;
         for (final int mode in candidates) {
           int cost = 0;
           for (int y = y0; y < y1; y++) {
+            final int imageY = firstImageRow + y - firstLocalRow;
             for (int x = x0; x < x1; x++) {
               final int pixelIndex = y * width + x;
               int predictedRed;
               int predictedGreen;
               int predictedBlue;
-              if (y == 0 && x == 0) {
+              if (imageY == 0 && x == 0) {
                 predictedRed = 0;
                 predictedGreen = 0;
                 predictedBlue = 0;
-              } else if (y == 0) {
+              } else if (imageY == 0) {
                 final int leftIndex = pixelIndex - 1;
                 predictedRed = red[leftIndex];
                 predictedGreen = green[leftIndex];
@@ -466,7 +695,9 @@ final class WebPEncoder extends RasterEncoder {
     required Uint8List blue,
     required Uint8List alpha,
     required int width,
-    required int height,
+    required int firstLocalRow,
+    required int firstImageRow,
+    required int rowCount,
     required int blockWidth,
     required int blockSize,
     required List<int> modes,
@@ -475,19 +706,22 @@ final class WebPEncoder extends RasterEncoder {
     final Uint8List originalGreen = Uint8List.fromList(green);
     final Uint8List originalBlue = Uint8List.fromList(blue);
     final Uint8List originalAlpha = Uint8List.fromList(alpha);
-    for (int y = 0; y < height; y++) {
+    final int lastLocalRow = firstLocalRow + rowCount;
+    for (int y = firstLocalRow; y < lastLocalRow; y++) {
+      final int targetY = y - firstLocalRow;
+      final int imageY = firstImageRow + targetY;
       for (int x = 0; x < width; x++) {
         final int i = y * width + x;
         int predictedRed;
         int predictedGreen;
         int predictedBlue;
         int predictedAlpha;
-        if (y == 0 && x == 0) {
+        if (imageY == 0 && x == 0) {
           predictedAlpha = 255;
           predictedRed = 0;
           predictedGreen = 0;
           predictedBlue = 0;
-        } else if (y == 0) {
+        } else if (imageY == 0) {
           final int leftIndex = i - 1;
           predictedRed = originalRed[leftIndex];
           predictedGreen = originalGreen[leftIndex];
@@ -503,7 +737,7 @@ final class WebPEncoder extends RasterEncoder {
           final int leftIndex = i - 1;
           final int topIndex = i - width;
           final int shift = blockSize.bitLength - 1;
-          final int mode = modes[(y >> shift) * blockWidth + (x >> shift)];
+          final int mode = modes[(targetY >> shift) * blockWidth + (x >> shift)];
           switch (mode) {
             case 1: // left
               predictedRed = originalRed[leftIndex];

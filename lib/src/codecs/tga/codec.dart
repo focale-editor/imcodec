@@ -1,7 +1,7 @@
 part of '../tga.dart';
 
-/// Encodes and decodes Truevision TGA images synchronously.
-final class TgaCodec extends RasterCodec {
+/// Encodes and decodes Truevision TGA images.
+final class TgaCodec extends RasterCodec<TgaEncoder, TgaDecoder> {
   @override
   final TgaEncoder rasterEncoder;
 

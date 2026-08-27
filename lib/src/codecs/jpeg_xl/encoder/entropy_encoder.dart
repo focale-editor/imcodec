@@ -561,13 +561,74 @@ final class EntropyCodes {
     required List<int> contexts,
     required List<int> values,
     required HybridIntegerConfig config,
+  }) => EntropyCodes.buildSections(
+    contextCount: contextCount,
+    contextSections: <List<int>>[contexts],
+    valueSections: <List<int>>[values],
+    config: config,
+  );
+
+  /// Builds codes directly over aligned sections without flattening them.
+  factory EntropyCodes.buildSections({
+    required int contextCount,
+    required List<List<int>> contextSections,
+    required List<List<int>> valueSections,
+    required HybridIntegerConfig config,
   }) {
+    if (contextSections.length != valueSections.length) {
+      throw ArgumentError('Entropy context and value section counts differ.');
+    }
     final codes = EntropyCodes._(config: config, codes: [], codeLengths: [], alphabetSizes: [], histograms: [], contextCount: contextCount);
-    for (var i = 0; i < values.length; i++) {
-      final (int token, int nbits, _) = tokenizeHybrid(config, values[i]);
-      codes._count(contexts[i], token, nbits);
+    for (int section = 0; section < valueSections.length; section++) {
+      final List<int> contexts = contextSections[section];
+      final List<int> values = valueSections[section];
+      if (contexts.length != values.length) {
+        throw ArgumentError('Entropy context and value lengths differ in section $section.');
+      }
+      for (int index = 0; index < values.length; index++) {
+        final (int token, int extraBitCount, _) = tokenizeHybrid(config, values[index]);
+        codes._count(contexts[index], token, extraBitCount);
+      }
     }
     codes._finishHistograms(contextCount);
+    return codes;
+  }
+
+  /// Builds codes from token histograms collected while producing values.
+  factory EntropyCodes.fromTokenCounts({
+    required List<Int32List> tokenCounts,
+    required Int32List extraBitCounts,
+    required HybridIntegerConfig config,
+  }) {
+    if (tokenCounts.length != extraBitCounts.length) {
+      throw ArgumentError('Entropy token and payload-bit context counts differ.');
+    }
+    final int contextCount = tokenCounts.length;
+    final EntropyCodes codes = EntropyCodes._(
+      config: config,
+      codes: <List<int>>[],
+      codeLengths: <List<int>>[],
+      alphabetSizes: <int>[],
+      histograms: <List<int>>[],
+      contextCount: contextCount,
+    );
+    for (int context = 0; context < contextCount; context++) {
+      final Int32List counts = tokenCounts[context];
+      int maximumToken = -1;
+      for (int token = counts.length - 1; token >= 0; token--) {
+        if (counts[token] != 0) {
+          maximumToken = token;
+          break;
+        }
+      }
+      final int alphabetSize = maximumToken < 0 ? 1 : maximumToken + 1;
+      codes
+        .._alphabetSizes.add(alphabetSize)
+        .._histograms.add(<int>[for (int token = 0; token < alphabetSize; token++) counts[token]])
+        .._codes.add(const <int>[])
+        .._codeLengths.add(const <int>[]);
+      codes._extraBits += extraBitCounts[context];
+    }
     return codes;
   }
 
@@ -621,8 +682,13 @@ final class EntropyCodes {
     }
     final Int32List counts = Int32List(contexts * stride);
     if (_countsStride > 0) {
-      for (var c = 0; c < _maximumTokens.length; c++) {
-        counts.setRange(c * stride, c * stride + _countsStride, _counts, c * _countsStride);
+      for (var currentContext = 0; currentContext < _maximumTokens.length; currentContext++) {
+        counts.setRange(
+          currentContext * stride,
+          currentContext * stride + _countsStride,
+          _counts,
+          currentContext * _countsStride,
+        );
       }
     }
     final Int32List maximumTokens = Int32List(contexts)..fillRange(_maximumTokens.length, contexts, -1);
@@ -771,12 +837,38 @@ final class EntropyCodes {
 
   /// Encodes one section as a fresh rANS stream over the shared tables.
   void encodeAnsSection(BitWriter w, List<int> contexts, List<int> values) {
-    final enc = AnsEncoder(aliasTables: _ansTables!);
-    for (var i = 0; i < values.length; i++) {
-      final (int token, int nbits, int extra) = tokenizeHybrid(config, values[i]);
-      enc.addSymbol(contexts[i], token, extra: extra, extraBits: nbits);
+    if (config.splitExponent == 4 && config.msbInToken == 1 && config.lsbInToken == 0) {
+      final AnsEncoderH410 encoder = AnsEncoderH410(aliasTables: _ansTables!, expectedSymbols: values.length);
+      for (int index = values.length - 1; index >= 0; index--) {
+        encoder.prependValue(contexts[index], values[index]);
+      }
+      encoder.finish(w);
+      return;
     }
-    enc.finish(w);
+    final AnsEncoder encoder = AnsEncoder(aliasTables: _ansTables!, expectedSymbols: values.length);
+    for (int index = values.length - 1; index >= 0; index--) {
+      final (int token, int extraBitCount, int extra) = tokenizeHybrid(config, values[index]);
+      encoder.prependSymbol(contexts[index], token, extra: extra, extraBits: extraBitCount);
+    }
+    encoder.finish(w);
+  }
+
+  /// Encodes one h410 section whose contexts are constant over compact runs.
+  void encodeAnsSectionRuns(BitWriter writer, Int32List runContexts, Int32List runEnds, List<int> values) {
+    if (config.splitExponent != 4 || config.msbInToken != 1 || config.lsbInToken != 0) {
+      throw StateError('Compact context runs require the h410 configuration.');
+    }
+    if (runContexts.length != runEnds.length || (runEnds.isEmpty ? values.isNotEmpty : runEnds.last != values.length)) {
+      throw ArgumentError('Context runs do not cover the entropy section.');
+    }
+    final AnsEncoderH410 encoder = AnsEncoderH410(aliasTables: _ansTables!, expectedSymbols: values.length);
+    for (int run = runContexts.length - 1; run >= 0; run--) {
+      final int start = run == 0 ? 0 : runEnds[run - 1];
+      for (int index = runEnds[run] - 1; index >= start; index--) {
+        encoder.prependValue(runContexts[run], values[index]);
+      }
+    }
+    encoder.finish(writer);
   }
 
   /// Encodes one LZ77 op stream as a fresh rANS stream. A match emits a
@@ -784,19 +876,22 @@ final class EntropyCodes {
   /// distance symbol (in the distance cluster), each with its raw extra
   /// bits — the exact read order in EntropyStream.readSymbol.
   void encodeAnsLz77Section(BitWriter w, Lz77Operations ops) {
-    final enc = AnsEncoder(aliasTables: _ansTables!);
-    for (var i = 0; i < ops.operationKinds.length; i++) {
-      if (ops.operationKinds[i] == 0) {
-        final (int token, int nbits, int extra) = tokenizeHybrid(config, ops.literalValuesOrMatchLengths[i]);
-        enc.addSymbol(ops.contexts[i], token, extra: extra, extraBits: nbits);
+    final AnsEncoder encoder = AnsEncoder(aliasTables: _ansTables!, expectedSymbols: ops.operationKinds.length);
+    for (int index = ops.operationKinds.length - 1; index >= 0; index--) {
+      if (ops.operationKinds[index] == 0) {
+        final (int token, int extraBitCount, int extra) = tokenizeHybrid(config, ops.literalValuesOrMatchLengths[index]);
+        encoder.prependSymbol(ops.contexts[index], token, extra: extra, extraBits: extraBitCount);
       } else {
-        final (int lt, int lnbits, int lextra) = tokenizeHybrid(lz77LengthConfiguration, ops.literalValuesOrMatchLengths[i] - lz77MinLength);
-        enc.addSymbol(ops.contexts[i], lz77MinSymbol + lt, extra: lextra, extraBits: lnbits);
-        final (int dt, int dnbits, int dextra) = tokenizeHybrid(config, ops.matchDistances[i] + 119);
-        enc.addSymbol(contextCount, dt, extra: dextra, extraBits: dnbits);
+        final (int distanceToken, int distanceExtraBitCount, int distanceExtra) = tokenizeHybrid(config, ops.matchDistances[index] + 119);
+        encoder.prependSymbol(contextCount, distanceToken, extra: distanceExtra, extraBits: distanceExtraBitCount);
+        final (int lengthToken, int lengthExtraBitCount, int lengthExtra) = tokenizeHybrid(
+          lz77LengthConfiguration,
+          ops.literalValuesOrMatchLengths[index] - lz77MinLength,
+        );
+        encoder.prependSymbol(ops.contexts[index], lz77MinSymbol + lengthToken, extra: lengthExtra, extraBits: lengthExtraBitCount);
       }
     }
-    enc.finish(w);
+    encoder.finish(w);
   }
 
   /// Finalizes histograms.

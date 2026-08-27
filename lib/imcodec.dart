@@ -1,9 +1,9 @@
 /// Focused raster image encoding and decoding for Flutter.
 library;
 
-export 'src/codecs/bmp.dart' show BmpCodec;
-export 'src/codecs/jpeg.dart' show JpegChroma, JpegCodec;
-export 'src/codecs/jpeg_xl.dart' show JpegXlCodec, JpegXlEncoder;
+export 'src/codecs/bmp.dart' show BmpCodec, BmpDecoder, BmpEncoder;
+export 'src/codecs/jpeg.dart' show JpegChroma, JpegCodec, JpegDecoder, JpegEncoder;
+export 'src/codecs/jpeg_xl.dart' show JpegXlCodec, JpegXlDecoder, JpegXlEncoder;
 export 'src/codecs/jpeg_xl/encoder/effort.dart' show JpegXlEffort;
 export 'src/codecs/png.dart' show PngCodec;
 export 'src/codecs/qoi.dart' show QoiCodec;
@@ -16,3 +16,4 @@ export 'src/encoder.dart';
 export 'src/image.dart';
 export 'src/image_codec_exception.dart';
 export 'src/image_format.dart';
+export 'src/parallel_runner.dart';

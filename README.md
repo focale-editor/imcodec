@@ -56,6 +56,34 @@ final img.Image decoded = img.decodeImage(encodedBytes);
 final img.Image png = img.decodePng(pngBytes);
 ```
 
+## Spreading encoding across isolates
+
+`encodeWith` is part of `RasterCodec` and `RasterEncoder`, so every codec
+accepts a runner and `encodeImageWith` dispatches on format just like
+`encodeImage`. Use `runSequentially` to run every task on the current isolate,
+`onIsolates` to run one isolate per job, or `onBoundedIsolates` to cap the
+number of concurrent isolates:
+
+```dart
+final Uint8List jpeg = await img.encodeJpgWith(
+  img.onBoundedIsolates,
+  image,
+  quality: 90,
+);
+```
+
+JPEG transforms MCU bands independently, JPEG XL spreads its modular groups
+and context work, PNG filters row bands independently, and WebP selects and
+applies predictor-block bands independently. JPEG, PNG, and WebP keep small
+images inline because isolate startup and byte transfer would cost more than
+the work saved. Their parallel output is byte-for-byte identical to synchronous
+output.
+
+BMP, TGA, and TIFF are dominated by inexpensive byte shuffling or run-length
+passes, while QOI carries state from every pixel to the next. Measurements show
+that moving their buffers between isolates is slower, so these formats accept
+a runner for API consistency but intentionally encode inline.
+
 `decodeImage` defaults to a 100-million-pixel allocation limit. Supply a lower
 `maxPixels` value when input comes from an untrusted source.
 

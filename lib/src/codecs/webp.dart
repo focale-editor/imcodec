@@ -11,6 +11,7 @@ import 'package:imcodec/src/image.dart';
 import 'package:imcodec/src/image_codec_exception.dart';
 import 'package:imcodec/src/image_format.dart';
 import 'package:imcodec/src/output_buffer.dart';
+import 'package:imcodec/src/parallel_runner.dart';
 
 part 'webp/alpha/decoder.dart';
 part 'webp/alpha/filters.dart';

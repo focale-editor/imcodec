@@ -212,6 +212,46 @@ final class ContextTree {
   int get contexts => contextCount;
 }
 
+/// Creates a zero-training-cost tree that assigns one context per channel.
+ContextTree createChannelContextTree(int channelCount) {
+  if (channelCount < 1) {
+    throw RangeError.range(channelCount, 1, null, 'channelCount');
+  }
+  final List<_ContextTreeNode> leaves = <_ContextTreeNode>[
+    for (int channel = 0; channel < channelCount; channel++) _ContextTreeNode(samples: _noSamples),
+  ];
+  _ContextTreeNode root = leaves.last;
+  for (int channel = channelCount - 2; channel >= 0; channel--) {
+    root = _ContextTreeNode(samples: _noSamples)
+      ..propertyIndex = 0
+      ..value = channel
+      ..left = root
+      ..right = leaves[channel];
+  }
+
+  final List<_ContextTreeNode> ordered = <_ContextTreeNode>[];
+  final List<_ContextTreeNode> queue = <_ContextTreeNode>[root];
+  int nextContext = 0;
+  while (queue.isNotEmpty) {
+    final _ContextTreeNode node = queue.removeAt(0);
+    ordered.add(node);
+    if (node.propertyIndex < 0) {
+      node.context = nextContext++;
+    } else {
+      queue
+        ..add(node.left!)
+        ..add(node.right!);
+    }
+  }
+  return ContextTree._(
+    root: root,
+    contextCount: nextContext,
+    orderedNodes: ordered,
+    properties: const <int>[0],
+    trainingBits: 0,
+  );
+}
+
 /// Computes the zero-order entropy of [counts] containing [total] samples.
 double _countsEntropy(Int32List counts, int total) {
   if (total == 0) {
@@ -414,6 +454,9 @@ ContextTree learnContextTree(Int32List props, Int32List tokens, List<int> proper
   while (queue.isNotEmpty) {
     final _ContextTreeNode node = queue.removeAt(0);
     ordered.add(node);
+    // Training samples are dead once the tree is learned. Dropping them keeps
+    // the tree small enough to hand to another isolate cheaply.
+    node.samples = _noSamples;
     if (node.propertyIndex < 0) {
       node.context = nextContext++;
     } else {

@@ -1,7 +1,7 @@
 part of '../png.dart';
 
-/// Encodes and decodes Portable Network Graphics images synchronously.
-final class PngCodec extends RasterCodec {
+/// Encodes and decodes Portable Network Graphics images.
+final class PngCodec extends RasterCodec<PngEncoder, PngDecoder> with ParallelRasterCodec<PngEncoder, PngDecoder> {
   @override
   final PngEncoder rasterEncoder;
 

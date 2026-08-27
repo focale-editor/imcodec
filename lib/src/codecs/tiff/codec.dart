@@ -1,7 +1,7 @@
 part of '../tiff.dart';
 
-/// Encodes and decodes Tagged Image File Format images synchronously.
-final class TiffCodec extends RasterCodec {
+/// Encodes and decodes Tagged Image File Format images.
+final class TiffCodec extends RasterCodec<TiffEncoder, TiffDecoder> {
   @override
   final TiffEncoder rasterEncoder;
 

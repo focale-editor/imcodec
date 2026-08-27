@@ -1,7 +1,7 @@
 part of '../qoi.dart';
 
-/// Encodes and decodes Quite OK Image data synchronously.
-final class QoiCodec extends RasterCodec {
+/// Encodes and decodes Quite OK Image data.
+final class QoiCodec extends RasterCodec<QoiEncoder, QoiDecoder> {
   @override
   final QoiEncoder rasterEncoder;
 

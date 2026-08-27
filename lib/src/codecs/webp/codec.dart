@@ -1,9 +1,9 @@
 part of '../webp.dart';
 
-/// Encodes and decodes WebP images synchronously.
+/// Encodes and decodes WebP images.
 /// Encoding produces lossless VP8L data. Decoding accepts lossless VP8L,
 /// lossy VP8, alpha data, and the first frame of animated WebP files.
-final class WebPCodec extends RasterCodec {
+final class WebPCodec extends RasterCodec<WebPEncoder, WebPDecoder> with ParallelRasterCodec<WebPEncoder, WebPDecoder> {
   @override
   final WebPEncoder rasterEncoder;
 

@@ -11,14 +11,16 @@ import 'package:imcodec/src/codecs/tiff.dart';
 import 'package:imcodec/src/codecs/webp.dart';
 import 'package:imcodec/src/image.dart';
 import 'package:imcodec/src/image_format.dart';
+import 'package:imcodec/src/parallel_runner.dart';
 
 /// Encodes [image] to [format].
 /// [quality] only affects JPEG output. [pngLevel] is the zlib compression
-/// level and ranges from 0 through 9.
-Uint8List encodeImage(Image image, {required ImageFormat format, int quality = 90, int pngLevel = 6}) => switch (format) {
+/// level and ranges from 0 through 9. [jpegXlEffort] trades JPEG XL encoding
+/// speed against output size.
+Uint8List encodeImage(Image image, {required ImageFormat format, int quality = 90, int pngLevel = 6, JpegXlEffort jpegXlEffort = JpegXlEffort.balanced}) => switch (format) {
   ImageFormat.bmp => encodeBmp(image),
   ImageFormat.jpeg => encodeJpg(image, quality: quality),
-  ImageFormat.jpegXl => encodeJpegXl(image),
+  ImageFormat.jpegXl => encodeJpegXl(image, effort: jpegXlEffort),
   ImageFormat.png => encodePng(image, level: pngLevel),
   ImageFormat.qoi => encodeQoi(image),
   ImageFormat.tga => encodeTga(image),
@@ -36,8 +38,20 @@ Uint8List encodeJpegXl(Image image, {JpegXlEffort effort = JpegXlEffort.balanced
 /// Encodes [image] as lossless JPEG XL Modular data.
 Uint8List encodeJxl(Image image, {JpegXlEffort effort = JpegXlEffort.balanced}) => encodeJpegXl(image, effort: effort);
 
+/// Encodes [image] as lossless JPEG XL Modular data, spreading the work with
+/// [runner].
+///
+/// The result is identical to [encodeJpegXl] with the same [effort]. This
+/// package never starts an isolate itself, so [runner] owns that decision; see
+/// [ParallelRunner] for a two-line isolate implementation.
+Future<Uint8List> encodeJpegXlWith(ParallelRunner runner, Image image, {JpegXlEffort effort = JpegXlEffort.balanced}) => JpegXlCodec(effort: effort).encodeWith(runner, image);
+
 /// Encodes [image] as an 8-bit RGBA PNG.
 Uint8List encodePng(Image image, {int level = 6}) => PngCodec(level: level).encode(image);
+
+/// Encodes [image] as an 8-bit RGBA PNG, filtering independent row bands
+/// through [runner] when the image is large enough to benefit.
+Future<Uint8List> encodePngWith(ParallelRunner runner, Image image, {int level = 6}) => PngCodec(level: level).encodeWith(runner, image);
 
 /// Encodes [image] as a lossless Quite OK Image.
 Uint8List encodeQoi(Image image) => const QoiCodec().encode(image);
@@ -58,5 +72,51 @@ Uint8List encodeJpg(Image image, {int quality = 100, JpegChroma chroma = JpegChr
 /// Encodes [image] as a baseline JPEG.
 Uint8List encodeJpeg(Image image, {int quality = 100, JpegChroma chroma = JpegChroma.yuv444}) => encodeJpg(image, quality: quality, chroma: chroma);
 
+/// Encodes [image] as a baseline JPEG, transforming independent MCU bands
+/// through [runner] when the image is large enough to benefit.
+Future<Uint8List> encodeJpgWith(
+  ParallelRunner runner,
+  Image image, {
+  int quality = 100,
+  JpegChroma chroma = JpegChroma.yuv444,
+}) => JpegCodec(quality: quality, chroma: chroma).encodeWith(runner, image);
+
+/// Encodes [image] as a baseline JPEG through [runner].
+Future<Uint8List> encodeJpegWith(
+  ParallelRunner runner,
+  Image image, {
+  int quality = 100,
+  JpegChroma chroma = JpegChroma.yuv444,
+}) => encodeJpgWith(runner, image, quality: quality, chroma: chroma);
+
 /// Encodes [image] as a lossless VP8L WebP image.
 Uint8List encodeWebP(Image image) => const WebPCodec().encode(image);
+
+/// Encodes [image] as lossless VP8L WebP, selecting and applying independent
+/// predictor-block bands through [runner] when the image is large enough.
+Future<Uint8List> encodeWebPWith(ParallelRunner runner, Image image) => const WebPCodec().encodeWith(runner, image);
+
+/// Encodes [image] to [format], offering [runner] the work that can run
+/// independently.
+///
+/// The bytes match [encodeImage] with the same options, so a runner is always
+/// safe to pass. JPEG, JPEG XL, PNG, and WebP split expensive independent
+/// phases for sufficiently large images. The lighter or stateful formats
+/// encode inline because isolate transfer would make them slower.
+Future<Uint8List> encodeImageWith(
+  ParallelRunner runner,
+  Image image, {
+  required ImageFormat format,
+  int quality = 90,
+  int pngLevel = 6,
+  JpegXlEffort jpegXlEffort = JpegXlEffort.balanced,
+}) async => switch (format) {
+  ImageFormat.bmp => const BmpCodec().encode(image),
+  ImageFormat.jpeg => await JpegCodec(quality: quality).encodeWith(runner, image),
+  ImageFormat.jpegXl => await JpegXlCodec(effort: jpegXlEffort).encodeWith(runner, image),
+  ImageFormat.png => await PngCodec(level: pngLevel).encodeWith(runner, image),
+  ImageFormat.qoi => const QoiCodec().encode(image),
+  ImageFormat.tga => TgaCodec().encode(image),
+  ImageFormat.tiff => TiffCodec().encode(image),
+  ImageFormat.webp => await const WebPCodec().encodeWith(runner, image),
+};

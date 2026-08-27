@@ -13,7 +13,7 @@ enum JpegChroma {
 ///
 /// The implementation uses a forward discrete cosine transform and canonical
 /// JPEG Huffman tables.
-final class JpegEncoder extends RasterEncoder {
+final class JpegEncoder extends RasterEncoder with ParallelRasterEncoder {
   /// Compression quality from 1 through 100.
   final int quality;
 
@@ -31,7 +31,125 @@ final class JpegEncoder extends RasterEncoder {
     quality: quality,
     chroma: chroma,
   ).encode(image);
+
+  @override
+  Future<Uint8List> encodeWith(ParallelRunner runner, Image input) async {
+    final _JpegEncodingSession session = _JpegEncodingSession(
+      quality: quality,
+      chroma: chroma,
+    );
+    session._checkDimensions(input);
+
+    final int mcuHeight = chroma == JpegChroma.yuv444 ? 8 : 16;
+    final int mcuRowCount = (input.height + mcuHeight - 1) ~/ mcuHeight;
+    if (input.width * input.height < _minimumJpegParallelPixels || mcuRowCount < 2) {
+      return session.encode(input);
+    }
+
+    final List<_JpegBandJob> jobs = _createJpegBandJobs(
+      input,
+      quality: quality,
+      chroma: chroma,
+      mcuHeight: mcuHeight,
+      mcuRowCount: mcuRowCount,
+    );
+    final List<_JpegBandResult> bands = await runner<_JpegBandJob, _JpegBandResult>(
+      jobs,
+      _runJpegBandJob,
+    );
+    return session._encodeTransformedBands(
+      bands,
+      width: input.width,
+      height: input.height,
+    );
+  }
 }
+
+/// Small images finish before isolate startup and message transfer pay off.
+const int _minimumJpegParallelPixels = 1024 * 1024;
+
+/// Maximum number of independently transformed JPEG bands.
+const int _maximumJpegParallelJobs = 4;
+
+/// Describes a complete set of MCU rows that can be transformed independently.
+final class _JpegBandJob {
+  /// Tightly packed RGBA rows in this band.
+  final Uint8List pixels;
+
+  /// Image width shared by every row in [pixels].
+  final int width;
+
+  /// Number of source rows in this band.
+  final int height;
+
+  /// Quantization quality used by the parent encode.
+  final int quality;
+
+  /// Chroma layout used by the parent encode.
+  final JpegChroma chroma;
+
+  /// Creates one self-contained transform job.
+  const _JpegBandJob({
+    required this.pixels,
+    required this.width,
+    required this.height,
+    required this.quality,
+    required this.chroma,
+  });
+}
+
+/// Holds zigzag-ordered coefficients for consecutive MCU rows.
+final class _JpegBandResult {
+  /// Quantized coefficients in scan order, with 64 entries per data unit.
+  final Int16List coefficients;
+
+  /// Creates one transformed band result.
+  const _JpegBandResult({
+    required this.coefficients,
+  });
+}
+
+/// Splits [image] on MCU-row boundaries without duplicating source pixels.
+List<_JpegBandJob> _createJpegBandJobs(
+  Image image, {
+  required int quality,
+  required JpegChroma chroma,
+  required int mcuHeight,
+  required int mcuRowCount,
+}) {
+  final int jobCount = mcuRowCount < _maximumJpegParallelJobs ? mcuRowCount : _maximumJpegParallelJobs;
+  final List<_JpegBandJob> jobs = <_JpegBandJob>[];
+  for (int jobIndex = 0; jobIndex < jobCount; jobIndex++) {
+    final int firstMcuRow = jobIndex * mcuRowCount ~/ jobCount;
+    final int lastMcuRow = (jobIndex + 1) * mcuRowCount ~/ jobCount;
+    final int firstRow = firstMcuRow * mcuHeight;
+    final int unclampedLastRow = lastMcuRow * mcuHeight;
+    final int lastRow = unclampedLastRow < image.height ? unclampedLastRow : image.height;
+    final int firstByte = firstRow * image.width * 4;
+    final int lastByte = lastRow * image.width * 4;
+    jobs.add(
+      _JpegBandJob(
+        pixels: Uint8List.fromList(Uint8List.sublistView(image.bytes, firstByte, lastByte)),
+        width: image.width,
+        height: lastRow - firstRow,
+        quality: quality,
+        chroma: chroma,
+      ),
+    );
+  }
+  return jobs;
+}
+
+/// Transforms one JPEG band without reading or mutating shared state.
+_JpegBandResult _runJpegBandJob(_JpegBandJob job) =>
+    _JpegEncodingSession(
+      quality: job.quality,
+      chroma: job.chroma,
+    )._transformBand(
+      job.pixels,
+      width: job.width,
+      height: job.height,
+    );
 
 /// Holds the mutable state for one baseline JPEG encoding operation.
 final class _JpegEncodingSession {
@@ -63,13 +181,18 @@ final class _JpegEncodingSession {
   final Int32List _quantizedCoefficients = Int32List(64);
 
   /// Reusable zigzag-ordered data-unit coefficients.
-  final Int32List _zigzagCoefficients = Int32List(64);
+  /// Quantized coefficients fit in sixteen bits, which lets the sequential and
+  /// the band-parallel paths share one block-writing routine.
+  final Int16List _zigzagCoefficients = Int16List(64);
 
   /// Fixed-point products used by RGB-to-YUV conversion.
   final Int32List _rgbToYuvTable = Int32List(2048);
 
   /// Chroma sampling used by this encoder.
   final JpegChroma chroma;
+
+  /// Quality the quantization tables were built for.
+  final int quality;
 
   /// Number of luminance DC codes for each bit length.
   static const List<int> _standardLuminanceDcCodeCounts = [0, 0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0];
@@ -429,7 +552,7 @@ final class _JpegEncodingSession {
 
   /// Creates one encoding session and initializes its derived tables.
   _JpegEncodingSession({
-    required int quality,
+    required this.quality,
     required this.chroma,
   }) {
     _initHuffmanTable();
@@ -451,21 +574,39 @@ final class _JpegEncodingSession {
     _initQuantTables(scaleFactor);
   }
 
-  /// Encodes [image] as a baseline JPEG using the selected [chroma] sampling.
-  Uint8List encode(Image image) {
+  /// Rejects dimensions the format cannot express.
+  void _checkDimensions(Image image) {
     if (image.width > 65535 || image.height > 65535) {
       throw const ImageCodecException('JPEG dimensions may not exceed 65535 pixels');
     }
-    final OutputBuffer output = OutputBuffer(bigEndian: true);
+  }
 
-    // Add JPEG headers
+  /// Writes every header segment that precedes the entropy-coded scan.
+  void _writeSegments(OutputBuffer output, int width, int height) {
     _writeMarker(output, JpegMarker.startOfImage);
     _writeApplicationSegment(output);
     _writeQuantizationTables(output);
-    _writeStartOfFrameSegment(output, image.width, image.height, chroma);
+    _writeStartOfFrameSegment(output, width, height, chroma);
     _writeHuffmanTables(output);
     _writeStartOfScanSegment(output);
+  }
 
+  /// Pads the final entropy byte and writes the end-of-image marker.
+  void _finishScan(OutputBuffer output) {
+    // Pad the final entropy byte with one bits, but only when one is partly
+    // written: a byte-aligned stream needs no padding at all.
+    if (_bytePos < 7) {
+      final int fillBitCount = _bytePos + 1;
+      _writeBits(output, (1 << fillBitCount) - 1, fillBitCount);
+    }
+    _writeMarker(output, JpegMarker.endOfImage);
+  }
+
+  /// Encodes [image] as a baseline JPEG using the selected [chroma] sampling.
+  Uint8List encode(Image image) {
+    _checkDimensions(image);
+    final OutputBuffer output = OutputBuffer(bigEndian: true);
+    _writeSegments(output, image.width, image.height);
     _resetBits();
 
     int luminancePredictor = 0;
@@ -483,7 +624,7 @@ final class _JpegEncodingSession {
       for (int y = 0; y < height; y += 8) {
         for (int x = 0; x < width; x += 8) {
           _convertBlockToYuv(
-            image,
+            image.bytes,
             x,
             y,
             width,
@@ -508,7 +649,7 @@ final class _JpegEncodingSession {
       for (int y = 0; y < height; y += 16) {
         for (int x = 0; x < width; x += 16) {
           _convertBlockToYuv(
-            image,
+            image.bytes,
             x,
             y,
             width,
@@ -518,7 +659,7 @@ final class _JpegEncodingSession {
             redDifferenceBlocks[0],
           );
           _convertBlockToYuv(
-            image,
+            image.bytes,
             x + 8,
             y,
             width,
@@ -528,7 +669,7 @@ final class _JpegEncodingSession {
             redDifferenceBlocks[1],
           );
           _convertBlockToYuv(
-            image,
+            image.bytes,
             x,
             y + 8,
             width,
@@ -538,7 +679,7 @@ final class _JpegEncodingSession {
             redDifferenceBlocks[2],
           );
           _convertBlockToYuv(
-            image,
+            image.bytes,
             x + 8,
             y + 8,
             width,
@@ -558,21 +699,193 @@ final class _JpegEncodingSession {
       }
     }
 
-    // Pad the final entropy byte with one bits, but only when one is partly
-    // written: a byte-aligned stream needs no padding at all.
-    if (_bytePos < 7) {
-      final int fillBitCount = _bytePos + 1;
-      _writeBits(output, (1 << fillBitCount) - 1, fillBitCount);
+    _finishScan(output);
+    return output.takeBytes();
+  }
+
+  /// Transforms and quantizes a band while leaving entropy coding for the
+  /// parent isolate, where direct-current predictors and output bits remain in
+  /// global scan order.
+  _JpegBandResult _transformBand(
+    Uint8List pixels, {
+    required int width,
+    required int height,
+  }) {
+    final int mcuWidth = chroma == JpegChroma.yuv444 ? 8 : 16;
+    final int mcuHeight = mcuWidth;
+    final int blocksPerMcu = chroma == JpegChroma.yuv444 ? 3 : 6;
+    final int mcuColumnCount = (width + mcuWidth - 1) ~/ mcuWidth;
+    final int mcuRowCount = (height + mcuHeight - 1) ~/ mcuHeight;
+    final Int16List coefficients = Int16List(mcuColumnCount * mcuRowCount * blocksPerMcu * 64);
+    int destination = 0;
+
+    if (chroma == JpegChroma.yuv444) {
+      final Float32List luminanceBlock = Float32List(64);
+      final Float32List blueDifferenceBlock = Float32List(64);
+      final Float32List redDifferenceBlock = Float32List(64);
+      for (int y = 0; y < height; y += 8) {
+        for (int x = 0; x < width; x += 8) {
+          _convertBlockToYuv(
+            pixels,
+            x,
+            y,
+            width,
+            height,
+            luminanceBlock,
+            blueDifferenceBlock,
+            redDifferenceBlock,
+          );
+          destination = _appendTransformedBlock(
+            coefficients,
+            destination,
+            luminanceBlock,
+            _luminanceTransformFactors,
+          );
+          destination = _appendTransformedBlock(
+            coefficients,
+            destination,
+            blueDifferenceBlock,
+            _chrominanceTransformFactors,
+          );
+          destination = _appendTransformedBlock(
+            coefficients,
+            destination,
+            redDifferenceBlock,
+            _chrominanceTransformFactors,
+          );
+        }
+      }
+    } else {
+      final List<Float32List> luminanceBlocks = List<Float32List>.generate(4, (_) => Float32List(64));
+      final List<Float32List> blueDifferenceBlocks = List<Float32List>.generate(4, (_) => Float32List(64));
+      final List<Float32List> redDifferenceBlocks = List<Float32List>.generate(4, (_) => Float32List(64));
+      final Float32List downsampledBlueDifference = Float32List(64);
+      final Float32List downsampledRedDifference = Float32List(64);
+      for (int y = 0; y < height; y += 16) {
+        for (int x = 0; x < width; x += 16) {
+          _convertBlockToYuv(pixels, x, y, width, height, luminanceBlocks[0], blueDifferenceBlocks[0], redDifferenceBlocks[0]);
+          _convertBlockToYuv(pixels, x + 8, y, width, height, luminanceBlocks[1], blueDifferenceBlocks[1], redDifferenceBlocks[1]);
+          _convertBlockToYuv(pixels, x, y + 8, width, height, luminanceBlocks[2], blueDifferenceBlocks[2], redDifferenceBlocks[2]);
+          _convertBlockToYuv(pixels, x + 8, y + 8, width, height, luminanceBlocks[3], blueDifferenceBlocks[3], redDifferenceBlocks[3]);
+          _downsampleChromaBlocks(
+            downsampledBlueDifference,
+            blueDifferenceBlocks[0],
+            blueDifferenceBlocks[1],
+            blueDifferenceBlocks[2],
+            blueDifferenceBlocks[3],
+          );
+          _downsampleChromaBlocks(
+            downsampledRedDifference,
+            redDifferenceBlocks[0],
+            redDifferenceBlocks[1],
+            redDifferenceBlocks[2],
+            redDifferenceBlocks[3],
+          );
+          for (final Float32List luminanceBlock in luminanceBlocks) {
+            destination = _appendTransformedBlock(
+              coefficients,
+              destination,
+              luminanceBlock,
+              _luminanceTransformFactors,
+            );
+          }
+          destination = _appendTransformedBlock(
+            coefficients,
+            destination,
+            downsampledBlueDifference,
+            _chrominanceTransformFactors,
+          );
+          destination = _appendTransformedBlock(
+            coefficients,
+            destination,
+            downsampledRedDifference,
+            _chrominanceTransformFactors,
+          );
+        }
+      }
     }
+    return _JpegBandResult(coefficients: coefficients);
+  }
 
-    _writeMarker(output, JpegMarker.endOfImage);
+  /// Appends one transformed block in JPEG zigzag order.
+  int _appendTransformedBlock(
+    Int16List output,
+    int destination,
+    Float32List block,
+    Float32List transformFactors,
+  ) {
+    final Int32List quantized = _transformAndQuantize(block, transformFactors);
+    for (int naturalIndex = 0; naturalIndex < 64; naturalIndex++) {
+      output[destination + jpegNaturalToZigZagOrder[naturalIndex]] = quantized[naturalIndex];
+    }
+    return destination + 64;
+  }
 
+  /// Entropy-encodes transformed bands in their original scan order.
+  Uint8List _encodeTransformedBands(
+    List<_JpegBandResult> bands, {
+    required int width,
+    required int height,
+  }) {
+    final OutputBuffer output = OutputBuffer(bigEndian: true);
+    _writeSegments(output, width, height);
+    _resetBits();
+    int luminancePredictor = 0;
+    int blueDifferencePredictor = 0;
+    int redDifferencePredictor = 0;
+    final int blocksPerMcu = chroma == JpegChroma.yuv444 ? 3 : 6;
+    final int luminanceBlockCount = chroma == JpegChroma.yuv444 ? 1 : 4;
+    int blockIndex = 0;
+
+    for (final _JpegBandResult band in bands) {
+      final Int16List coefficients = band.coefficients;
+      for (int base = 0; base < coefficients.length; base += 64) {
+        int lastNonZeroPosition = 63;
+        while (lastNonZeroPosition > 0 && coefficients[base + lastNonZeroPosition] == 0) {
+          lastNonZeroPosition--;
+        }
+        final int component = blockIndex % blocksPerMcu;
+        if (component < luminanceBlockCount) {
+          luminancePredictor = _encodeZigzagBlock(
+            output,
+            coefficients,
+            base,
+            lastNonZeroPosition,
+            luminancePredictor,
+            _luminanceDcHuffmanTable,
+            _luminanceAcHuffmanTable,
+          );
+        } else if (component == luminanceBlockCount) {
+          blueDifferencePredictor = _encodeZigzagBlock(
+            output,
+            coefficients,
+            base,
+            lastNonZeroPosition,
+            blueDifferencePredictor,
+            _chrominanceDcHuffmanTable,
+            _chrominanceAcHuffmanTable,
+          );
+        } else {
+          redDifferencePredictor = _encodeZigzagBlock(
+            output,
+            coefficients,
+            base,
+            lastNonZeroPosition,
+            redDifferencePredictor,
+            _chrominanceDcHuffmanTable,
+            _chrominanceAcHuffmanTable,
+          );
+        }
+        blockIndex++;
+      }
+    }
+    _finishScan(output);
     return output.takeBytes();
   }
 
   /// Converts one 8 by 8 RGBA block to centered Y, U, and V samples.
   void _convertBlockToYuv(
-    Image image,
+    Uint8List pixels,
     int x,
     int y,
     int width,
@@ -597,11 +910,11 @@ final class _JpegEncodingSession {
       }
 
       final int offset = (sourceY * width + sourceX) * 4;
-      final int alpha = image.bytes[offset + 3];
+      final int alpha = pixels[offset + 3];
       final int inverseAlpha = 255 - alpha;
-      final int red = (image.bytes[offset] * alpha + 255 * inverseAlpha + 127) ~/ 255;
-      final int green = (image.bytes[offset + 1] * alpha + 255 * inverseAlpha + 127) ~/ 255;
-      final int blue = (image.bytes[offset + 2] * alpha + 255 * inverseAlpha + 127) ~/ 255;
+      final int red = (pixels[offset] * alpha + 255 * inverseAlpha + 127) ~/ 255;
+      final int green = (pixels[offset + 1] * alpha + 255 * inverseAlpha + 127) ~/ 255;
+      final int blue = (pixels[offset + 2] * alpha + 255 * inverseAlpha + 127) ~/ 255;
 
       luminanceBlock[coefficientIndex] = ((_rgbToYuvTable[red] + _rgbToYuvTable[green + 256] + _rgbToYuvTable[blue + 512]) >> 16) - 128.0;
       blueDifferenceBlock[coefficientIndex] = ((_rgbToYuvTable[red + 768] + _rgbToYuvTable[green + 1024] + _rgbToYuvTable[blue + 1280]) >> 16) - 128.0;
@@ -1082,13 +1395,30 @@ final class _JpegEncodingSession {
     JpegHuffmanCodeTable acHuffmanTable,
   ) {
     final Int32List quantizedCoefficients = _transformAndQuantize(coefficients, transformFactors);
-
-    // ZigZag reorder
     for (int j = 0; j < 64; ++j) {
       _zigzagCoefficients[jpegNaturalToZigZagOrder[j]] = quantizedCoefficients[j];
     }
+    int lastNonZeroPosition = 63;
+    for (; lastNonZeroPosition > 0 && _zigzagCoefficients[lastNonZeroPosition] == 0; lastNonZeroPosition--) {}
+    return _encodeZigzagBlock(out, _zigzagCoefficients, 0, lastNonZeroPosition, previousDcCoefficient, dcHuffmanTable, acHuffmanTable);
+  }
 
-    final int currentDcCoefficient = _zigzagCoefficients[0];
+  /// Writes one zigzag-ordered block from [_zigzagCoefficients].
+  ///
+  /// Kept separate from the transform so that the transform, which is
+  /// independent per block, can run elsewhere while entropy coding stays
+  /// sequential: the direct-current term is differential across the whole
+  /// scan, and the bit stream is written in order.
+  int _encodeZigzagBlock(
+    OutputBuffer out,
+    Int16List block,
+    int base,
+    int lastNonZeroPosition,
+    int previousDcCoefficient,
+    JpegHuffmanCodeTable dcHuffmanTable,
+    JpegHuffmanCodeTable acHuffmanTable,
+  ) {
+    final int currentDcCoefficient = block[base];
     final int dcDifference = currentDcCoefficient - previousDcCoefficient;
     final int dcMagnitudeBitCount = jpegMagnitudeBitCount(dcDifference);
     _writeHuffmanSymbol(out, dcHuffmanTable, dcMagnitudeBitCount);
@@ -1097,8 +1427,6 @@ final class _JpegEncodingSession {
     }
 
     // Encode ACs
-    int lastNonZeroPosition = 63;
-    for (; (lastNonZeroPosition > 0) && (_zigzagCoefficients[lastNonZeroPosition] == 0); lastNonZeroPosition--) {}
     //lastNonZeroPosition = first element in reverse order !=0
     if (lastNonZeroPosition == 0) {
       _writeHuffmanSymbol(out, acHuffmanTable, 0x00);
@@ -1109,7 +1437,7 @@ final class _JpegEncodingSession {
     int runCount;
     while (i <= lastNonZeroPosition) {
       final int startPosition = i;
-      for (; (_zigzagCoefficients[i] == 0) && (i <= lastNonZeroPosition); ++i) {}
+      for (; (block[base + i] == 0) && (i <= lastNonZeroPosition); ++i) {}
 
       int zeroCount = i - startPosition;
       if (zeroCount >= 16) {
@@ -1119,7 +1447,7 @@ final class _JpegEncodingSession {
         }
         zeroCount = zeroCount & 0xF;
       }
-      final int coefficient = _zigzagCoefficients[i];
+      final int coefficient = block[base + i];
       final int magnitudeBitCount = jpegMagnitudeBitCount(coefficient);
       _writeHuffmanSymbol(out, acHuffmanTable, (zeroCount << 4) + magnitudeBitCount);
       _writeBits(out, jpegMagnitudeValue(coefficient, magnitudeBitCount), magnitudeBitCount);
