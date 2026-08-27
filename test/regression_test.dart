@@ -87,6 +87,23 @@ void main() {
     expect(decodeWebP(encoded).bytes, opaque.bytes);
   });
 
+  test('WebP lossless predictor accounts for alpha residuals', () {
+    // With constant RGB, ignoring alpha always selected the left predictor.
+    // Vertical prediction is substantially cheaper for this repeated alpha
+    // row, reducing the deterministic stream from 64 bytes to 58 bytes.
+    final Image source = Image(width: 128, height: 128);
+    for (int y = 0; y < source.height; ++y) {
+      for (int x = 0; x < source.width; ++x) {
+        source.setPixelRgba(x, y, 100, 100, 100, x.isEven ? 0 : 255);
+      }
+    }
+
+    final Uint8List encoded = encodeWebP(source);
+
+    expect(encoded.length, lessThanOrEqualTo(60));
+    expect(decodeWebP(encoded).bytes, source.bytes);
+  });
+
   test('PNG accepts trailing bytes after its end chunk', () {
     final Image source = Image(width: 3, height: 2)..setPixelRgba(1, 1, 10, 20, 30, 40);
     final Uint8List encoded = encodePng(source);

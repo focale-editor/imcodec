@@ -1,12 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:imcodec/src/codecs/jpeg.dart';
-import 'package:imcodec/src/codecs/jpeg_xl.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/encoder/effort.dart';
-import 'package:imcodec/src/codecs/png.dart';
-import 'package:imcodec/src/codecs/webp.dart';
-import 'package:imcodec/src/image.dart';
+import 'package:imcodec/imcodec.dart';
 
 /// Measures lossless JPEG XL encoding throughput on one image.
 void main(List<String> arguments) {

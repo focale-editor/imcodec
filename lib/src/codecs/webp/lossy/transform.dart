@@ -16,9 +16,9 @@ abstract final class _Vp8EncoderTransform {
     required Uint8List prediction,
     required int predictionOffset,
     required int predictionStride,
+    Int32List? output,
   }) {
-    final Int32List intermediate = Int32List(16);
-    final Int32List output = Int32List(16);
+    final Int32List transformed = output ?? Int32List(16);
     for (int row = 0; row < 4; ++row) {
       final int sourceRow = sourceOffset + row * sourceStride;
       final int predictionRow = predictionOffset + row * predictionStride;
@@ -31,23 +31,27 @@ abstract final class _Vp8EncoderTransform {
       final int differenceInside = difference1 - difference2;
       final int differenceOutside = difference0 - difference3;
       final int index = row * 4;
-      intermediate[index] = (sumOutside + sumInside) * 8;
-      intermediate[index + 1] = (differenceInside * 2217 + differenceOutside * 5352 + 1812) >> 9;
-      intermediate[index + 2] = (sumOutside - sumInside) * 8;
-      intermediate[index + 3] = (differenceOutside * 2217 - differenceInside * 5352 + 937) >> 9;
+      transformed[index] = (sumOutside + sumInside) * 8;
+      transformed[index + 1] = (differenceInside * 2217 + differenceOutside * 5352 + 1812) >> 9;
+      transformed[index + 2] = (sumOutside - sumInside) * 8;
+      transformed[index + 3] = (differenceOutside * 2217 - differenceInside * 5352 + 937) >> 9;
     }
 
     for (int column = 0; column < 4; ++column) {
-      final int sumOutside = intermediate[column] + intermediate[12 + column];
-      final int sumInside = intermediate[4 + column] + intermediate[8 + column];
-      final int differenceInside = intermediate[4 + column] - intermediate[8 + column];
-      final int differenceOutside = intermediate[column] - intermediate[12 + column];
-      output[column] = (sumOutside + sumInside + 7) >> 4;
-      output[4 + column] = ((differenceInside * 2217 + differenceOutside * 5352 + 12000) >> 16) + (differenceOutside != 0 ? 1 : 0);
-      output[8 + column] = (sumOutside - sumInside + 7) >> 4;
-      output[12 + column] = (differenceOutside * 2217 - differenceInside * 5352 + 51000) >> 16;
+      final int intermediate0 = transformed[column];
+      final int intermediate1 = transformed[4 + column];
+      final int intermediate2 = transformed[8 + column];
+      final int intermediate3 = transformed[12 + column];
+      final int sumOutside = intermediate0 + intermediate3;
+      final int sumInside = intermediate1 + intermediate2;
+      final int differenceInside = intermediate1 - intermediate2;
+      final int differenceOutside = intermediate0 - intermediate3;
+      transformed[column] = (sumOutside + sumInside + 7) >> 4;
+      transformed[4 + column] = ((differenceInside * 2217 + differenceOutside * 5352 + 12000) >> 16) + (differenceOutside != 0 ? 1 : 0);
+      transformed[8 + column] = (sumOutside - sumInside + 7) >> 4;
+      transformed[12 + column] = (differenceOutside * 2217 - differenceInside * 5352 + 51000) >> 16;
     }
-    return output;
+    return transformed;
   }
 
   /// Applies one dequantized inverse transform to [destination].
@@ -56,14 +60,20 @@ abstract final class _Vp8EncoderTransform {
     Uint8List destination, {
     required int destinationOffset,
     required int destinationStride,
+    int coefficientOffset = 0,
+    Int32List? scratch,
   }) {
-    final Int32List intermediate = Int32List(16);
+    final Int32List intermediate = scratch ?? Int32List(16);
     int intermediateIndex = 0;
     for (int column = 0; column < 4; ++column) {
-      final int sum = coefficients[column] + coefficients[8 + column];
-      final int difference = coefficients[column] - coefficients[8 + column];
-      final int rotatedDifference = _multiply(coefficients[4 + column], _inverseCoefficient2) - _multiply(coefficients[12 + column], _inverseCoefficient1);
-      final int rotatedSum = _multiply(coefficients[4 + column], _inverseCoefficient1) + _multiply(coefficients[12 + column], _inverseCoefficient2);
+      final int directCurrent = coefficients[coefficientOffset + column];
+      final int alternatingCurrent2 = coefficients[coefficientOffset + 8 + column];
+      final int alternatingCurrent1 = coefficients[coefficientOffset + 4 + column];
+      final int alternatingCurrent3 = coefficients[coefficientOffset + 12 + column];
+      final int sum = directCurrent + alternatingCurrent2;
+      final int difference = directCurrent - alternatingCurrent2;
+      final int rotatedDifference = _multiply(alternatingCurrent1, _inverseCoefficient2) - _multiply(alternatingCurrent3, _inverseCoefficient1);
+      final int rotatedSum = _multiply(alternatingCurrent1, _inverseCoefficient1) + _multiply(alternatingCurrent3, _inverseCoefficient2);
       intermediate[intermediateIndex++] = sum + rotatedSum;
       intermediate[intermediateIndex++] = difference + rotatedDifference;
       intermediate[intermediateIndex++] = difference - rotatedDifference;

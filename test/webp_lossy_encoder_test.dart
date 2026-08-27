@@ -96,6 +96,28 @@ void main() {
     );
   });
 
+  test('maximum effort refines coefficients instead of matching balanced', () {
+    final Image source = _createLossySource(width: 47, height: 35);
+    final Uint8List balancedBytes = encodeWebP(
+      source,
+      quality: 75,
+      effort: WebPEffort.balanced,
+    );
+    final Uint8List maximumBytes = encodeWebP(
+      source,
+      quality: 75,
+      effort: WebPEffort.maximum,
+    );
+    final Image balanced = decodeWebP(balancedBytes);
+    final Image maximum = decodeWebP(maximumBytes);
+
+    expect(maximumBytes, isNot(balancedBytes));
+    expect(
+      _meanRgbError(source, maximum),
+      lessThan(_meanRgbError(source, balanced)),
+    );
+  });
+
   for (final WebPEffort effort in WebPEffort.values) {
     test('${effort.name} effort produces a decodable image', () {
       final Image source = _createLossySource(width: 17, height: 9);

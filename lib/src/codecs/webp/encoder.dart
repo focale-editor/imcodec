@@ -285,52 +285,48 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
     final List<int> copyLengths = <int>[];
     final List<int> copyDistances = <int>[];
 
-    // Hash table: RGBA key → recent positions (newest first, up to maxChain).
+    // A compact hash chain avoids allocating one object and one 64-entry
+    // buffer for every distinct colour. This matters on photographs, where
+    // transformed pixels are often almost all unique.
     const int maximumChainLength = 64;
     const int maximumMatchLength = 4096;
     // A match this long already codes as cheaply as a longer one would, so the
     // search stops instead of walking the rest of the chain.
     const int sufficientMatchLength = 64;
-    // Each colour keeps its most recent positions in a fixed-size ring, so a
-    // saturated chain costs one write instead of shifting the whole list.
-    final Map<int, _Vp8lPositionRing> hashChain = <int, _Vp8lPositionRing>{};
-
-    void addToHash(int position) {
-      final int key = (green[position] << 24) | (red[position] << 16) | (blue[position] << 8) | alpha[position];
-      (hashChain[key] ??= _Vp8lPositionRing(maximumChainLength)).add(position);
+    // Packing the transformed channels once also turns the four comparisons
+    // in the match-extension loop into one typed-list lookup.
+    final Uint32List colors = Uint32List(pixelCount);
+    for (int position = 0; position < pixelCount; ++position) {
+      colors[position] = (green[position] << 24) | (red[position] << 16) | (blue[position] << 8) | alpha[position];
     }
+    final _Vp8lHashChain hashChain = _Vp8lHashChain(pixelCount);
 
     int pixelIndex = 0;
     while (pixelIndex < pixelCount) {
-      // Build RGBA key for current position.
-      final int key = (green[pixelIndex] << 24) | (red[pixelIndex] << 16) | (blue[pixelIndex] << 8) | alpha[pixelIndex];
+      final int color = colors[pixelIndex];
 
       // Search for best match.
       int bestLength = 0;
       int bestDistance = 0;
-      final _Vp8lPositionRing? candidates = hashChain[key];
-      if (pixelIndex > 0 && candidates != null) {
-        for (int ci = candidates.length - 1; ci >= 0; ci--) {
-          final int candidateIndex = candidates.at(ci);
-          final int distance = pixelIndex - candidateIndex;
+      int candidateIndex = hashChain.first(color);
+      int matchingCandidateCount = 0;
+      while (candidateIndex >= 0 && matchingCandidateCount < maximumChainLength) {
+        final int distance = pixelIndex - candidateIndex;
 
-          // The VP8L specification limits the maximum distance to 1048576.
-          // The first 120 values are reserved, so the actual
-          // maximum distance is 1048576 - 120 offset = 1048456
-          // https://developers.google.com/speed/webp/docs/webp_lossless_bitstream_specification#522_lz77_backward_reference
-          if (distance > 1048456) {
-            break;
-          }
+        // The VP8L specification limits the maximum distance to 1048576.
+        // The first 120 values are reserved, so the actual
+        // maximum distance is 1048576 - 120 offset = 1048456
+        // https://developers.google.com/speed/webp/docs/webp_lossless_bitstream_specification#522_lz77_backward_reference
+        if (distance > 1048456) {
+          break;
+        }
 
+        if (colors[candidateIndex] == color) {
+          ++matchingCandidateCount;
           // Extend the match forward.
           int matchLength = 1;
-          while (matchLength < maximumMatchLength &&
-              pixelIndex + matchLength < pixelCount &&
-              green[pixelIndex + matchLength] == green[candidateIndex + matchLength] &&
-              red[pixelIndex + matchLength] == red[candidateIndex + matchLength] &&
-              blue[pixelIndex + matchLength] == blue[candidateIndex + matchLength] &&
-              alpha[pixelIndex + matchLength] == alpha[candidateIndex + matchLength]) {
-            matchLength++;
+          while (matchLength < maximumMatchLength && pixelIndex + matchLength < pixelCount && colors[pixelIndex + matchLength] == colors[candidateIndex + matchLength]) {
+            ++matchLength;
           }
           if (matchLength > bestLength || (matchLength == bestLength && distance < bestDistance)) {
             bestLength = matchLength;
@@ -340,24 +336,25 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
             break;
           }
         }
+        candidateIndex = hashChain.previous(candidateIndex);
       }
 
       if (bestLength >= 3) {
         literalTokens.add(false);
         copyLengths.add(bestLength);
         copyDistances.add(bestDistance);
-        // Add all covered positions to hash (enables future matches into this
-        // region). Only add if we have space; skip the last position to avoid
-        // self-referential additions.
+        // Add all covered positions to the history so later matches may refer
+        // into this region.
         for (int k = 0; k < bestLength; k++) {
-          addToHash(pixelIndex + k);
+          final int position = pixelIndex + k;
+          hashChain.add(position, colors[position]);
         }
         pixelIndex += bestLength;
       } else {
         literalTokens.add(true);
         literalPixelIndices.add(pixelIndex);
-        addToHash(pixelIndex);
-        pixelIndex++;
+        hashChain.add(pixelIndex, color);
+        ++pixelIndex;
       }
     }
 
@@ -556,16 +553,20 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
     final Uint8List green = Uint8List(pixelCount);
     final Uint8List blue = Uint8List(pixelCount);
     final Uint8List alpha = Uint8List(pixelCount);
+    bool hasTransparency = false;
+    bool predictsAlpha = false;
+    final int firstTargetPixel = haloRowCount * job.width;
     for (int pixelIndex = 0; pixelIndex < pixelCount; pixelIndex++) {
       final int offset = pixelIndex * 4;
       red[pixelIndex] = job.pixels[offset];
       green[pixelIndex] = job.pixels[offset + 1];
       blue[pixelIndex] = job.pixels[offset + 2];
-      alpha[pixelIndex] = job.pixels[offset + 3];
-    }
-    bool hasTransparency = false;
-    for (int pixelIndex = haloRowCount * job.width; pixelIndex < pixelCount && !hasTransparency; pixelIndex++) {
-      hasTransparency = alpha[pixelIndex] != 255;
+      final int alphaValue = job.pixels[offset + 3];
+      alpha[pixelIndex] = alphaValue;
+      if (alphaValue != 255) {
+        predictsAlpha = true;
+        hasTransparency = hasTransparency || pixelIndex >= firstTargetPixel;
+      }
     }
 
     _applySubtractGreenTransform(
@@ -579,6 +580,8 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
       red: red,
       green: green,
       blue: blue,
+      alpha: alpha,
+      includeAlpha: predictsAlpha,
       width: job.width,
       firstLocalRow: haloRowCount,
       firstImageRow: job.firstRow,
@@ -599,7 +602,6 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
       blockSize: _webPPredictorBlockSize,
       modes: modes,
     );
-    final int firstTargetPixel = haloRowCount * job.width;
     return _WebPTransformBand(
       red: firstTargetPixel == 0 ? red : Uint8List.fromList(Uint8List.sublistView(red, firstTargetPixel)),
       green: firstTargetPixel == 0 ? green : Uint8List.fromList(Uint8List.sublistView(green, firstTargetPixel)),
@@ -624,11 +626,14 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
   }
 
   /// Selects the best predictor mode for each predictor block.
-  /// Tries modes 1, 2, 7, 11 and picks the one minimising |residuals|.
+  ///
+  /// Modes 1, 2, 7, and 11 are compared using all four transformed channels.
   Uint8List _selectPredictorModes({
     required Uint8List red,
     required Uint8List green,
     required Uint8List blue,
+    required Uint8List alpha,
+    required bool includeAlpha,
     required int width,
     required int firstLocalRow,
     required int firstImageRow,
@@ -657,6 +662,7 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
               int predictedRed;
               int predictedGreen;
               int predictedBlue;
+              int predictedAlpha = 255;
               if (imageY == 0 && x == 0) {
                 predictedRed = 0;
                 predictedGreen = 0;
@@ -666,11 +672,17 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
                 predictedRed = red[leftIndex];
                 predictedGreen = green[leftIndex];
                 predictedBlue = blue[leftIndex];
+                if (includeAlpha) {
+                  predictedAlpha = alpha[leftIndex];
+                }
               } else if (x == 0) {
                 final int topIndex = pixelIndex - width;
                 predictedRed = red[topIndex];
                 predictedGreen = green[topIndex];
                 predictedBlue = blue[topIndex];
+                if (includeAlpha) {
+                  predictedAlpha = alpha[topIndex];
+                }
               } else {
                 final int leftIndex = pixelIndex - 1;
                 final int topIndex = pixelIndex - width;
@@ -679,26 +691,45 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
                     predictedRed = red[leftIndex];
                     predictedGreen = green[leftIndex];
                     predictedBlue = blue[leftIndex];
+                    if (includeAlpha) {
+                      predictedAlpha = alpha[leftIndex];
+                    }
                   case 2:
                     predictedRed = red[topIndex];
                     predictedGreen = green[topIndex];
                     predictedBlue = blue[topIndex];
+                    if (includeAlpha) {
+                      predictedAlpha = alpha[topIndex];
+                    }
                   case 7:
                     predictedRed = (red[leftIndex] + red[topIndex]) >> 1;
                     predictedGreen = (green[leftIndex] + green[topIndex]) >> 1;
                     predictedBlue = (blue[leftIndex] + blue[topIndex]) >> 1;
+                    if (includeAlpha) {
+                      predictedAlpha = (alpha[leftIndex] + alpha[topIndex]) >> 1;
+                    }
                   default: // 11: select
                     final int topLeftIndex = topIndex - 1;
-                    final int leftScore = (red[leftIndex] - red[topLeftIndex]).abs() + (green[leftIndex] - green[topLeftIndex]).abs() + (blue[leftIndex] - blue[topLeftIndex]).abs();
-                    final int topScore = (red[topIndex] - red[topLeftIndex]).abs() + (green[topIndex] - green[topLeftIndex]).abs() + (blue[topIndex] - blue[topLeftIndex]).abs();
+                    int leftScore = (red[leftIndex] - red[topLeftIndex]).abs() + (green[leftIndex] - green[topLeftIndex]).abs() + (blue[leftIndex] - blue[topLeftIndex]).abs();
+                    int topScore = (red[topIndex] - red[topLeftIndex]).abs() + (green[topIndex] - green[topLeftIndex]).abs() + (blue[topIndex] - blue[topLeftIndex]).abs();
+                    if (includeAlpha) {
+                      leftScore += (alpha[leftIndex] - alpha[topLeftIndex]).abs();
+                      topScore += (alpha[topIndex] - alpha[topLeftIndex]).abs();
+                    }
                     if (leftScore <= topScore) {
                       predictedRed = red[topIndex];
                       predictedGreen = green[topIndex];
                       predictedBlue = blue[topIndex];
+                      if (includeAlpha) {
+                        predictedAlpha = alpha[topIndex];
+                      }
                     } else {
                       predictedRed = red[leftIndex];
                       predictedGreen = green[leftIndex];
                       predictedBlue = blue[leftIndex];
+                      if (includeAlpha) {
+                        predictedAlpha = alpha[leftIndex];
+                      }
                     }
                 }
               }
@@ -709,6 +740,10 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
               cost += redDifference < 128 ? redDifference : 256 - redDifference;
               cost += greenDifference < 128 ? greenDifference : 256 - greenDifference;
               cost += blueDifference < 128 ? blueDifference : 256 - blueDifference;
+              if (includeAlpha) {
+                final int alphaDifference = (alpha[pixelIndex] - predictedAlpha) & 0xFF;
+                cost += alphaDifference < 128 ? alphaDifference : 256 - alphaDifference;
+              }
             }
           }
           if (cost < bestCost) {
@@ -1273,7 +1308,7 @@ final class _CodeLengthSymbol {
 /// Bit writer that packs bits LSB-first into bytes.
 final class _Vp8lBitWriter {
   /// Completed output bytes.
-  final List<int> _bytes = <int>[];
+  final OutputBuffer _bytes = OutputBuffer(size: 4096);
 
   /// Byte currently being assembled.
   int _currentByte = 0;
@@ -1297,7 +1332,7 @@ final class _Vp8lBitWriter {
       currentNumBits -= bitsToWrite;
       _usedBits += bitsToWrite;
       if (_usedBits == 8) {
-        _bytes.add(_currentByte);
+        _bytes.writeByte(_currentByte);
         _currentByte = 0;
         _usedBits = 0;
       }
@@ -1307,42 +1342,70 @@ final class _Vp8lBitWriter {
   /// Pads and emits the partially filled byte, when present.
   void flush() {
     if (_usedBits > 0) {
-      _bytes.add(_currentByte);
+      _bytes.writeByte(_currentByte);
       _currentByte = 0;
       _usedBits = 0;
     }
   }
 
-  /// Returns a copy of all emitted bytes.
-  Uint8List getBytes() => Uint8List.fromList(_bytes);
+  /// Returns a view of all emitted bytes.
+  Uint8List getBytes() => _bytes.getBytes();
 }
 
-/// Keeps the most recent positions of one colour in a fixed-size ring.
-final class _Vp8lPositionRing {
-  /// Stored positions, oldest first once the ring has wrapped.
-  final Int32List _positions;
+/// Links previous VP8L pixels through a bounded-memory colour hash table.
+final class _Vp8lHashChain {
+  /// Maximum number of buckets, keeping the table below four mebibytes.
+  static const int _maximumBucketCount = 1 << 20;
 
-  /// Number of stored positions, capped at the ring size.
-  int length = 0;
+  /// Multiplicative hash used by the WebP colour cache.
+  static const int _hashMultiplier = 0x1e35a7bd;
 
-  /// Index of the next slot to overwrite.
-  int _next = 0;
+  /// Most recent position in each colour bucket, or negative when empty.
+  final Int32List _heads;
 
-  /// Creates a ring holding at most [capacity] positions.
-  _Vp8lPositionRing(int capacity) : _positions = Int32List(capacity);
+  /// Previous position in the same hash bucket for every added pixel.
+  final Int32List _previous;
 
-  /// Records [position] as the most recent entry.
-  void add(int position) {
-    _positions[_next] = position;
-    _next = _next + 1 == _positions.length ? 0 : _next + 1;
-    if (length < _positions.length) {
-      length++;
+  /// Number of low product bits discarded to obtain a bucket index.
+  final int _hashShift;
+
+  /// Creates a chain sized for [pixelCount] transformed pixels.
+  factory _Vp8lHashChain(int pixelCount) {
+    final int targetBucketCount = math.min(
+      _maximumBucketCount,
+      math.max(256, (pixelCount + 3) >> 2),
+    );
+    int bucketCount = 256;
+    while (bucketCount < targetBucketCount) {
+      bucketCount <<= 1;
     }
+    return _Vp8lHashChain._(
+      pixelCount: pixelCount,
+      bucketCount: bucketCount,
+    );
   }
 
-  /// Returns the position at [index], oldest first.
-  int at(int index) {
-    final int slot = length < _positions.length ? index : _next + index;
-    return _positions[slot >= _positions.length ? slot - _positions.length : slot];
+  /// Allocates the typed tables after their power-of-two size is known.
+  _Vp8lHashChain._({
+    required int pixelCount,
+    required int bucketCount,
+  }) : _heads = Int32List(bucketCount)..fillRange(0, bucketCount, -1),
+       _previous = Int32List(pixelCount),
+       _hashShift = 32 - (bucketCount.bitLength - 1);
+
+  /// Returns the newest position whose bucket contains [color].
+  int first(int color) => _heads[_bucket(color)];
+
+  /// Returns the position preceding [position] in its hash bucket.
+  int previous(int position) => _previous[position];
+
+  /// Adds [position] at the head of the bucket selected by [color].
+  void add(int position, int color) {
+    final int bucket = _bucket(color);
+    _previous[position] = _heads[bucket];
+    _heads[bucket] = position;
   }
+
+  /// Maps a packed transformed colour to a power-of-two bucket.
+  int _bucket(int color) => ((color * _hashMultiplier) & 0xffffffff) >> _hashShift;
 }

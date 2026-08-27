@@ -118,49 +118,56 @@ final class _Vp8LossyEncoder {
     final Uint8List blueDifference = Uint8List(chromaStride * chromaHeight);
     final Uint8List redDifference = Uint8List(chromaStride * chromaHeight);
     final Uint8List source = image.bytes;
-    Uint8List? alpha;
-
-    for (int y = 0; y < lumaHeight; ++y) {
-      final int sourceY = math.min(y, _height - 1);
-      for (int x = 0; x < lumaStride; ++x) {
-        final int sourceX = math.min(x, _width - 1);
-        final int sourceOffset = (sourceY * _width + sourceX) * 4;
-        luma[y * lumaStride + x] = _rgbToLuma(
-          source[sourceOffset],
-          source[sourceOffset + 1],
-          source[sourceOffset + 2],
-        );
-      }
-    }
 
     for (int y = 0; y < chromaHeight; ++y) {
+      final int sourceY0 = math.min(2 * y, _height - 1);
+      final int sourceY1 = math.min(sourceY0 + 1, _height - 1);
+      final int lumaRow0 = 2 * y * lumaStride;
+      final int lumaRow1 = lumaRow0 + lumaStride;
       for (int x = 0; x < chromaStride; ++x) {
-        int blueSum = 0;
-        int redSum = 0;
-        for (int vertical = 0; vertical < 2; ++vertical) {
-          final int sourceY = math.min(2 * y + vertical, _height - 1);
-          for (int horizontal = 0; horizontal < 2; ++horizontal) {
-            final int sourceX = math.min(2 * x + horizontal, _width - 1);
-            final int sourceOffset = (sourceY * _width + sourceX) * 4;
-            final int red = source[sourceOffset];
-            final int green = source[sourceOffset + 1];
-            final int blue = source[sourceOffset + 2];
-            blueSum += _rgbToBlueDifference(red, green, blue);
-            redSum += _rgbToRedDifference(red, green, blue);
-          }
-        }
+        final int sourceX0 = math.min(2 * x, _width - 1);
+        final int sourceX1 = math.min(sourceX0 + 1, _width - 1);
+        final int sourceOffset00 = (sourceY0 * _width + sourceX0) * 4;
+        final int sourceOffset01 = (sourceY0 * _width + sourceX1) * 4;
+        final int sourceOffset10 = (sourceY1 * _width + sourceX0) * 4;
+        final int sourceOffset11 = (sourceY1 * _width + sourceX1) * 4;
+        final int red00 = source[sourceOffset00];
+        final int green00 = source[sourceOffset00 + 1];
+        final int blue00 = source[sourceOffset00 + 2];
+        final int red01 = source[sourceOffset01];
+        final int green01 = source[sourceOffset01 + 1];
+        final int blue01 = source[sourceOffset01 + 2];
+        final int red10 = source[sourceOffset10];
+        final int green10 = source[sourceOffset10 + 1];
+        final int blue10 = source[sourceOffset10 + 2];
+        final int red11 = source[sourceOffset11];
+        final int green11 = source[sourceOffset11 + 1];
+        final int blue11 = source[sourceOffset11 + 2];
+        final int lumaX = 2 * x;
+        luma[lumaRow0 + lumaX] = _rgbToLuma(red00, green00, blue00);
+        luma[lumaRow0 + lumaX + 1] = _rgbToLuma(red01, green01, blue01);
+        luma[lumaRow1 + lumaX] = _rgbToLuma(red10, green10, blue10);
+        luma[lumaRow1 + lumaX + 1] = _rgbToLuma(red11, green11, blue11);
+        final int blueSum =
+            _rgbToBlueDifference(red00, green00, blue00) + _rgbToBlueDifference(red01, green01, blue01) + _rgbToBlueDifference(red10, green10, blue10) + _rgbToBlueDifference(red11, green11, blue11);
+        final int redSum =
+            _rgbToRedDifference(red00, green00, blue00) + _rgbToRedDifference(red01, green01, blue01) + _rgbToRedDifference(red10, green10, blue10) + _rgbToRedDifference(red11, green11, blue11);
         final int destination = y * chromaStride + x;
         blueDifference[destination] = (blueSum + 2) >> 2;
         redDifference[destination] = (redSum + 2) >> 2;
       }
     }
 
-    for (int pixel = 0; pixel < _width * _height; ++pixel) {
-      final int value = source[pixel * 4 + 3];
-      if (value != 255) {
-        alpha ??= Uint8List(_width * _height)..fillRange(0, pixel, 255);
+    final int sourcePixelCount = _width * _height;
+    Uint8List? alpha;
+    for (int pixel = 0; pixel < sourcePixelCount; ++pixel) {
+      if (source[pixel * 4 + 3] != 255) {
+        alpha = Uint8List(sourcePixelCount)..fillRange(0, pixel, 255);
+        for (int alphaPixel = pixel; alphaPixel < sourcePixelCount; ++alphaPixel) {
+          alpha[alphaPixel] = source[alphaPixel * 4 + 3];
+        }
+        break;
       }
-      alpha?[pixel] = value;
     }
 
     return _Vp8LossyPlanes(
@@ -299,6 +306,7 @@ final class _Vp8LossyEncoder {
     if (!effort.weighsRateAgainstDistortion) {
       int bestMode = 0;
       int bestPredictionError = 1 << 62;
+      final Uint8List predictionScratch = Uint8List(16 * 16);
       for (int mode = 0; mode < 4; ++mode) {
         final Uint8List prediction = _predictBlock(
           reconstructed: _planes.reconstructedLuma,
@@ -307,6 +315,7 @@ final class _Vp8LossyEncoder {
           y: macroblockY * 16,
           size: 16,
           mode: mode,
+          output: predictionScratch,
         );
         final int error = _blockError(
           source: _planes.luma,
@@ -373,8 +382,11 @@ final class _Vp8LossyEncoder {
     );
     final Uint8List reconstruction = Uint8List.fromList(prediction);
     final Int16List levels = Int16List(_vp8MacroblockCoefficientCount);
-    final List<Int32List> transformed = <Int32List>[];
     final Int32List directCurrent = Int32List(16);
+    final Int32List transformedScratch = Int32List(16);
+    final Int32List dequantizedBlocks = Int32List(16 * 16);
+    final Int32List secondaryDequantized = Int32List(16);
+    final Int32List inverseScratch = Int32List(16);
     final int sourceOffset = macroblockY * 16 * _planes.lumaStride + macroblockX * 16;
     for (int blockY = 0; blockY < 4; ++blockY) {
       for (int blockX = 0; blockX < 4; ++blockX) {
@@ -386,9 +398,18 @@ final class _Vp8LossyEncoder {
           prediction: prediction,
           predictionOffset: blockY * 4 * 16 + blockX * 4,
           predictionStride: 16,
+          output: transformedScratch,
         );
         directCurrent[block] = coefficients[0];
-        transformed.add(coefficients);
+        _quantize(
+          transformed: coefficients,
+          matrix: _quantizers.luma,
+          levels: levels,
+          levelOffset: block * 16,
+          firstCoefficient: 1,
+          dequantized: dequantizedBlocks,
+          dequantizedOffset: block * 16,
+        );
       }
     }
 
@@ -401,24 +422,21 @@ final class _Vp8LossyEncoder {
       levels: levels,
       levelOffset: _vp8SecondaryLumaCoefficientOffset,
       firstCoefficient: 0,
+      dequantized: secondaryDequantized,
     );
     final Int32List reconstructedDirectCurrent = _Vp8EncoderTransform.inverseWalshHadamard(dequantizedSecondary);
     for (int blockY = 0; blockY < 4; ++blockY) {
       for (int blockX = 0; blockX < 4; ++blockX) {
         final int block = blockY * 4 + blockX;
-        transformed[block][0] = 0;
-        final Int32List dequantized = _quantize(
-          transformed: transformed[block],
-          matrix: _quantizers.luma,
-          levels: levels,
-          levelOffset: block * 16,
-          firstCoefficient: 1,
-        )..[0] = reconstructedDirectCurrent[block];
+        final int coefficientOffset = block * 16;
+        dequantizedBlocks[coefficientOffset] = reconstructedDirectCurrent[block];
         _Vp8EncoderTransform.inverse(
-          dequantized,
+          dequantizedBlocks,
           reconstruction,
           destinationOffset: blockY * 4 * 16 + blockX * 4,
           destinationStride: 16,
+          coefficientOffset: coefficientOffset,
+          scratch: inverseScratch,
         );
       }
     }
@@ -475,22 +493,38 @@ final class _Vp8LossyEncoder {
       ),
     );
     final Uint8List candidateLeftModes = Uint8List.fromList(leftModes);
+    final Int32List transformedScratch = Int32List(16);
+    final Int32List dequantizedScratch = Int32List(16);
+    final Int32List inverseScratch = Int32List(16);
+    final Int16List candidateLevels = Int16List(16);
+    final Uint8List prediction = Uint8List(16);
+    final Uint8List top = Uint8List(4);
+    final Uint8List left = Uint8List(4);
     int score = _quantizers.lambda * _Vp8EncoderTables.zeroCost(145);
     for (int blockY = 0; blockY < 4; ++blockY) {
       for (int blockX = 0; blockX < 4; ++blockX) {
         final int block = blockY * 4 + blockX;
-        Uint8List bestReconstruction = Uint8List(16);
-        Int16List bestLevels = Int16List(16);
+        final Uint8List bestReconstruction = Uint8List(16);
+        final Int16List bestLevels = Int16List(16);
         int bestMode = 0;
         int bestScore = 1 << 62;
+        final (int topLeft, int topRight) = _readLuma4Boundary(
+          macroblockX: macroblockX,
+          macroblockY: macroblockY,
+          blockX: blockX,
+          blockY: blockY,
+          macroblockReconstruction: reconstruction,
+          top: top,
+          left: left,
+        );
         for (int mode = 0; mode < 4; ++mode) {
-          final Uint8List prediction = _predictLuma4(
-            macroblockX: macroblockX,
-            macroblockY: macroblockY,
-            blockX: blockX,
-            blockY: blockY,
-            macroblockReconstruction: reconstruction,
+          _predictLuma4(
+            top: top,
+            left: left,
+            topLeft: topLeft,
+            topRight: topRight,
             mode: mode,
+            prediction: prediction,
           );
           final Int32List transformed = _Vp8EncoderTransform.forward(
             _planes.luma,
@@ -499,29 +533,28 @@ final class _Vp8LossyEncoder {
             prediction: prediction,
             predictionOffset: 0,
             predictionStride: 4,
+            output: transformedScratch,
           );
-          final Int16List candidateLevels = Int16List(16);
           final Int32List dequantized = _quantize(
             transformed: transformed,
             matrix: _quantizers.luma,
             levels: candidateLevels,
             levelOffset: 0,
             firstCoefficient: 0,
-          );
-          final Uint8List candidateReconstruction = Uint8List.fromList(
-            prediction,
+            dequantized: dequantizedScratch,
           );
           _Vp8EncoderTransform.inverse(
             dequantized,
-            candidateReconstruction,
+            prediction,
             destinationOffset: 0,
             destinationStride: 4,
+            scratch: inverseScratch,
           );
           final int distortion = _blockError(
             source: _planes.luma,
             sourceStride: _planes.lumaStride,
             sourceOffset: (macroblockY * 16 + blockY * 4) * _planes.lumaStride + macroblockX * 16 + blockX * 4,
-            candidate: candidateReconstruction,
+            candidate: prediction,
             candidateStride: 4,
             size: 4,
           );
@@ -541,8 +574,8 @@ final class _Vp8LossyEncoder {
           if (candidateScore < bestScore) {
             bestScore = candidateScore;
             bestMode = mode;
-            bestLevels = candidateLevels;
-            bestReconstruction = candidateReconstruction;
+            bestLevels.setRange(0, 16, candidateLevels);
+            bestReconstruction.setRange(0, 16, prediction);
           }
         }
         modes[block] = bestMode;
@@ -582,6 +615,8 @@ final class _Vp8LossyEncoder {
     if (!effort.weighsRateAgainstDistortion) {
       int bestMode = 0;
       int bestError = 1 << 62;
+      final Uint8List bluePredictionScratch = Uint8List(8 * 8);
+      final Uint8List redPredictionScratch = Uint8List(8 * 8);
       for (int mode = 0; mode < 4; ++mode) {
         final Uint8List bluePrediction = _predictBlock(
           reconstructed: _planes.reconstructedBlueDifference,
@@ -590,6 +625,7 @@ final class _Vp8LossyEncoder {
           y: macroblockY * 8,
           size: 8,
           mode: mode,
+          output: bluePredictionScratch,
         );
         final Uint8List redPrediction = _predictBlock(
           reconstructed: _planes.reconstructedRedDifference,
@@ -598,6 +634,7 @@ final class _Vp8LossyEncoder {
           y: macroblockY * 8,
           size: 8,
           mode: mode,
+          output: redPredictionScratch,
         );
         final int sourceOffset = macroblockY * 8 * _planes.chromaStride + macroblockX * 8;
         final int error =
@@ -672,6 +709,9 @@ final class _Vp8LossyEncoder {
     final Uint8List blueReconstruction = Uint8List.fromList(bluePrediction);
     final Uint8List redReconstruction = Uint8List.fromList(redPrediction);
     final Int16List levels = Int16List(8 * 16);
+    final Int32List transformedScratch = Int32List(16);
+    final Int32List dequantizedScratch = Int32List(16);
+    final Int32List inverseScratch = Int32List(16);
     final int sourceOffset = macroblockY * 8 * _planes.chromaStride + macroblockX * 8;
     for (int plane = 0; plane < 2; ++plane) {
       final Uint8List source = plane == 0 ? _planes.blueDifference : _planes.redDifference;
@@ -687,6 +727,7 @@ final class _Vp8LossyEncoder {
             prediction: prediction,
             predictionOffset: blockY * 4 * 8 + blockX * 4,
             predictionStride: 8,
+            output: transformedScratch,
           );
           final Int32List dequantized = _quantize(
             transformed: transformed,
@@ -694,12 +735,14 @@ final class _Vp8LossyEncoder {
             levels: levels,
             levelOffset: block * 16,
             firstCoefficient: 0,
+            dequantized: dequantizedScratch,
           );
           _Vp8EncoderTransform.inverse(
             dequantized,
             reconstruction,
             destinationOffset: blockY * 4 * 8 + blockX * 4,
             destinationStride: 8,
+            scratch: inverseScratch,
           );
         }
       }
@@ -747,31 +790,43 @@ final class _Vp8LossyEncoder {
     required Int16List levels,
     required int levelOffset,
     required int firstCoefficient,
+    Int32List? dequantized,
+    int dequantizedOffset = 0,
   }) {
-    final Int32List dequantized = Int32List(16);
+    final Int32List output = dequantized ?? Int32List(16);
     for (int coefficient = firstCoefficient; coefficient < 16; ++coefficient) {
       final int natural = _Vp8EncoderTables.zigzag[coefficient];
       final int source = transformed[natural];
       final bool negative = source < 0;
-      final int magnitude = source.abs() + matrix.sharpening[natural];
-      int level = (magnitude * matrix.reciprocals[natural] + matrix.biases[natural]) >> _vp8QuantizerFractionBits;
+      final int sourceMagnitude = source.abs();
+      final int sharpenedMagnitude = sourceMagnitude + matrix.sharpening[natural];
+      int level = (sharpenedMagnitude * matrix.reciprocals[natural] + matrix.biases[natural]) >> _vp8QuantizerFractionBits;
       level = math.min(level, _vp8MaximumLevel);
-      if (effort.refinesCoefficients && level > 0) {
+      if (effort.refinesCoefficients) {
         final int step = matrix.steps[natural];
-        final int lowerLevel = level - 1;
-        final int error = magnitude - level * step;
-        final int lowerError = magnitude - lowerLevel * step;
-        final int rate = _Vp8EncoderTables.fixedLevelCosts[level];
-        final int lowerRate = lowerLevel == 0 ? 0 : _Vp8EncoderTables.fixedLevelCosts[lowerLevel];
-        if (lowerError * lowerError * _vp8BitCostUnit + _quantizers.lambda * lowerRate < error * error * _vp8BitCostUnit + _quantizers.lambda * rate) {
-          level = lowerLevel;
+        int bestLevel = level;
+        int error = sourceMagnitude - level * step;
+        int bestScore = error * error * _vp8BitCostUnit + _quantizers.lambda * _Vp8EncoderTables.fixedLevelCosts[level];
+        final int firstCandidate = math.max(0, level - 1);
+        final int lastCandidate = math.min(_vp8MaximumLevel, level + 1);
+        for (int candidate = firstCandidate; candidate <= lastCandidate; ++candidate) {
+          if (candidate == level) {
+            continue;
+          }
+          error = sourceMagnitude - candidate * step;
+          final int candidateScore = error * error * _vp8BitCostUnit + _quantizers.lambda * _Vp8EncoderTables.fixedLevelCosts[candidate];
+          if (candidateScore < bestScore) {
+            bestLevel = candidate;
+            bestScore = candidateScore;
+          }
         }
+        level = bestLevel;
       }
       final int signedLevel = negative ? -level : level;
       levels[levelOffset + coefficient] = signedLevel;
-      dequantized[natural] = signedLevel * matrix.steps[natural];
+      output[dequantizedOffset + natural] = signedLevel * matrix.steps[natural];
     }
-    return dequantized;
+    return output;
   }
 
   /// Builds a macroblock-sized DC, true-motion, vertical, or horizontal prediction.
@@ -782,8 +837,9 @@ final class _Vp8LossyEncoder {
     required int y,
     required int size,
     required int mode,
+    Uint8List? output,
   }) {
-    final Uint8List prediction = Uint8List(size * size);
+    final Uint8List prediction = output ?? Uint8List(size * size);
     final bool hasTop = y > 0;
     final bool hasLeft = x > 0;
     switch (mode) {
@@ -869,17 +925,16 @@ final class _Vp8LossyEncoder {
     return prediction;
   }
 
-  /// Builds a basic four-by-four prediction with VP8's boundary samples.
-  Uint8List _predictLuma4({
+  /// Reads the boundary samples visible to one four-by-four luma block.
+  (int, int) _readLuma4Boundary({
     required int macroblockX,
     required int macroblockY,
     required int blockX,
     required int blockY,
     required Uint8List macroblockReconstruction,
-    required int mode,
+    required Uint8List top,
+    required Uint8List left,
   }) {
-    final Uint8List top = Uint8List(4);
-    final Uint8List left = Uint8List(4);
     final int globalX = macroblockX * 16 + blockX * 4;
     final int globalY = macroblockY * 16 + blockY * 4;
     for (int index = 0; index < 4; ++index) {
@@ -908,7 +963,18 @@ final class _Vp8LossyEncoder {
       blockY: blockY,
       macroblockReconstruction: macroblockReconstruction,
     );
-    final Uint8List prediction = Uint8List(16);
+    return (topLeft, topRight);
+  }
+
+  /// Builds a basic four-by-four prediction from prepared boundary samples.
+  static void _predictLuma4({
+    required Uint8List top,
+    required Uint8List left,
+    required int topLeft,
+    required int topRight,
+    required int mode,
+    required Uint8List prediction,
+  }) {
     switch (mode) {
       case 0:
         int sum = 4;
@@ -925,33 +991,41 @@ final class _Vp8LossyEncoder {
           }
         }
       case 2:
-        final Uint8List filteredTop = Uint8List.fromList(<int>[
-          _averageThree(topLeft, top[0], top[1]),
-          _averageThree(top[0], top[1], top[2]),
-          _averageThree(top[1], top[2], top[3]),
-          _averageThree(top[2], top[3], topRight),
-        ]);
+        final int filtered0 = _averageThree(topLeft, top[0], top[1]);
+        final int filtered1 = _averageThree(top[0], top[1], top[2]);
+        final int filtered2 = _averageThree(top[1], top[2], top[3]);
+        final int filtered3 = _averageThree(top[2], top[3], topRight);
         for (int row = 0; row < 4; ++row) {
-          prediction.setRange(row * 4, row * 4 + 4, filteredTop);
+          final int rowOffset = row * 4;
+          prediction[rowOffset] = filtered0;
+          prediction[rowOffset + 1] = filtered1;
+          prediction[rowOffset + 2] = filtered2;
+          prediction[rowOffset + 3] = filtered3;
         }
       case 3:
-        final Uint8List filteredLeft = Uint8List.fromList(<int>[
+        prediction.fillRange(
+          0,
+          4,
           _averageThree(topLeft, left[0], left[1]),
+        );
+        prediction.fillRange(
+          4,
+          8,
           _averageThree(left[0], left[1], left[2]),
+        );
+        prediction.fillRange(
+          8,
+          12,
           _averageThree(left[1], left[2], left[3]),
+        );
+        prediction.fillRange(
+          12,
+          16,
           _averageThree(left[2], left[3], left[3]),
-        ]);
-        for (int row = 0; row < 4; ++row) {
-          prediction.fillRange(
-            row * 4,
-            row * 4 + 4,
-            filteredLeft[row],
-          );
-        }
+        );
       default:
         throw StateError('Invalid VP8 four-by-four mode: $mode');
     }
-    return prediction;
   }
 
   /// Returns the first top-right sample visible to one luma block.
@@ -1110,14 +1184,122 @@ final class _Vp8LossyEncoder {
     required int offset,
     required int firstCoefficient,
     required int type,
-  }) => _walkCoefficients(
-    coefficients: coefficients,
-    coefficientOffset: offset,
-    firstCoefficient: firstCoefficient,
-    type: type,
-    context: 0,
-    probabilities: _Vp8EncoderTables.defaultProbabilities,
-  ).$2;
+  }) {
+    final Uint8List probabilities = _Vp8EncoderTables.defaultProbabilities;
+    int last = 15;
+    while (last >= firstCoefficient && coefficients[offset + last] == 0) {
+      --last;
+    }
+    int probabilityIndex = _vp8ProbabilityIndex(
+      type,
+      _Vp8EncoderTables.bands[firstCoefficient],
+      0,
+      0,
+    );
+    int cost = _Vp8EncoderTables.bitCost(
+      last >= firstCoefficient ? 1 : 0,
+      probabilities[probabilityIndex],
+    );
+    if (last < firstCoefficient) {
+      return cost;
+    }
+
+    int coefficient = firstCoefficient;
+    while (coefficient < 16) {
+      final int magnitude = coefficients[offset + coefficient].abs();
+      cost += _Vp8EncoderTables.bitCost(
+        magnitude != 0 ? 1 : 0,
+        probabilities[probabilityIndex + 1],
+      );
+      ++coefficient;
+      if (magnitude == 0) {
+        probabilityIndex = _vp8ProbabilityIndex(
+          type,
+          _Vp8EncoderTables.bands[coefficient],
+          0,
+          0,
+        );
+        continue;
+      }
+
+      cost += _Vp8EncoderTables.bitCost(
+        magnitude > 1 ? 1 : 0,
+        probabilities[probabilityIndex + 2],
+      );
+      if (magnitude > 1) {
+        if (magnitude <= 4) {
+          cost += _Vp8EncoderTables.zeroCost(
+            probabilities[probabilityIndex + 3],
+          );
+          cost += _Vp8EncoderTables.bitCost(
+            magnitude != 2 ? 1 : 0,
+            probabilities[probabilityIndex + 4],
+          );
+          if (magnitude != 2) {
+            cost += _Vp8EncoderTables.bitCost(
+              magnitude == 4 ? 1 : 0,
+              probabilities[probabilityIndex + 5],
+            );
+          }
+        } else if (magnitude <= 10) {
+          cost += _Vp8EncoderTables.oneCost(
+            probabilities[probabilityIndex + 3],
+          );
+          cost += _Vp8EncoderTables.zeroCost(
+            probabilities[probabilityIndex + 6],
+          );
+          cost += _Vp8EncoderTables.bitCost(
+            magnitude > 6 ? 1 : 0,
+            probabilities[probabilityIndex + 7],
+          );
+        } else {
+          cost += _Vp8EncoderTables.oneCost(
+            probabilities[probabilityIndex + 3],
+          );
+          cost += _Vp8EncoderTables.oneCost(
+            probabilities[probabilityIndex + 6],
+          );
+          final (List<int> category, _, _) = _Vp8EncoderTables.categoryOf(
+            magnitude,
+          );
+          final bool highCategory = category.length >= 5;
+          cost += _Vp8EncoderTables.bitCost(
+            highCategory ? 1 : 0,
+            probabilities[probabilityIndex + 8],
+          );
+          cost += _Vp8EncoderTables.bitCost(
+            highCategory
+                ? category.length == 11
+                      ? 1
+                      : 0
+                : category.length == 4
+                ? 1
+                : 0,
+            probabilities[probabilityIndex + (highCategory ? 10 : 9)],
+          );
+        }
+      }
+      cost += _Vp8EncoderTables.fixedLevelCosts[magnitude];
+      probabilityIndex = _vp8ProbabilityIndex(
+        type,
+        _Vp8EncoderTables.bands[coefficient],
+        magnitude == 1 ? 1 : 2,
+        0,
+      );
+      if (coefficient == 16) {
+        return cost;
+      }
+      final int hasMore = coefficient <= last ? 1 : 0;
+      cost += _Vp8EncoderTables.bitCost(
+        hasMore,
+        probabilities[probabilityIndex],
+      );
+      if (hasMore == 0) {
+        return cost;
+      }
+    }
+    return cost;
+  }
 
   /// Walks every residual in decoder order while maintaining neighbor contexts.
   void _visitResiduals({

@@ -28,11 +28,10 @@ enum WebPEffort {
     refinesCoefficients: false,
   ),
 
-  /// Adds a search over the rounding of every coefficient.
+  /// Adds a local rate-distortion search around every quantized coefficient.
   ///
-  /// Rounding a coefficient down can cost less than it gains, especially near
-  /// the end of a block where it may remove the end-of-block marker entirely.
-  /// This setting evaluates that trade for each coefficient in turn.
+  /// Testing both neighboring levels can preserve detail that scalar rounding
+  /// would discard or remove a level whose coded cost outweighs its accuracy.
   maximum(
     weighsRateAgainstDistortion: true,
     triesIntra4x4: true,
@@ -46,7 +45,7 @@ enum WebPEffort {
   /// Whether a macroblock may be split into sixteen four-by-four predictions.
   final bool triesIntra4x4;
 
-  /// Whether coefficient rounding is searched instead of being fixed.
+  /// Whether neighboring quantized coefficient levels are compared.
   final bool refinesCoefficients;
 
   /// Creates an effort level from the searches it enables.
