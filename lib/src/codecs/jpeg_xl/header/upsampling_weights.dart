@@ -1,9 +1,7 @@
-// GENERATED from jxlatte ImageHeader.java default upsampling weights;
-// regenerate with the script in tool/ rather than editing by hand.
+// Default interpolation kernels from the JPEG XL specification.
 import 'dart:typed_data';
 
-/// Processes default up2 weights information in a JPEG XL codestream.
-///
+/// Default kernel for two-times upsampling.
 final Float32List defaultUp2Weights = Float32List.fromList(const [
   -0.01716200,
   -0.03452303,
@@ -22,8 +20,7 @@ final Float32List defaultUp2Weights = Float32List.fromList(const [
   -0.00213539,
 ]);
 
-/// Processes default up4 weights information in a JPEG XL codestream.
-///
+/// Default kernel for four-times upsampling.
 final Float32List defaultUp4Weights = Float32List.fromList(const [
   -0.02419067,
   -0.03491987,
@@ -82,8 +79,7 @@ final Float32List defaultUp4Weights = Float32List.fromList(const [
   -0.00384443,
 ]);
 
-/// Processes default up8 weights information in a JPEG XL codestream.
-///
+/// Default kernel for eight-times upsampling.
 final Float32List defaultUp8Weights = Float32List.fromList(const [
   -0.02928613,
   -0.03706353,

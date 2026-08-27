@@ -2,26 +2,22 @@ import 'dart:typed_data';
 
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/jpeg_xl_limits.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/limits.dart';
 
 /// The `Extensions` bundle: 64 optional payloads gated by a bitmask key.
 /// Payload contents are opaque; they are read and retained but not
 /// interpreted.
 final class Extensions {
-  /// Stores the extensions key value used while processing JPEG XL data.
-  ///
+  /// Bit mask identifying extension payloads present in the header.
   final int extensionsKey;
 
-  /// Stores the payloads state used internally by the JPEG XL codec.
-  ///
+  /// Opaque payload indexed by extension identifier.
   final List<Uint8List?> _payloads;
 
-  /// Creates Extensions data for JPEG XL processing.
-  ///
+  /// Creates an empty extension bundle.
   const Extensions() : extensionsKey = 0, _payloads = const [];
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
+  /// Reads this structure from the bitstream.
   factory Extensions.read({
     required BitReader reader,
   }) {
@@ -50,14 +46,12 @@ final class Extensions {
     return Extensions._(extensionsKey: extensionsKey, payloads: payloads);
   }
 
-  /// Creates Extensions state for JPEG XL processing.
-  ///
+  /// Creates a decoded extension bundle.
   const Extensions._({
     required this.extensionsKey,
     required this._payloads,
   });
 
-  /// Processes int information in a JPEG XL codestream.
-  ///
-  Uint8List? operator [](int extId) => extId < _payloads.length ? _payloads[extId] : null;
+  /// Returns the payload for [extensionIdentifier], when present.
+  Uint8List? operator [](int extensionIdentifier) => extensionIdentifier < _payloads.length ? _payloads[extensionIdentifier] : null;
 }

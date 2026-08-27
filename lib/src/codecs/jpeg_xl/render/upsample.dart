@@ -1,15 +1,14 @@
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/image_buffer.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/frame.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/header/image_header.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/image_buffer.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
 
-/// Processes the upsample plane data used by the JPEG XL codec.
-///
+/// Upsamples plane.
 ImageBuffer _upsamplePlane(Frame frame, ImageBuffer ib, int c) {
   final int color = frame.colorChannelCount;
-  final int k = c < color ? frame.header.upsampling : frame.header.ecUpsampling[c - color];
+  final int k = c < color ? frame.header.upsampling : frame.header.extraChannelUpsampling[c - color];
   if (k == 1) {
     return ib;
   }
@@ -71,8 +70,8 @@ void upsampleFrame(Frame frame) {
   frame.boundsHeight *= factor;
   frame.boundsX0 *= factor;
   frame.boundsY0 *= factor;
-  frame.groupRowStride = ceilDiv(frame.boundsWidth, frame.header.groupDim);
-  frame.lfGroupRowStride = ceilDiv(frame.boundsWidth, frame.header.groupDim << 3);
-  frame.numGroups = frame.groupRowStride * ceilDiv(frame.boundsHeight, frame.header.groupDim);
-  frame.numLfGroups = frame.lfGroupRowStride * ceilDiv(frame.boundsHeight, frame.header.groupDim << 3);
+  frame.groupRowStride = ceilDiv(frame.boundsWidth, frame.header.groupDimension);
+  frame.lowFrequencyGroupRowStride = ceilDiv(frame.boundsWidth, frame.header.groupDimension << 3);
+  frame.groupCount = frame.groupRowStride * ceilDiv(frame.boundsHeight, frame.header.groupDimension);
+  frame.lowFrequencyGroupCount = frame.lowFrequencyGroupRowStride * ceilDiv(frame.boundsHeight, frame.header.groupDimension << 3);
 }

@@ -1,14 +1,14 @@
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/entropy/entropy_stream.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/blending_info.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
 
 /// One patch: a rectangle of a reference frame blended at one or more
 /// positions in the current frame.
 final class Patch {
   /// Stores the reference-frame index.
-  final int ref;
+  final int referenceIndex;
 
   /// Horizontal origin of the source rectangle.
   final int x;
@@ -31,10 +31,9 @@ final class Patch {
   /// Per-position, per-channel blending modes.
   final List<List<BlendingInfo>> blendingInfos;
 
-  /// Creates Patch state for JPEG XL processing.
-  ///
+  /// Creates a patch.
   Patch._({
-    required this.ref,
+    required this.referenceIndex,
     required this.x,
     required this.y,
     required this.width,
@@ -44,15 +43,14 @@ final class Patch {
     required this.blendingInfos,
   });
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
+  /// Reads this structure from the bitstream.
   factory Patch.read({
     required EntropyStream stream,
     required BitReader reader,
     required int extraChannelCount,
     required int alphaChannelCount,
   }) {
-    final int ref = stream.readSymbol(reader, 1);
+    final int referenceIndex = stream.readSymbol(reader, 1);
     final int x = stream.readSymbol(reader, 3);
     final int y = stream.readSymbol(reader, 3);
     final int width = 1 + stream.readSymbol(reader, 2);
@@ -93,6 +91,6 @@ final class Patch {
       }
       blendingInfos.add(infos);
     }
-    return Patch._(ref: ref, x: x, y: y, width: width, height: height, positionsX: positionsX, positionsY: positionsY, blendingInfos: blendingInfos);
+    return Patch._(referenceIndex: referenceIndex, x: x, y: y, width: width, height: height, positionsX: positionsX, positionsY: positionsY, blendingInfos: blendingInfos);
   }
 }

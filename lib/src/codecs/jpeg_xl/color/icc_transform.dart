@@ -8,11 +8,9 @@ import 'package:imcodec/src/codecs/jpeg_xl/color/color_management.dart';
 /// after the XYB inverse, before any transfer function) into the profile's
 /// device-encoded values — the representation the JXL conformance reference
 /// image (`ref.png` / `reference_image.npy`) uses for an ICC-tagged file.
-///
 /// Returns `null` from [tryParse] for any profile that is not a matrix/TRC RGB
 /// profile — grayscale, CMYK, or LUT/CLUT (`A2B*`/`mAB `) profiles — in which
 /// case the caller keeps its default (tagged/sRGB) transfer-function path.
-///
 /// **Derived and verified**, not fitted (see doc/spec_notes.md's ICC output
 /// transform write-up). The conformance `progressive` case decodes, before its
 /// transfer step, to linear light in sRGB primaries; the correct output is
@@ -21,12 +19,12 @@ import 'package:imcodec/src/codecs/jpeg_xl/color/color_management.dart';
 /// as `progressive`'s are — its only difference from sRGB is a parametric
 /// gamma≈2.22 TRC). The transform was confirmed to reproduce `ref.png` exactly
 /// at sampled points before this code was written.
-class IccRgbOutputTransform {
+final class IccRgbOutputTransform {
   /// sRGB-primary linear → profile-primary linear (row-major 3x3).
-  final List<List<double>> _m;
+  final List<List<double>> _matrix;
 
   /// Per-channel linear→device inverse-TRC LUTs (R, G, B).
-  final List<Float32List> _trc;
+  final List<Float32List> _toneResponseCurves;
 
   /// sRGB primaries → XYZ, Bradford-adapted to the D50 PCS (the standard sRGB
   /// v4 ICC colorants). Columns are the R/G/B colorant XYZ.
@@ -36,11 +34,10 @@ class IccRgbOutputTransform {
     [0.013931, 0.097099, 0.713970],
   ];
 
-  /// Creates Icc rgb output transform state for JPEG XL processing.
-  ///
+  /// Creates an ICC RGB output transform.
   IccRgbOutputTransform._({
-    required this._m,
-    required this._trc,
+    required this._matrix,
+    required this._toneResponseCurves,
   });
 
   /// Parses [icc]; returns a transform for matrix/TRC RGB profiles, else null.
@@ -107,39 +104,39 @@ class IccRgbOutputTransform {
       [r[1], g[1], b[1]],
       [r[2], g[2], b[2]],
     ];
-    final List<List<double>>? profInv = invertMatrix3x3(prof);
+    final List<List<double>>? profInv = invertThreeByThreeMatrix(prof);
     if (profInv == null) {
       return null;
     }
     // M = prof^-1 · sRGB_D50 : sRGB-linear -> profile-linear.
-    final List<List<double>> m = matrixMultiply3(profInv, _srgbD50);
+    final List<List<double>> matrix = multiplyThreeByThreeMatrices(profInv, _srgbD50);
 
-    final trc = <Float32List>[];
+    final toneResponseCurves = <Float32List>[];
     for (final tag in ['rTRC', 'gTRC', 'bTRC']) {
       final Float32List? lut = _parseInverseTrc(icc, tags[tag]!.$1, be32, fix16, sig);
       if (lut == null) {
         return null;
       }
-      trc.add(lut);
+      toneResponseCurves.add(lut);
     }
-    return IccRgbOutputTransform._(m: m, trc: trc);
+    return IccRgbOutputTransform._(matrix: matrix, toneResponseCurves: toneResponseCurves);
   }
 
   /// Applies the transform in place: [r]/[g]/[b] rows hold linear light in
   /// sRGB primaries on entry and the profile's device values (0..1) on exit.
   void apply(List<Float32List> r, List<Float32List> g, List<Float32List> b) {
-    final double m00 = _m[0][0];
-    final double m01 = _m[0][1];
-    final double m02 = _m[0][2];
-    final double m10 = _m[1][0];
-    final double m11 = _m[1][1];
-    final double m12 = _m[1][2];
-    final double m20 = _m[2][0];
-    final double m21 = _m[2][1];
-    final double m22 = _m[2][2];
-    final Float32List tr = _trc[0];
-    final Float32List tg = _trc[1];
-    final Float32List tb = _trc[2];
+    final double m00 = _matrix[0][0];
+    final double m01 = _matrix[0][1];
+    final double m02 = _matrix[0][2];
+    final double m10 = _matrix[1][0];
+    final double m11 = _matrix[1][1];
+    final double m12 = _matrix[1][2];
+    final double m20 = _matrix[2][0];
+    final double m21 = _matrix[2][1];
+    final double m22 = _matrix[2][2];
+    final Float32List tr = _toneResponseCurves[0];
+    final Float32List tg = _toneResponseCurves[1];
+    final Float32List tb = _toneResponseCurves[2];
     for (var y = 0; y < r.length; y++) {
       final Float32List rr = r[y];
       final Float32List gg = g[y];
@@ -148,27 +145,26 @@ class IccRgbOutputTransform {
         final double rl = rr[x];
         final double gl = gg[x];
         final double bl = bb[x];
-        rr[x] = _lookup(tr, m00 * rl + m01 * gl + m02 * bl);
-        gg[x] = _lookup(tg, m10 * rl + m11 * gl + m12 * bl);
-        bb[x] = _lookup(tb, m20 * rl + m21 * gl + m22 * bl);
+        rr[x] = _interpolateLookupTable(tr, m00 * rl + m01 * gl + m02 * bl);
+        gg[x] = _interpolateLookupTable(tg, m10 * rl + m11 * gl + m12 * bl);
+        bb[x] = _interpolateLookupTable(tb, m20 * rl + m21 * gl + m22 * bl);
       }
     }
   }
 
-  /// Processes the lookup data used by the JPEG XL codec.
-  ///
-  static double _lookup(Float32List lut, double v) {
-    final int n = lut.length - 1;
-    if (v <= 0) {
-      return lut[0];
+  /// Linearly interpolates [value] within a sampled transfer [table].
+  static double _interpolateLookupTable(Float32List table, double value) {
+    final int finalIndex = table.length - 1;
+    if (value <= 0) {
+      return table[0];
     }
-    if (v >= 1) {
-      return lut[n];
+    if (value >= 1) {
+      return table[finalIndex];
     }
-    final double f = v * n;
-    final int i = f.toInt();
-    final double t = f - i;
-    return lut[i] * (1 - t) + lut[i + 1] * t;
+    final double position = value * finalIndex;
+    final int index = position.toInt();
+    final double fraction = position - index;
+    return table[index] * (1 - fraction) + table[index + 1] * fraction;
   }
 
   /// Builds a [_lutSize]-entry inverse-TRC LUT (linear input in [0,1] →

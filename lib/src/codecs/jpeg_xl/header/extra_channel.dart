@@ -6,48 +6,37 @@ import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
 
 /// Extra channel type constants (spec values).
 abstract final class ExtraChannelType {
-  /// Stores the alpha value used while processing JPEG XL data.
-  ///
+  /// Specification constant identifying alpha.
   static const alpha = 0;
 
-  /// Stores the depth value used while processing JPEG XL data.
-  ///
+  /// Specification constant identifying depth.
   static const depth = 1;
 
-  /// Stores the spot color value used while processing JPEG XL data.
-  ///
+  /// Specification constant identifying spot color.
   static const spotColor = 2;
 
-  /// Stores the selection mask value used while processing JPEG XL data.
-  ///
+  /// Specification constant identifying selection mask.
   static const selectionMask = 3;
 
-  /// Stores the cmyk black value used while processing JPEG XL data.
-  ///
+  /// Specification constant identifying cmyk black.
   static const cmykBlack = 4;
 
-  /// Stores the color filter array value used while processing JPEG XL data.
-  ///
+  /// Specification constant identifying color filter array.
   static const colorFilterArray = 5;
 
-  /// Stores the thermal value used while processing JPEG XL data.
-  ///
+  /// Specification constant identifying thermal.
   static const thermal = 6;
 
-  /// Stores the non optional value used while processing JPEG XL data.
-  ///
+  /// Specification constant identifying non optional.
   static const nonOptional = 15;
 
-  /// Stores the optional value used while processing JPEG XL data.
-  ///
+  /// Specification constant identifying optional.
   static const optional = 16;
 
-  /// Processes validate information in a JPEG XL codestream.
-  ///
+  /// Validates.
   static bool validate(int ec) => ec >= 0 && ec <= 6 || ec == 15 || ec == 16;
 
-  /// Processes to display string information in a JPEG XL codestream.
-  ///
+  /// Returns a human-readable description.
   static String toDisplayString(int ec) => switch (ec) {
     alpha => 'Alpha',
     depth => 'Depth',
@@ -64,55 +53,44 @@ abstract final class ExtraChannelType {
 
 /// The `ExtraChannelInfo` header bundle.
 final class ExtraChannelInfo {
-  /// Stores the type value used while processing JPEG XL data.
-  ///
+  /// Type identifier defined by the JPEG XL specification.
   final int type;
 
-  /// Stores the bit depth value used while processing JPEG XL data.
-  ///
+  /// Sample representation used by the extra channel.
   final BitDepthHeader bitDepth;
 
-  /// Stores the dim shift value used while processing JPEG XL data.
-  ///
-  final int dimShift;
+  /// Base-two downsampling shift relative to the main image.
+  final int dimensionShift;
 
-  /// Stores the name value used while processing JPEG XL data.
-  ///
+  /// Name carried by the codestream.
   final String name;
 
-  /// Stores the alpha associated value used while processing JPEG XL data.
-  ///
+  /// Whether the extra channel enables alpha associated.
   final bool alphaAssociated;
 
-  /// Stores the red value used while processing JPEG XL data.
-  ///
+  /// Red component of a spot color.
   final double red;
 
-  /// Stores the green value used while processing JPEG XL data.
-  ///
+  /// Green component of a spot color.
   final double green;
 
-  /// Stores the blue value used while processing JPEG XL data.
-  ///
+  /// Blue component of a spot color.
   final double blue;
 
-  /// Stores the solidity value used while processing JPEG XL data.
-  ///
+  /// Opacity of a spot color.
   final double solidity;
 
-  /// Stores the cfa index value used while processing JPEG XL data.
-  ///
+  /// Index of color-filter array in the extra channel.
   final int cfaIndex;
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
+  /// Reads this structure from the bitstream.
   factory ExtraChannelInfo.read({
     required BitReader reader,
   }) {
     final bool dAlpha = reader.readBool();
     final int type;
     final BitDepthHeader bitDepth;
-    final int dimShift;
+    final int dimensionShift;
     final String name;
     final bool alphaAssociated;
     if (!dAlpha) {
@@ -121,7 +99,7 @@ final class ExtraChannelInfo {
         throw const JpegXlInvalidBitstreamException(message: 'illegal extra channel type');
       }
       bitDepth = BitDepthHeader.read(reader: reader);
-      dimShift = reader.readU32(0, 0, 3, 0, 4, 0, 1, 3);
+      dimensionShift = reader.readU32(0, 0, 3, 0, 4, 0, 1, 3);
       final int nameLen = reader.readU32(0, 0, 0, 4, 16, 5, 48, 10);
       // No byte-alignment guarantee, so read the UTF-8 name bytewise.
       final nameBuffer = List<int>.generate(nameLen, (_) => reader.readBits(8));
@@ -130,7 +108,7 @@ final class ExtraChannelInfo {
     } else {
       type = ExtraChannelType.alpha;
       bitDepth = const BitDepthHeader();
-      dimShift = 0;
+      dimensionShift = 0;
       name = '';
       alphaAssociated = false;
     }
@@ -148,7 +126,7 @@ final class ExtraChannelInfo {
     return ExtraChannelInfo._(
       type: type,
       bitDepth: bitDepth,
-      dimShift: dimShift,
+      dimensionShift: dimensionShift,
       name: name,
       alphaAssociated: alphaAssociated,
       red: red,
@@ -159,12 +137,11 @@ final class ExtraChannelInfo {
     );
   }
 
-  /// Creates Extra channel info state for JPEG XL processing.
-  ///
+  /// Creates an extra channel info.
   const ExtraChannelInfo._({
     required this.type,
     required this.bitDepth,
-    required this.dimShift,
+    required this.dimensionShift,
     required this.name,
     required this.alphaAssociated,
     required this.red,

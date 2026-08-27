@@ -1,15 +1,14 @@
 # Imcodec
 
 Imcodec is a focused Flutter image codec for BMP, JPEG, JPEG XL, PNG, QOI,
-TGA, TIFF, and WebP. It keeps a small straight-alpha RGBA image model and exposes
-synchronous Dart encoders, which makes expensive encoding suitable for
-`Isolate.run`.
+TGA, TIFF, and WebP. It keeps a small straight-alpha RGBA image model and
+exposes synchronous pure-Dart encoders and decoders, which makes expensive
+conversions suitable for `Isolate.run`.
 
-Decoding is asynchronous at the public boundary. BMP, JPEG XL, QOI, TGA, and
-TIFF use pure-Dart decoders; JPEG, PNG, and WebP use Flutter's platform codecs.
-Animated JPEG XL, PNG, and WebP inputs currently return their first frame. Flutter's premultiplied
-render pipeline may round RGB values on translucent pixels and discards hidden
-RGB values where alpha is zero.
+> [!NOTE]
+> Animated JPEG XL, PNG, and WebP inputs currently return their first visible
+> frame. Decoding preserves straight alpha and hidden RGB values where the source
+> format carries them.
 
 ## Usage
 
@@ -52,21 +51,37 @@ final Uint8List tiff = img.encodeTiff(image); // PackBits by default
 Decode supported data with format detection or a format-specific function:
 
 ```dart
-final img.Image decoded = await img.decodeImage(encodedBytes);
-final img.Image png = await img.decodePng(pngBytes);
+final img.Image decoded = img.decodeImage(encodedBytes);
+final img.Image png = img.decodePng(pngBytes);
 ```
 
 `decodeImage` defaults to a 100-million-pixel allocation limit. Supply a lower
 `maxPixels` value when input comes from an untrusted source.
+
+The format classes can also be used through `dart:convert`:
+
+```dart
+final img.PngCodec codec = img.PngCodec(level: 7);
+final Uint8List encoded = codec.encoder.convert(image);
+final img.Image decoded = codec.decoder.convert(encoded);
+```
+
+Each `RasterCodec` composes a `RasterEncoder` and a `RasterDecoder`. The
+shared `defaultMaxPixels` constant (100 million) is used unless a lower
+`maxPixels` limit is supplied to a codec or decoding helper.
 
 ## Format behavior
 
 - BMP is encoded as a V4 32-bit bitmap with explicit RGBA bitfields. The
   decoder supports uncompressed palette, 16-bit, 24-bit, 32-bit, and bitfield
   images; BMP RLE compression is not currently supported.
-- PNG is encoded as non-interlaced 8-bit RGBA with adaptive row filters.
-- JPEG is baseline JPEG with selectable 4:4:4 or 4:2:0 chroma sampling.
-  Transparency is composited against white.
+- PNG is encoded as non-interlaced 8-bit RGBA with adaptive row filters. The
+  decoder accepts standard grayscale, true-color, indexed, grayscale-alpha,
+  and RGBA images, including Adam7 interlacing and 1- to 16-bit samples where
+  the color type permits them.
+- JPEG output is baseline JPEG with selectable 4:4:4 or 4:2:0 chroma sampling.
+  The decoder accepts baseline, extended sequential, and progressive Huffman
+  JPEG data. Transparency is composited against white during encoding.
 - JPEG XL import supports bare codestreams and ISOBMFF containers, lossless
   Modular and lossy VarDCT images, alpha, orientation, embedded matrix/TRC ICC
   profiles, and the first visible animation frame. Output is lossless Modular
@@ -81,8 +96,9 @@ final img.Image png = await img.decodePng(pngBytes);
   tiled, JPEG-compressed, and samples wider than eight bits are not currently
   supported. Output is little-endian, chunky, eight-bit RGBA using PackBits by
   default; pass `TiffCompression.none` for uncompressed output.
-- WebP is lossless VP8L and preserves alpha. Quality is intentionally not an
-  option until a lossy encoder is added.
+- WebP output is lossless VP8L and preserves alpha. The decoder accepts VP8,
+  VP8 with alpha, VP8L, and the first animation frame. Quality is intentionally
+  not an option until a lossy encoder is added.
 
 The JPEG and WebP encoder implementations contain code derived from the MIT
 licensed Dart `image` package.

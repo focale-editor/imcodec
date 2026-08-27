@@ -9,30 +9,26 @@ import 'package:imcodec/src/codecs/jpeg_xl/header/extensions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/header/extra_channel.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/header/upsampling_weights.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/jpeg_xl_limits.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/limits.dart';
 
 /// An image size in pixels.
 typedef SizeDim = ({int width, int height});
 
 /// The JPEG XL image-level header: signature, SizeHeader, ImageMetadata and
 /// the trailing default-transform data.
-///
 /// If [colorEncoding.useIccProfile] is set, the entropy-coded ICC payload
 /// begins at the reader position right after [ImageHeader.read] returns
 /// ([iccEncodedSize] bytes once decoded); the caller must consume it and then
 /// call `zeroPadToByte`. Without an ICC profile the header is already
 /// byte-aligned on return.
 final class ImageHeader {
-  /// Stores the alpha indices value used while processing JPEG XL data.
-  ///
+  /// Indices of extra channels that contain alpha samples.
   final List<int> alphaIndices;
 
-  /// Stores the preview size value used while processing JPEG XL data.
-  ///
+  /// Dimensions or allocation size of preview in the image header.
   final SizeDim? previewSize;
 
-  /// Stores the level value used while processing JPEG XL data.
-  ///
+  /// JPEG XL conformance level used to validate dimensions.
   final int level;
 
   /// The stored (pre-orientation) size.
@@ -41,72 +37,56 @@ final class ImageHeader {
   /// EXIF-style orientation, 1–8. Values above 4 transpose the output.
   final int orientation;
 
-  /// Stores the intrinsic size value used while processing JPEG XL data.
-  ///
+  /// Dimensions or allocation size of intrinsic in the image header.
   final SizeDim? intrinsicSize;
 
-  /// Stores the codestream header value used while processing JPEG XL data.
-  ///
+  /// Specification constant identifying codestream header.
   static const codestreamHeader = 0x0AFF;
 
-  /// Stores the animation value used while processing JPEG XL data.
-  ///
+  /// Animation timing metadata, or `null` for a still image.
   final AnimationHeader? animation;
 
-  /// Stores the bit depth value used while processing JPEG XL data.
-  ///
+  /// Sample representation shared by the main color channels.
   final BitDepthHeader bitDepth;
 
-  /// Stores the modular16 bit buffers value used while processing JPEG XL data.
-  ///
+  /// Whether the image header enables modular 16 bit buffers.
   final bool modular16BitBuffers;
 
-  /// Stores the extra channels value used while processing JPEG XL data.
-  ///
+  /// Extra channels processed by the image header.
   final List<ExtraChannelInfo> extraChannels;
 
-  /// Stores the opsin inverse matrix value used while processing JPEG XL data.
-  ///
+  /// Matrix and biases used to convert XYB samples to linear RGB.
   final OpsinInverseMatrix opsinInverseMatrix;
 
-  /// Stores the xyb encoded value used while processing JPEG XL data.
-  ///
+  /// Whether color channels use XYB encoding.
   final bool xybEncoded;
 
-  /// Stores the color encoding value used while processing JPEG XL data.
-  ///
+  /// Color space, primaries, white point, and transfer-function metadata.
   final ColorEncodingBundle colorEncoding;
 
-  /// Stores the tone mapping value used while processing JPEG XL data.
-  ///
+  /// Luminance and tone-mapping metadata for high-dynamic-range content.
   final ToneMapping toneMapping;
 
-  /// Stores the extensions value used while processing JPEG XL data.
-  ///
+  /// Optional image-header extension payloads keyed by identifier.
   final Extensions extensions;
 
-  /// Stores the up2 weights value used while processing JPEG XL data.
-  ///
+  /// Weights applied to up 2.
   final Float32List up2Weights;
 
   /// Encoded byte length of the compressed ICC payload, or null if the color
   /// encoding does not use an ICC profile.
   final int? iccEncodedSize;
 
-  /// Stores the up8 weights value used while processing JPEG XL data.
-  ///
+  /// Weights applied to up 8.
   final Float32List up8Weights;
 
-  /// Stores the up weights state used internally by the JPEG XL codec.
-  ///
+  /// Weights applied to up.
   List<List<List<Float32List>>>? _upWeights;
 
-  /// Stores the up4 weights value used while processing JPEG XL data.
-  ///
+  /// Weights applied to up 4.
   final Float32List up4Weights;
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
+  /// Reads this structure from the bitstream.
   factory ImageHeader.read({
     required BitReader reader,
     int level = 5,
@@ -213,8 +193,7 @@ final class ImageHeader {
     );
   }
 
-  /// Creates Image header state for JPEG XL processing.
-  ///
+  /// Creates an image header.
   ImageHeader._({
     required this.level,
     required this.size,
@@ -237,12 +216,10 @@ final class ImageHeader {
     required this.iccEncodedSize,
   });
 
-  /// Stores the is animated value used while processing JPEG XL data.
-  ///
+  /// Whether animated.
   bool get isAnimated => animation != null;
 
   /// Reads preview header.
-  ///
   static SizeDim _readPreviewHeader(BitReader reader) {
     final bool div8 = reader.readBool();
     final int height = div8 ? reader.readU32(16, 0, 32, 0, 1, 5, 33, 9) : reader.readU32(1, 6, 65, 8, 321, 10, 1345, 12);
@@ -260,7 +237,6 @@ final class ImageHeader {
   }
 
   /// Reads size header.
-  ///
   static SizeDim _readSizeHeader(BitReader reader, int level) {
     final bool div8 = reader.readBool();
     final int height = div8 ? (1 + reader.readBits(5)) << 3 : reader.readU32(1, 9, 1, 13, 1, 18, 1, 30);
@@ -287,8 +263,7 @@ final class ImageHeader {
   /// The output size after applying [orientation].
   SizeDim get orientedSize => orientation > 4 ? (width: size.height, height: size.width) : size;
 
-  /// Processes the width from ratio data used by the JPEG XL codec.
-  ///
+  /// Resolves a width from an encoded aspect-ratio identifier and [height].
   static int _widthFromRatio(int ratio, int height) => switch (ratio) {
     1 => height,
     2 => height * 6 ~/ 5,
@@ -337,24 +312,19 @@ final class ImageHeader {
     return _upWeights = result;
   }
 
-  /// Stores the is grayscale value used while processing JPEG XL data.
-  ///
-  bool get isGrayscale => colorEncoding.colorEncoding == ColorFlags.ceGray;
+  /// Whether grayscale.
+  bool get isGrayscale => colorEncoding.colorEncoding == ColorEncodingConstants.colorSpaceGray;
 
-  /// Stores the color channel count value used while processing JPEG XL data.
-  ///
+  /// Number of color channel entries in the image header.
   int get colorChannelCount => isGrayscale ? 1 : 3;
 
-  /// Stores the total channel count value used while processing JPEG XL data.
-  ///
+  /// Number of total channel entries in the image header.
   int get totalChannelCount => colorChannelCount + extraChannels.length;
 
-  /// Stores the has alpha value used while processing JPEG XL data.
-  ///
+  /// Whether alpha is present.
   bool get hasAlpha => alphaIndices.isNotEmpty;
 
   /// Reads weights.
-  ///
   static Float32List _readWeights(BitReader reader, int count) {
     final weights = Float32List(count);
     for (var i = 0; i < count; i++) {

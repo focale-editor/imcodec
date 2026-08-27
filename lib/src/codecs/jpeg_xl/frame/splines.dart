@@ -1,70 +1,59 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/entropy/entropy_stream.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/frame.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/jpeg_xl_limits.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/var_dct/lf_channel_correlation.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/limits.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/var_dct/low_frequency_channel_correlation.dart';
 
-/// The LfGlobal splines bundle (control points and 32-coefficient DCTs for
+/// The LowFrequencyGlobal splines bundle (control points and 32-coefficient DCTs for
 /// the X/Y/B intensities and sigma along each spline).
 final class SplinesBundle {
-  /// Stores the num splines value used while processing JPEG XL data.
-  ///
-  late final int numSplines;
+  /// Number of splines.
+  late final int splineCount;
 
-  /// Stores the quant adjust value used while processing JPEG XL data.
-  ///
-  late final int quantAdjust;
+  /// Shared dequantization adjustment applied to spline coefficients.
+  late final int quantizationAdjustment;
 
-  /// Stores the spline y value used while processing JPEG XL data.
-  ///
+  /// Initial vertical coordinate of each spline.
   late final List<int> splineY;
 
-  /// Stores the spline x value used while processing JPEG XL data.
-  ///
+  /// Initial horizontal coordinate of each spline.
   late final List<int> splineX;
 
-  /// Stores the control points y value used while processing JPEG XL data.
-  ///
+  /// Delta-decoded vertical control points for each spline.
   late final List<List<int>> controlPointsY;
 
-  /// Stores the control points x value used while processing JPEG XL data.
-  ///
+  /// Delta-decoded horizontal control points for each spline.
   late final List<List<int>> controlPointsX;
 
-  /// Stores the coeff x value used while processing JPEG XL data.
-  ///
-  late final List<List<int>> coeffX;
+  /// Horizontal coefficients processed by the splines bundle.
+  late final List<List<int>> xCoefficients;
 
-  /// Stores the coeff y value used while processing JPEG XL data.
-  ///
-  late final List<List<int>> coeffY;
+  /// Vertical coefficients processed by the splines bundle.
+  late final List<List<int>> yCoefficients;
 
-  /// Stores the coeff b value used while processing JPEG XL data.
-  ///
-  late final List<List<int>> coeffB;
+  /// B coefficients processed by the splines bundle.
+  late final List<List<int>> bCoefficients;
 
-  /// Stores the coeff sigma value used while processing JPEG XL data.
-  ///
-  late final List<List<int>> coeffSigma;
+  /// Sigma coefficients processed by the splines bundle.
+    late final List<List<int>> sigmaCoefficients;
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
-  SplinesBundle.read({
+  /// Reads this structure from the bitstream.
+    SplinesBundle.read({
     required BitReader reader,
   }) {
-    final stream = EntropyStream.read(reader: reader, numDists: 6);
-    numSplines = 1 + stream.readSymbol(reader, 2);
-    if (numSplines > JpegXlLimits.maxFeatureCount) {
+    final stream = EntropyStream.read(reader: reader, distributionCount: 6);
+    splineCount = 1 + stream.readSymbol(reader, 2);
+    if (splineCount > JpegXlLimits.maxFeatureCount) {
       throw const JpegXlInvalidBitstreamException(message: 'too many splines');
     }
-    splineY = List.filled(numSplines, 0);
-    splineX = List.filled(numSplines, 0);
-    for (var i = 0; i < numSplines; i++) {
+    splineY = List.filled(splineCount, 0);
+    splineX = List.filled(splineCount, 0);
+    for (var i = 0; i < splineCount; i++) {
       int x = stream.readSymbol(reader, 1);
       int y = stream.readSymbol(reader, 1);
       if (i != 0) {
@@ -74,14 +63,14 @@ final class SplinesBundle {
       splineX[i] = x;
       splineY[i] = y;
     }
-    quantAdjust = unpackSigned(stream.readSymbol(reader, 0));
-    controlPointsY = List.generate(numSplines, (_) => <int>[]);
-    controlPointsX = List.generate(numSplines, (_) => <int>[]);
-    coeffX = List.generate(numSplines, (_) => List.filled(32, 0));
-    coeffY = List.generate(numSplines, (_) => List.filled(32, 0));
-    coeffB = List.generate(numSplines, (_) => List.filled(32, 0));
-    coeffSigma = List.generate(numSplines, (_) => List.filled(32, 0));
-    for (var i = 0; i < numSplines; i++) {
+    quantizationAdjustment = unpackSigned(stream.readSymbol(reader, 0));
+    controlPointsY = List.generate(splineCount, (_) => <int>[]);
+    controlPointsX = List.generate(splineCount, (_) => <int>[]);
+    xCoefficients = List.generate(splineCount, (_) => List.filled(32, 0));
+    yCoefficients = List.generate(splineCount, (_) => List.filled(32, 0));
+    bCoefficients = List.generate(splineCount, (_) => List.filled(32, 0));
+    sigmaCoefficients = List.generate(splineCount, (_) => List.filled(32, 0));
+    for (var i = 0; i < splineCount; i++) {
       final int count = 1 + stream.readSymbol(reader, 3);
       if (count > JpegXlLimits.maxFeatureCount) {
         throw const JpegXlInvalidBitstreamException(message: 'too many control points');
@@ -107,16 +96,16 @@ final class SplinesBundle {
         controlPointsX[i].add(cX);
       }
       for (var j = 0; j < 32; j++) {
-        coeffX[i][j] = unpackSigned(stream.readSymbol(reader, 5));
+        xCoefficients[i][j] = unpackSigned(stream.readSymbol(reader, 5));
       }
       for (var j = 0; j < 32; j++) {
-        coeffY[i][j] = unpackSigned(stream.readSymbol(reader, 5));
+        yCoefficients[i][j] = unpackSigned(stream.readSymbol(reader, 5));
       }
       for (var j = 0; j < 32; j++) {
-        coeffB[i][j] = unpackSigned(stream.readSymbol(reader, 5));
+        bCoefficients[i][j] = unpackSigned(stream.readSymbol(reader, 5));
       }
       for (var j = 0; j < 32; j++) {
-        coeffSigma[i][j] = unpackSigned(stream.readSymbol(reader, 5));
+        sigmaCoefficients[i][j] = unpackSigned(stream.readSymbol(reader, 5));
       }
     }
     if (!stream.validateFinalState()) {
@@ -125,77 +114,73 @@ final class SplinesBundle {
   }
 }
 
-/// Processes the sqrt h data used by the JPEG XL codec.
-///
-const _sqrtH = 0.7071067811865476; // sqrt(0.5)
-/// Processes the sqrt f data used by the JPEG XL codec.
-///
-const _sqrtF = 0.3535533905932738; // sqrt(0.125)
+/// Inverse square root of two used by the cosine series.
+const _inverseSquareRootOfTwo = 0.7071067811865476;
 
-/// Processes the fourier ict data used by the JPEG XL codec.
-///
-double _fourierICT(List<double> coeffs, double t) {
-  double total = _sqrtH * coeffs[0];
+/// Inverse square root of eight used while integrating spline coverage.
+const _inverseSquareRootOfEight = 0.3535533905932738;
+
+/// Evaluates the inverse cosine series at [position].
+double _evaluateInverseCosineSeries(List<double> coefficients, double position) {
+  double total = _inverseSquareRootOfTwo * coefficients[0];
   for (var i = 1; i < 32; i++) {
-    total += coeffs[i] * math.cos(i * (math.pi / 32) * (t + 0.5));
+    total += coefficients[i] * math.cos(i * (math.pi / 32) * (position + 0.5));
   }
   return total;
 }
 
 /// Draws all splines of the frame onto its (float, pre-color-transform)
 /// color channels.
-///
 /// Deviates from jxlatte, which renders every spline with spline 0's
 /// coefficients (its Spline constructor never stores the spline index);
 /// here each spline uses its own coefficients, matching djxl.
 void renderSplines(Frame frame) {
-  final SplinesBundle? bundle = frame.lfGlobal.splines;
+  final SplinesBundle? bundle = frame.lowFrequencyGlobal.splines;
   if (bundle == null) {
     return;
   }
   if (frame.colorChannelCount < 3) {
     throw const JpegXlInvalidBitstreamException(message: 'splines require 3 color channels');
   }
-  for (var s = 0; s < bundle.numSplines; s++) {
+  for (var s = 0; s < bundle.splineCount; s++) {
     _renderSpline(frame, bundle, s);
   }
 }
 
 /// Renders spline.
-///
-void _renderSpline(Frame frame, SplinesBundle bundle, int splineID) {
+void _renderSpline(Frame frame, SplinesBundle bundle, int splineIndex) {
   // Coefficients, with quant adjustment and LF chroma correlation baked in.
-  final LfChannelCorrelation lfc = frame.lfGlobal.lfChanCorr;
-  final double quantAdjust = bundle.quantAdjust / 8.0;
-  final double invQa = quantAdjust >= 0 ? 1.0 / (1.0 + quantAdjust) : 1.0 - quantAdjust;
+  final LowFrequencyChannelCorrelation lfc = frame.lowFrequencyGlobal.lowFrequencyChannelCorrelation;
+  final double quantizationAdjustment = bundle.quantizationAdjustment / 8.0;
+  final double invQa = quantizationAdjustment >= 0 ? 1.0 / (1.0 + quantizationAdjustment) : 1.0 - quantizationAdjustment;
   final double yAdjust = 0.106066017 * invQa;
   final double xAdjust = 0.005939697 * invQa;
   final double bAdjust = 0.098994949 * invQa;
   final double sigmaAdjust = 0.47135738 * invQa;
-  final coeffX = List<double>.filled(32, 0);
-  final coeffY = List<double>.filled(32, 0);
-  final coeffB = List<double>.filled(32, 0);
-  final coeffSigma = List<double>.filled(32, 0);
+  final xCoefficients = List<double>.filled(32, 0);
+  final yCoefficients = List<double>.filled(32, 0);
+  final bCoefficients = List<double>.filled(32, 0);
+  final sigmaCoefficients = List<double>.filled(32, 0);
   for (var i = 0; i < 32; i++) {
-    coeffY[i] = bundle.coeffY[splineID][i] * yAdjust;
-    coeffX[i] = bundle.coeffX[splineID][i] * xAdjust + lfc.baseCorrelationX * coeffY[i];
-    coeffB[i] = bundle.coeffB[splineID][i] * bAdjust + lfc.baseCorrelationB * coeffY[i];
-    coeffSigma[i] = bundle.coeffSigma[splineID][i] * sigmaAdjust;
+    yCoefficients[i] = bundle.yCoefficients[splineIndex][i] * yAdjust;
+    xCoefficients[i] = bundle.xCoefficients[splineIndex][i] * xAdjust + lfc.baseCorrelationX * yCoefficients[i];
+    bCoefficients[i] = bundle.bCoefficients[splineIndex][i] * bAdjust + lfc.baseCorrelationB * yCoefficients[i];
+    sigmaCoefficients[i] = bundle.sigmaCoefficients[splineIndex][i] * sigmaAdjust;
   }
 
   // Centripetal Catmull-Rom upsampling of the control points (16 segments
   // per span).
-  final List<int> cpY = bundle.controlPointsY[splineID];
-  final List<int> cpX = bundle.controlPointsX[splineID];
-  final int n = cpY.length;
+  final List<int> yControlPoints = bundle.controlPointsY[splineIndex];
+  final List<int> xControlPoints = bundle.controlPointsX[splineIndex];
+  final int n = yControlPoints.length;
   List<double> upY;
   List<double> upX;
   if (n == 1) {
-    upY = [cpY[0].toDouble()];
-    upX = [cpX[0].toDouble()];
+    upY = [yControlPoints[0].toDouble()];
+    upX = [xControlPoints[0].toDouble()];
   } else {
-    final List<double> extY = [2.0 * cpY[0] - cpY[1], ...cpY.map((v) => v.toDouble()), 2.0 * cpY[n - 1] - cpY[n - 2]];
-    final List<double> extX = [2.0 * cpX[0] - cpX[1], ...cpX.map((v) => v.toDouble()), 2.0 * cpX[n - 1] - cpX[n - 2]];
+    final List<double> extY = [2.0 * yControlPoints[0] - yControlPoints[1], ...yControlPoints.map((v) => v.toDouble()), 2.0 * yControlPoints[n - 1] - yControlPoints[n - 2]];
+    final List<double> extX = [2.0 * xControlPoints[0] - xControlPoints[1], ...xControlPoints.map((v) => v.toDouble()), 2.0 * xControlPoints[n - 1] - xControlPoints[n - 2]];
     upY = List.filled(16 * (extY.length - 3) + 1, 0);
     upX = List.filled(upY.length, 0);
     final t = List<double>.filled(4, 0);
@@ -231,8 +216,8 @@ void _renderSpline(Frame frame, SplinesBundle bundle, int splineID) {
         upX[i * 16 + step] = (bX[1] - bX[0]) * f + bX[0];
       }
     }
-    upY[upY.length - 1] = cpY[n - 1].toDouble();
-    upX[upX.length - 1] = cpX[n - 1].toDouble();
+    upY[upY.length - 1] = yControlPoints[n - 1].toDouble();
+    upX[upX.length - 1] = xControlPoints[n - 1].toDouble();
   }
 
   // Resample to equal arc-length samples.
@@ -297,10 +282,10 @@ void _renderSpline(Frame frame, SplinesBundle bundle, int splineID) {
   for (var i = 0; i < arcY.length; i++) {
     final double progress = math.min(1.0, i * renderDistance / totalArc);
     final double t = 31.0 * progress;
-    values[0] = _fourierICT(coeffX, t) * arcLen[i];
-    values[1] = _fourierICT(coeffY, t) * arcLen[i];
-    values[2] = _fourierICT(coeffB, t) * arcLen[i];
-    final double sigma = _fourierICT(coeffSigma, t);
+    values[0] = _evaluateInverseCosineSeries(xCoefficients, t) * arcLen[i];
+    values[1] = _evaluateInverseCosineSeries(yCoefficients, t) * arcLen[i];
+    values[2] = _evaluateInverseCosineSeries(bCoefficients, t) * arcLen[i];
+    final double sigma = _evaluateInverseCosineSeries(sigmaCoefficients, t);
     final double inverseSigma = 1.0 / sigma;
     final double maxColor = [0.01, values[0], values[1], values[2]].reduce((a, b) => a > b ? a : b);
     final double maxDist = math.sqrt(-2.0 * sigma * sigma * (math.log(0.1) * 3.0 - maxColor));
@@ -316,8 +301,8 @@ void _renderSpline(Frame frame, SplinesBundle bundle, int splineID) {
         for (var x = xBegin; x <= xEnd; x++) {
           final double dX = x - arcX[i];
           final double distance = math.sqrt(dY * dY + dX * dX);
-          double factor = erf((0.5 * distance + _sqrtF) * inverseSigma);
-          factor -= erf((0.5 * distance - _sqrtF) * inverseSigma);
+          double factor = erf((0.5 * distance + _inverseSquareRootOfEight) * inverseSigma);
+          factor -= erf((0.5 * distance - _inverseSquareRootOfEight) * inverseSigma);
           fby[x] += 0.25 * values[c] * sigma * factor * factor;
         }
       }

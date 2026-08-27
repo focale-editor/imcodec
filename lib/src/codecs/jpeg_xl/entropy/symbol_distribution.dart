@@ -4,27 +4,22 @@ import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
 /// Mutable ANS decoder state, shared across all distributions of one
 /// entropy-coded section.
 final class AnsState {
-  /// Stores the state state used internally by the JPEG XL codec.
-  ///
+  /// Current range-ANS decoder state.
   int _state = 0;
 
-  /// Stores the has state value used while processing JPEG XL data.
-  ///
+  /// Whether state is present.
   bool hasState = false;
 
-  /// Stores the state value used while processing JPEG XL data.
-  ///
+  /// Current range-ANS decoder state.
   int get state => _state;
 
-  /// Processes state information in a JPEG XL codestream.
-  ///
+  /// Returns the current streaming state.
   set state(int value) {
     _state = value;
     hasState = true;
   }
 
-  /// Processes reset information in a JPEG XL codestream.
-  ///
+  /// Resets the accumulated state.
   void reset() => hasState = false;
 }
 
@@ -34,19 +29,15 @@ abstract base class SymbolDistribution {
   /// Hybrid-integer expansion config, attached after construction.
   HybridIntegerConfig? config;
 
-  /// Stores the log bucket size value used while processing JPEG XL data.
-  ///
+  /// Dimensions or allocation size of log bucket in the symbol distribution.
   int logBucketSize = 0;
 
-  /// Stores the alphabet size value used while processing JPEG XL data.
-  ///
+  /// Dimensions or allocation size of alphabet in the symbol distribution.
   int alphabetSize = 0;
 
-  /// Stores the log alphabet size value used while processing JPEG XL data.
-  ///
+  /// Dimensions or allocation size of log alphabet in the symbol distribution.
   int logAlphabetSize = 0;
 
-  /// Processes read symbol information in a JPEG XL codestream.
-  ///
+  /// Reads one entropy-coded symbol.
   int readSymbol(BitReader reader, AnsState state);
 }

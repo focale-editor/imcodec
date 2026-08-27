@@ -5,34 +5,36 @@ import 'package:imcodec/src/image_codec_exception.dart';
 /// Describes the channel layout of source pixel bytes.
 enum ChannelOrder {
   /// A single red, or grayscale, channel.
-  red(1),
+  red(channelCount: 1),
 
   /// Grayscale followed by alpha.
-  grayAlpha(2),
+  grayAlpha(channelCount: 2),
 
   /// Red, green, and blue.
-  rgb(3),
+  rgb(channelCount: 3),
 
   /// Blue, green, and red.
-  bgr(3),
+  bgr(channelCount: 3),
 
   /// Red, green, blue, and alpha.
-  rgba(4),
+  rgba(channelCount: 4),
 
   /// Blue, green, red, and alpha.
-  bgra(4),
+  bgra(channelCount: 4),
 
   /// Alpha, red, green, and blue.
-  argb(4),
+  argb(channelCount: 4),
 
   /// Alpha, blue, green, and red.
-  abgr(4);
+  abgr(channelCount: 4);
 
   /// Number of bytes occupied by one pixel.
   final int channelCount;
 
   /// Creates a channel order from the number of channels.
-  const ChannelOrder(this.channelCount);
+  const ChannelOrder({
+    required this.channelCount,
+  });
 }
 
 /// Stores an 8-bit image in straight-alpha RGBA order.
@@ -53,7 +55,6 @@ final class Image {
   }) : _rgba = _allocate(width, height);
 
   /// Creates an image from tightly packed or row-strided channel bytes.
-  ///
   /// The source is normalized to straight-alpha RGBA. One-channel inputs are
   /// interpreted as grayscale and two-channel inputs as grayscale plus alpha.
   factory Image.fromBytes({
@@ -140,11 +141,14 @@ final class Image {
         destinationOffset += 4;
       }
     }
-    return Image._(width, height, rgba);
+    return Image._(
+      width: width,
+      height: height,
+      rgba: rgba,
+    );
   }
 
   /// Creates an image from straight-alpha RGBA bytes.
-  ///
   /// Set [copy] to `false` to transfer ownership of [bytes] without allocating.
   factory Image.fromRgba({required int width, required int height, required Uint8List bytes, bool copy = true}) {
     _validateDimensions(width, height);
@@ -152,17 +156,24 @@ final class Image {
     if (bytes.length != expectedLength) {
       throw ImageCodecException('Expected $expectedLength RGBA bytes, received ${bytes.length}');
     }
-    return Image._(width, height, copy ? Uint8List.fromList(bytes) : bytes);
+    return Image._(
+      width: width,
+      height: height,
+      rgba: copy ? Uint8List.fromList(bytes) : bytes,
+    );
   }
 
   /// Creates an image around an already validated RGBA buffer.
-  Image._(this.width, this.height, this._rgba);
+  Image._({
+    required this.width,
+    required this.height,
+    required this._rgba,
+  });
 
   /// Number of stored channels per pixel.
   int get numChannels => 4;
 
   /// Mutable straight-alpha RGBA bytes.
-  ///
   /// The returned buffer is owned by this image. Mutations immediately affect
   /// subsequent encodes.
   Uint8List get bytes => _rgba;
@@ -175,6 +186,9 @@ final class Image {
     _rgba[offset + 2] = blue;
     _rgba[offset + 3] = alpha;
   }
+
+  /// Changes one pixel using opaque 8-bit red, green, and blue channels.
+  void setPixelRgb(int x, int y, int red, int green, int blue) => setPixelRgba(x, y, red, green, blue, 255);
 
   /// Returns the red channel at [x], [y].
   int red(int x, int y) => _rgba[_pixelOffset(x, y)];

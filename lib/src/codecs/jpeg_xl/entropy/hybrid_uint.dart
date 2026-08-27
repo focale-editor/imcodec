@@ -1,32 +1,27 @@
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
 
 /// The (splitExponent, msbInToken, lsbInToken) configuration that expands an
 /// entropy token into a full unsigned integer.
 final class HybridIntegerConfig {
-  /// Stores the split exponent value used while processing JPEG XL data.
-  ///
+  /// Exponent separating direct tokens from expanded integers.
   final int splitExponent;
 
-  /// Stores the msb in token value used while processing JPEG XL data.
-  ///
+  /// Number of most-significant payload bits stored in each token.
   final int msbInToken;
 
-  /// Stores the lsb in token value used while processing JPEG XL data.
-  ///
+  /// Number of least-significant payload bits stored in each token.
   final int lsbInToken;
 
-  /// Creates Hybrid integer config data for JPEG XL processing.
-  ///
+  /// Creates a hybrid integer config.
   const HybridIntegerConfig({
     required this.splitExponent,
     required this.msbInToken,
     required this.lsbInToken,
   });
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
+  /// Reads this structure from the bitstream.
   factory HybridIntegerConfig.read({
     required BitReader reader,
     required int logAlphabetSize,

@@ -23,7 +23,6 @@ final class JpegXlTruncatedException extends JpegXlException {
 }
 
 /// The bitstream is valid but uses a feature this decoder does not support.
-///
 /// [feature] is a stable identifier (e.g. `'vardct'`, `'animation'`) so
 /// callers can decide per-file whether to fall back to another decoder.
 final class JpegXlUnsupportedException extends JpegXlException {

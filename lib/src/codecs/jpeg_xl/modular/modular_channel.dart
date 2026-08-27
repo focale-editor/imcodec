@@ -1,70 +1,30 @@
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/core/weighted_prediction.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/entropy/entropy_stream.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/jpeg_xl_limits.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/modular/ma_tree.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/modular/wp_params.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/limits.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/modular/meta_adaptive_tree.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/modular/weighted_predictor_parameters.dart';
 
-/// Processes the one l24 over kp1 data used by the JPEG XL codec.
-///
-final Int32List _oneL24OverKP1 = () {
-  final table = Int32List(64);
-  for (var i = 0; i < 64; i++) {
-    table[i] = (1 << 24) ~/ (i + 1);
-  }
-  return table;
-}();
-
+/// Clamps [value] to the range spanned by two neighboring samples.
 @pragma('vm:prefer-inline')
-/// Clamps 3.
-///
-int _clamp3(int v, int a, int b) {
-  final lower = a < b ? a : b;
+int _clampBetween(int value, int first, int second) {
+  final int lower = first < second ? first : second;
   // max(a, b) via a plain comparison, not `lower ^ a ^ b`: a, b are
   // channel sample values, which can be negative (e.g. RCT chroma
   // channels) - dart2js's `^` reinterprets a negative operand as its
   // unsigned-32-bit equivalent and never converts the result back, so a
   // max that should come out negative comes out as a huge positive
   // number there instead.
-  final upper = a < b ? b : a;
-  return v < lower
+  final int upper = first < second ? second : first;
+  return value < lower
       ? lower
-      : v > upper
+      : value > upper
       ? upper
-      : v;
-}
-
-/// Whether the WP prediction should be clamped to the (w, n, ne) range:
-/// true when `tN` and `tW` don't have strictly opposite nonzero signs, and
-/// likewise for `tN`/`tNW` - i.e. the gradients agree closely enough that
-/// clamping to the neighborhood is safe. Originally `((tN ^ tW) | (tN ^
-/// tNW)) <= 0`, a classic "XOR two ints, negative iff their signs differ"
-/// trick - but `tN`/`tW`/`tNW` are WP error terms that can be negative,
-/// and dart2js's `^`/`|` reinterpret a negative operand as its
-/// unsigned-32-bit equivalent (and never convert the result back), so a
-/// result that should come out negative comes out as a huge positive
-/// number there instead, silently flipping this condition. Expressed via
-/// plain sign/equality comparisons instead, which dart2js evaluates
-/// correctly regardless of sign.
-@pragma('vm:prefer-inline')
-bool _wpShouldClamp(int tN, int tW, int tNW) => (tN < 0) != (tW < 0) || (tN < 0) != (tNW < 0) || (tN == tW && tN == tNW);
-
-@pragma('vm:prefer-inline')
-/// Clamps 4.
-///
-int _clamp4(int v, int a, int b, int c) {
-  var lower = a < b ? a : b;
-  var upper = a < b ? b : a;
-  lower = lower < c ? lower : c;
-  upper = upper > c ? upper : c;
-  return v < lower
-      ? lower
-      : v > upper
-      ? upper
-      : v;
+      : value;
 }
 
 /// Squeeze "tendency" (the smooth predictor of the squeeze transform).
@@ -101,99 +61,86 @@ int tendency(int a, int b, int c) {
 /// self-correcting weighted predictor.
 final class ModularChannel {
   /// Stores the fourth weighted-predictor error row.
-  Int32List? _err3;
+  Int32List? _predictionError3;
 
-  /// Stores the height value used while processing JPEG XL data.
-  ///
+  /// Height in pixels.
   int height;
 
-  /// Stores the width value used while processing JPEG XL data.
-  ///
+  /// Width in pixels.
   int width;
 
-  /// Stores the vshift value used while processing JPEG XL data.
-  ///
-  int vshift;
+  /// Base-two vertical downsampling shift relative to the frame.
+  int verticalShift;
 
-  /// Stores the hshift value used while processing JPEG XL data.
-  ///
-  int hshift;
+  /// Base-two horizontal downsampling shift relative to the frame.
+  int horizontalShift;
 
-  /// Stores the origin x value used while processing JPEG XL data.
-  ///
-  int originX = 0;
+  /// Horizontal sample origin within the parent channel.
+  int horizontalOrigin = 0;
 
-  /// Stores the origin y value used while processing JPEG XL data.
-  ///
-  int originY = 0;
+  /// Vertical sample origin within the parent channel.
+  int verticalOrigin = 0;
 
-  /// Stores the force wp value used while processing JPEG XL data.
-  ///
-  bool forceWp;
+  /// Whether the channel always uses weighted prediction.
+  bool forceWeightedPredictor;
 
-  /// Stores the decoded value used while processing JPEG XL data.
-  ///
+  /// Whether the channel samples have been decoded.
   bool decoded = false;
 
   /// Flat pixel buffer, row stride == [width].
   Int32List? buffer;
 
-  // Weighted-predictor state, live only during decode(). _err0-4 mirror
+  // Weighted-predictor state, live only during decode(). _predictionError0-4 mirror
   // libjxl's `pred_errors`/`error` (uint32_t/int32_t, narrow -- summed and
-  // re-masked or re-truncated by their readers, see _wpPlaneWeight and the
-  // main decode loop's `_err4` write). _pred/_subpred mirror libjxl's
+  // re-masked or re-truncated by their readers, see _weightedPredictorPlaneWeight and the
+  // main decode loop's `_weightedPredictionError` write). _weightedPrediction/_predictorCandidates mirror libjxl's
   // `pred`/`prediction[]` (`pixel_type_w`, i.e. int64_t): NOT narrowed
   // until they're finally combined into a stored (int32) pixel value, so
   // these must stay wide.
   /// Stores the first weighted-predictor error row.
-  Int32List? _err0;
+  Int32List? _predictionError0;
 
   /// Stores the second weighted-predictor error row.
-  Int32List? _err1;
+  Int32List? _predictionError1;
 
   /// Stores the third weighted-predictor error row.
-  Int32List? _err2;
+  Int32List? _predictionError2;
 
   /// Stores the current weighted-predictor error row.
-  Int32List? _err4;
+  Int32List? _weightedPredictionError;
 
-  /// Stores the pred state used internally by the JPEG XL codec.
-  ///
-  Int64List? _pred;
+  /// Wide intermediate value produced by weighted prediction.
+  Int64List? _weightedPrediction;
 
-  /// Processes the subpred data used by the JPEG XL codec.
-  ///
-  final Int64List _subpred = Int64List(4);
+  /// Candidate predictor values used by the weighted predictor.
+  final Int64List _predictorCandidates = Int64List(4);
 
-  /// Creates Modular channel data for JPEG XL processing.
-  ///
+  /// Creates a modular channel.
   ModularChannel({
     required this.height,
     required this.width,
-    required this.vshift,
-    required this.hshift,
-    this.forceWp = false,
+    required this.verticalShift,
+    required this.horizontalShift,
+    this.forceWeightedPredictor = false,
   });
 
-  /// Processes copy information in a JPEG XL codestream.
-  ///
+  /// Creates an independent copy.
   ModularChannel.copy({
     required ModularChannel other,
   }) : height = other.height,
        width = other.width,
-       vshift = other.vshift,
-       hshift = other.hshift,
-       forceWp = other.forceWp,
-       originX = other.originX,
-       originY = other.originY,
+       verticalShift = other.verticalShift,
+       horizontalShift = other.horizontalShift,
+       forceWeightedPredictor = other.forceWeightedPredictor,
+       horizontalOrigin = other.horizontalOrigin,
+       verticalOrigin = other.verticalOrigin,
        decoded = other.decoded {
     if (other.buffer != null) {
       buffer = Int32List.fromList(other.buffer!);
     }
   }
 
-  /// Processes allocate information in a JPEG XL codestream.
-  ///
+  /// Allocates storage for the decoded samples.
   void allocate() {
     if (height < 0 || width < 0 || (width != 0 && height > JpegXlLimits.maxPlanePixels ~/ width)) {
       throw JpegXlInvalidBitstreamException(message: 'channel ${width}x$height exceeds JpegXlLimits.maxPlanePixels');
@@ -201,56 +148,47 @@ final class ModularChannel {
     buffer ??= Int32List(height * width);
   }
 
-  /// Processes get information in a JPEG XL codestream.
-  ///
+  /// Returns the value at the requested position.
   @pragma('vm:prefer-inline')
-  int get(int y, int x) => buffer![y * width + x];
+  int sampleAt(int y, int x) => buffer![y * width + x];
 
-  /// Processes set information in a JPEG XL codestream.
-  ///
-  void set(int y, int x, int value) => buffer![y * width + x] = value;
+  /// Stores [value] at the requested sample position.
+  void setSample(int y, int x, int value) => buffer![y * width + x] = value;
 
-  /// Processes size equals information in a JPEG XL codestream.
-  ///
+  /// Whether [other] has the same sample dimensions.
   bool sizeEquals(ModularChannel other) => height == other.height && width == other.width;
 
   // Neighbor accessors with the spec's border fallbacks. o == y * width + x.
+  /// Returns the west neighbor using the specification's border fallback.
   @pragma('vm:prefer-inline')
-  /// Processes the west data used by the JPEG XL codec.
-  ///
   int _west(Int32List b, int o, int x, int y) => x > 0
       ? b[o - 1]
       : y > 0
       ? b[o - width]
       : 0;
 
+  /// Returns the north neighbor using the specification's border fallback.
   @pragma('vm:prefer-inline')
-  /// Processes the north data used by the JPEG XL codec.
-  ///
   int _north(Int32List b, int o, int x, int y) => y > 0
       ? b[o - width]
       : x > 0
       ? b[o - 1]
       : 0;
 
+  /// Returns the northwest neighbor using the specification's border fallback.
   @pragma('vm:prefer-inline')
-  /// Processes the north west data used by the JPEG XL codec.
-  ///
   int _northWest(Int32List b, int o, int x, int y) => x > 0 ? (y > 0 ? b[o - width - 1] : b[o - 1]) : (y > 0 ? b[o - width] : 0);
 
+  /// Returns the northeast neighbor using the specification's border fallback.
   @pragma('vm:prefer-inline')
-  /// Processes the north east data used by the JPEG XL codec.
-  ///
   int _northEast(Int32List b, int o, int x, int y) => x + 1 < width && y > 0 ? b[o - width + 1] : _north(b, o, x, y);
 
+  /// Returns the sample two rows north using the border fallback.
   @pragma('vm:prefer-inline')
-  /// Processes the north north data used by the JPEG XL codec.
-  ///
   int _northNorth(Int32List b, int o, int x, int y) => y > 1 ? b[o - 2 * width] : _north(b, o, x, y);
 
+  /// Returns the sample one row north and two columns east.
   @pragma('vm:prefer-inline')
-  /// Processes the north east east data used by the JPEG XL codec.
-  ///
   int _northEastEast(Int32List b, int o, int x, int y) => x + 2 < width && y > 0 ? b[o - width + 2] : _northEast(b, o, x, y);
 
   /// Inverse vertical squeeze.
@@ -281,29 +219,20 @@ final class ModularChannel {
     return channel;
   }
 
+  /// Returns the west prediction error or zero at the border.
   @pragma('vm:prefer-inline')
-  /// Processes the err west data used by the JPEG XL codec.
-  ///
   int _errWest(Int32List e, int o, int x) => x > 0 ? e[o - 1] : 0;
 
+  /// Returns the north prediction error or zero at the border.
   @pragma('vm:prefer-inline')
-  /// Processes the err north data used by the JPEG XL codec.
-  ///
   int _errNorth(Int32List e, int o, int y) => y > 0 ? e[o - width] : 0;
 
+  /// Returns the northwest prediction error using the border fallback.
   @pragma('vm:prefer-inline')
-  /// Processes the err west west data used by the JPEG XL codec.
-  ///
-  int _errWestWest(Int32List e, int o, int x) => x > 1 ? e[o - 2] : 0;
-
-  @pragma('vm:prefer-inline')
-  /// Processes the err north west data used by the JPEG XL codec.
-  ///
   int _errNorthWest(Int32List e, int o, int x, int y) => x > 0 && y > 0 ? e[o - width - 1] : _errNorth(e, o, y);
 
+  /// Returns the northeast prediction error using the border fallback.
   @pragma('vm:prefer-inline')
-  /// Processes the err north east data used by the JPEG XL codec.
-  ///
   int _errNorthEast(Int32List e, int o, int x, int y) => x + 1 < width && y > 0 ? e[o - width + 1] : _errNorth(e, o, y);
 
   /// Predictor k at (y, x). Used both during decode and by the palette
@@ -352,9 +281,9 @@ final class ModularChannel {
         // See case 3: no truncation -- matches libjxl's `ClampedGradient`,
         // computed entirely in pixel_type_w.
         final int v = w + n - _northWest(b, o, x, y);
-        return _clamp3(v, n, w);
+        return _clampBetween(v, n, w);
       case 6:
-        return wideShrSigned(_pred![o] + 3, 3);
+        return wideShrSigned(_weightedPrediction![o] + 3, 3);
       case 7:
         return _northEast(b, o, x, y);
       case 8:
@@ -379,49 +308,35 @@ final class ModularChannel {
     }
   }
 
+  /// Computes a predictor weight with border-aware error samples.
   @pragma('vm:prefer-inline')
-  /// Processes the wp plane weight data used by the JPEG XL codec.
-  ///
-  int _wpPlaneWeight(Int32List ep, int o, int x, int y, int wpWeight) {
-    int eSum = _errNorth(ep, o, y) + _errWest(ep, o, x) + _errNorthWest(ep, o, x, y) + _errWestWest(ep, o, x) + _errNorthEast(ep, o, x, y);
-    if (x + 1 == width) {
-      eSum += _errWest(ep, o, x);
-    }
-    // jxlatte masks to unsigned 32 bits here (`eSum &= 0xffffffffL`) before
-    // its `>>>` shifts below — normally a no-op for ordinary 8-16-bit
-    // samples, whose summed errors never reach 32 bits, but load-bearing
-    // for wide-range content (e.g. float samples reinterpreted as packed
-    // 32-bit integers, `ImageBuffer.reconstructFloatSamples`): without it,
-    // a large enough real sum reads as a negative Dart int (unlike Java's
-    // `int`, Dart's plain `+` doesn't truncate to 32 bits on overflow — see
-    // CLAUDE.md's Java-to-Dart semantics notes) and the *un*masked `>>`
-    // below stays negative, indexing `_oneL24OverKP1` out of bounds.
-    eSum &= 0xFFFFFFFF;
-    int shift = floorLog1p(eSum) - 5;
-    if (shift < 0) {
-      shift = 0;
-    }
-    return 4 + ((wpWeight * _oneL24OverKP1[eSum >> shift]) >> shift);
-  }
+  int _weightedPredictorPlaneWeight(Int32List predictionErrors, int offset, int column, int row, int predictorWeight) => weightedPredictorPlaneWeight(
+    predictionErrors: predictionErrors,
+    offset: offset,
+    column: column,
+    row: row,
+    width: width,
+    predictorWeight: predictorWeight,
+  );
 
+  /// Computes a predictor weight for a pixel whose neighbors are all present.
   @pragma('vm:prefer-inline')
-  /// Processes the wp plane weight interior data used by the JPEG XL codec.
-  ///
-  int _wpPlaneWeightInterior(Int32List ep, int o, int wpWeight) {
-    // See _wpPlaneWeight's comment: masking to unsigned 32 bits mirrors
+  int _interiorWeightedPredictorPlaneWeight(Int32List predictionErrors, int offset, int predictorWeight) {
+    // See _weightedPredictorPlaneWeight's comment: masking to unsigned 32 bits mirrors
     // jxlatte's `eSum &= 0xffffffffL`, required for wide-range (float
     // sample) content.
-    final int eSum = (ep[o - width] + ep[o - 1] + ep[o - width - 1] + ep[o - 2] + ep[o - width + 1]) & 0xFFFFFFFF;
-    int shift = floorLog1p(eSum) - 5;
+    final int errorSum =
+        (predictionErrors[offset - width] + predictionErrors[offset - 1] + predictionErrors[offset - width - 1] + predictionErrors[offset - 2] + predictionErrors[offset - width + 1]) & 0xffffffff;
+    int shift = floorLog1p(errorSum) - 5;
     if (shift < 0) {
       shift = 0;
     }
-    return 4 + ((wpWeight * _oneL24OverKP1[eSum >> shift]) >> shift);
+    return 4 + ((predictorWeight * weightedPredictionReciprocalTable[errorSum >> shift]) >> shift);
   }
 
-  /// [_prePredictWp] for interior pixels (y > 1, 1 < x < width - 1):
+  /// [_prepareWeightedPrediction] for interior pixels (y > 1, 1 < x < width - 1):
   /// identical arithmetic with all border branches removed.
-  int _prePredictWpInterior(WpParams wp, int x, int y) {
+  int _prepareInteriorWeightedPrediction(WeightedPredictorParameters wp, int x, int y) {
     final Int32List b = buffer!;
     final int o = y * width + x;
     // NOT truncated to 32 bits: libjxl's `weighted::State::Predict`
@@ -435,7 +350,7 @@ final class ModularChannel {
     // semantics; jxlatte has no float-sample support at all (see
     // doc/spec_notes.md), so that assumption was never exercised against
     // wide-range content and was never checked against libjxl's actual
-    // (wider) types. `_err0-4` (this class's narrow storage, matching
+    // (wider) types. `_predictionError0-4` (this class's narrow storage, matching
     // `pred_errors`/`error`) still narrow correctly at their own
     // assignment in [decode] -- only the *intermediate* truncation here
     // was wrong. Confirmed via direct libjxl source read.
@@ -444,20 +359,21 @@ final class ModularChannel {
     final int ne3 = b[o - width + 1] << 3;
     final int w3 = b[o - 1] << 3;
     final int nn3 = b[o - 2 * width] << 3;
-    final Int32List e4 = _err4!;
+    final Int32List e4 = _weightedPredictionError!;
     final int tN = e4[o - width];
     final int tW = e4[o - 1];
     final int tNE = e4[o - width + 1];
     final int tNW = e4[o - width - 1];
-    _subpred[0] = w3 + ne3 - n3;
-    _subpred[1] = n3 - wideShrSigned((tW + tN + tNE) * wp.param1, 5);
-    _subpred[2] = w3 - wideShrSigned((tW + tN + tNW) * wp.param2, 5);
-    _subpred[3] = n3 - wideShrSigned(tNW * wp.param3a + tN * wp.param3b + tNE * wp.param3c + (nn3 - n3) * wp.param3d + (nw3 - w3) * wp.param3e, 5);
-    final List<int> wpw = wp.weight;
-    final int rw0 = _wpPlaneWeightInterior(_err0!, o, wpw[0]);
-    final int rw1 = _wpPlaneWeightInterior(_err1!, o, wpw[1]);
-    final int rw2 = _wpPlaneWeightInterior(_err2!, o, wpw[2]);
-    final int rw3 = _wpPlaneWeightInterior(_err3!, o, wpw[3]);
+    _predictorCandidates[0] = w3 + ne3 - n3;
+    _predictorCandidates[1] = n3 - wideShrSigned((tW + tN + tNE) * wp.northPredictionErrorScale, 5);
+    _predictorCandidates[2] = w3 - wideShrSigned((tW + tN + tNW) * wp.westPredictionErrorScale, 5);
+    _predictorCandidates[3] =
+        n3 - wideShrSigned(tNW * wp.northwestErrorScale + tN * wp.northErrorScale + tNE * wp.northeastErrorScale + (nn3 - n3) * wp.verticalGradientScale + (nw3 - w3) * wp.horizontalGradientScale, 5);
+    final List<int> predictorWeights = wp.predictorWeights;
+    final int rw0 = _interiorWeightedPredictorPlaneWeight(_predictionError0!, o, predictorWeights[0]);
+    final int rw1 = _interiorWeightedPredictorPlaneWeight(_predictionError1!, o, predictorWeights[1]);
+    final int rw2 = _interiorWeightedPredictorPlaneWeight(_predictionError2!, o, predictorWeights[2]);
+    final int rw3 = _interiorWeightedPredictorPlaneWeight(_predictionError3!, o, predictorWeights[3]);
     final int logWeight = floorLog1p(rw0 + rw1 + rw2 + rw3 - 1) - 4;
     final int sw0 = rw0 >> logWeight;
     final int sw1 = rw1 >> logWeight;
@@ -465,20 +381,20 @@ final class ModularChannel {
     final int sw3 = rw3 >> logWeight;
     final int wSum = sw0 + sw1 + sw2 + sw3;
     int s = (wSum >> 1) - 1;
-    s += _subpred[0] * sw0;
-    s += _subpred[1] * sw1;
-    s += _subpred[2] * sw2;
-    s += _subpred[3] * sw3;
+    s += _predictorCandidates[0] * sw0;
+    s += _predictorCandidates[1] * sw1;
+    s += _predictorCandidates[2] * sw2;
+    s += _predictorCandidates[3] * sw3;
     // wideShrSigned (not `>>`): the fixed-point product s * (2^24/k)
     // routinely exceeds 2^32 for ordinary pixel values, and s can be
     // negative - a bare `>>` truncates through a 32-bit int on dart2js,
     // silently corrupting the prediction (and everything downstream
     // that depends on it via the MA tree's error-based properties).
-    int pred = wideShrSigned(s * _oneL24OverKP1[wSum - 1], 24);
-    if (_wpShouldClamp(tN, tW, tNW)) {
-      pred = _clamp4(pred, w3, n3, ne3);
+    int pred = wideShrSigned(s * weightedPredictionReciprocalTable[wSum - 1], 24);
+    if (shouldClampWeightedPrediction(northError: tN, westError: tW, northWestError: tNW)) {
+      pred = clampWeightedPrediction(value: pred, west: w3, north: n3, northEast: ne3);
     }
-    _pred![o] = pred;
+    _weightedPrediction![o] = pred;
     var maxError = tW;
     if (tN.abs() > maxError.abs()) {
       maxError = tN;
@@ -494,31 +410,32 @@ final class ModularChannel {
 
   /// Computes the weighted-predictor subpredictions, weights, and prediction
   /// for pixel (y, x); returns maxError (MA-tree property 15).
-  int _prePredictWp(WpParams wp, int x, int y) {
+  int _prepareWeightedPrediction(WeightedPredictorParameters wp, int x, int y) {
     final Int32List b = buffer!;
     final int o = y * width + x;
-    // See _prePredictWpInterior's comment: not truncated to 32 bits --
+    // See _prepareInteriorWeightedPrediction's comment: not truncated to 32 bits --
     // libjxl computes this entirely in pixel_type_w (int64_t), narrowing
-    // only at _err0-4's own storage.
+    // only at _predictionError0-4's own storage.
     final int n3 = _north(b, o, x, y) << 3;
     final int nw3 = _northWest(b, o, x, y) << 3;
     final int ne3 = _northEast(b, o, x, y) << 3;
     final int w3 = _west(b, o, x, y) << 3;
     final int nn3 = _northNorth(b, o, x, y) << 3;
-    final Int32List e4 = _err4!;
+    final Int32List e4 = _weightedPredictionError!;
     final int tN = _errNorth(e4, o, y);
     final int tW = _errWest(e4, o, x);
     final int tNE = _errNorthEast(e4, o, x, y);
     final int tNW = _errNorthWest(e4, o, x, y);
-    _subpred[0] = w3 + ne3 - n3;
-    _subpred[1] = n3 - wideShrSigned((tW + tN + tNE) * wp.param1, 5);
-    _subpred[2] = w3 - wideShrSigned((tW + tN + tNW) * wp.param2, 5);
-    _subpred[3] = n3 - wideShrSigned(tNW * wp.param3a + tN * wp.param3b + tNE * wp.param3c + (nn3 - n3) * wp.param3d + (nw3 - w3) * wp.param3e, 5);
-    final List<int> wpw = wp.weight;
-    final int rw0 = _wpPlaneWeight(_err0!, o, x, y, wpw[0]);
-    final int rw1 = _wpPlaneWeight(_err1!, o, x, y, wpw[1]);
-    final int rw2 = _wpPlaneWeight(_err2!, o, x, y, wpw[2]);
-    final int rw3 = _wpPlaneWeight(_err3!, o, x, y, wpw[3]);
+    _predictorCandidates[0] = w3 + ne3 - n3;
+    _predictorCandidates[1] = n3 - wideShrSigned((tW + tN + tNE) * wp.northPredictionErrorScale, 5);
+    _predictorCandidates[2] = w3 - wideShrSigned((tW + tN + tNW) * wp.westPredictionErrorScale, 5);
+    _predictorCandidates[3] =
+        n3 - wideShrSigned(tNW * wp.northwestErrorScale + tN * wp.northErrorScale + tNE * wp.northeastErrorScale + (nn3 - n3) * wp.verticalGradientScale + (nw3 - w3) * wp.horizontalGradientScale, 5);
+    final List<int> predictorWeights = wp.predictorWeights;
+    final int rw0 = _weightedPredictorPlaneWeight(_predictionError0!, o, x, y, predictorWeights[0]);
+    final int rw1 = _weightedPredictorPlaneWeight(_predictionError1!, o, x, y, predictorWeights[1]);
+    final int rw2 = _weightedPredictorPlaneWeight(_predictionError2!, o, x, y, predictorWeights[2]);
+    final int rw3 = _weightedPredictorPlaneWeight(_predictionError3!, o, x, y, predictorWeights[3]);
     final int logWeight = floorLog1p(rw0 + rw1 + rw2 + rw3 - 1) - 4;
     final int sw0 = rw0 >> logWeight;
     final int sw1 = rw1 >> logWeight;
@@ -526,20 +443,20 @@ final class ModularChannel {
     final int sw3 = rw3 >> logWeight;
     final int wSum = sw0 + sw1 + sw2 + sw3;
     int s = (wSum >> 1) - 1;
-    s += _subpred[0] * sw0;
-    s += _subpred[1] * sw1;
-    s += _subpred[2] * sw2;
-    s += _subpred[3] * sw3;
+    s += _predictorCandidates[0] * sw0;
+    s += _predictorCandidates[1] * sw1;
+    s += _predictorCandidates[2] * sw2;
+    s += _predictorCandidates[3] * sw3;
     // wideShrSigned (not `>>`): the fixed-point product s * (2^24/k)
     // routinely exceeds 2^32 for ordinary pixel values, and s can be
     // negative - a bare `>>` truncates through a 32-bit int on dart2js,
     // silently corrupting the prediction (and everything downstream
     // that depends on it via the MA tree's error-based properties).
-    int pred = wideShrSigned(s * _oneL24OverKP1[wSum - 1], 24);
-    if (_wpShouldClamp(tN, tW, tNW)) {
-      pred = _clamp4(pred, w3, n3, ne3);
+    int pred = wideShrSigned(s * weightedPredictionReciprocalTable[wSum - 1], 24);
+    if (shouldClampWeightedPrediction(northError: tN, westError: tW, northWestError: tNW)) {
+      pred = clampWeightedPrediction(value: pred, west: w3, north: n3, northEast: ne3);
     }
-    _pred![o] = pred;
+    _weightedPrediction![o] = pred;
     var maxError = tW;
     if (tN.abs() > maxError.abs()) {
       maxError = tN;
@@ -608,7 +525,7 @@ final class ModularChannel {
         var k2 = 16;
         for (int j = channelIndex - 1; j >= 0; j--) {
           final ModularChannel channel = parentChannels[j];
-          if (!sizeEquals(channel) || vshift != channel.vshift || hshift != channel.hshift) {
+          if (!sizeEquals(channel) || verticalShift != channel.verticalShift || horizontalShift != channel.horizontalShift) {
             continue;
           }
           if (k2 + 4 <= k) {
@@ -631,7 +548,7 @@ final class ModularChannel {
           // the default/common encoding choice for color images, so this
           // path is very likely exercised for any RGB content, not an
           // edge case.
-          final int rG = (rC - _clamp3((rW + rN - rNW).toSigned(32), rN, rW)).toSigned(32);
+          final int rG = (rC - _clampBetween((rW + rN - rNW).toSigned(32), rN, rW)).toSigned(32);
           if (k2++ == k) {
             return rG.abs();
           }
@@ -643,41 +560,49 @@ final class ModularChannel {
     }
   }
 
-  /// Processes decode information in a JPEG XL codestream.
-  ///
-  void decode(BitReader reader, EntropyStream stream, WpParams? wpParams, MaTree tree, List<ModularChannel> parentChannels, int channelIndex, int streamIndex, int distMultiplier) {
+  /// Decodes the available JPEG XL data.
+  void decode(
+    BitReader reader,
+    EntropyStream stream,
+    WeightedPredictorParameters? weightedPredictorParameters,
+    MetaAdaptiveTree tree,
+    List<ModularChannel> parentChannels,
+    int channelIndex,
+    int streamIndex,
+    int distanceMultiplier,
+  ) {
     if (decoded) {
       throw StateError('channel decoded twice');
     }
     decoded = true;
     allocate();
-    final bool useWp = forceWp || tree.usesWeightedPredictor;
+    final bool useWp = forceWeightedPredictor || tree.usesWeightedPredictor;
     if (useWp) {
       final int n = height * width;
-      _err0 = Int32List(n);
-      _err1 = Int32List(n);
-      _err2 = Int32List(n);
-      _err3 = Int32List(n);
-      _err4 = Int32List(n);
-      _pred = Int64List(n);
+      _predictionError0 = Int32List(n);
+      _predictionError1 = Int32List(n);
+      _predictionError2 = Int32List(n);
+      _predictionError3 = Int32List(n);
+      _weightedPredictionError = Int32List(n);
+      _weightedPrediction = Int64List(n);
     }
-    final WpParams? wp = useWp ? wpParams : null;
+    final WeightedPredictorParameters? wp = useWp ? weightedPredictorParameters : null;
     final Int32List b = buffer!;
     for (var y = 0; y < height; y++) {
-      final MaTree refinedTree = tree.compactify(channelIndex, streamIndex, y);
+      final MetaAdaptiveTree refinedTree = tree.resolveStaticProperties(channelIndex, streamIndex, y);
       for (var x = 0; x < width; x++) {
-        final int maxError = wp == null ? 0 : (y > 1 && x > 1 && x + 1 < width ? _prePredictWpInterior(wp, x, y) : _prePredictWp(wp, x, y));
+        final int maxError = wp == null ? 0 : (y > 1 && x > 1 && x + 1 < width ? _prepareInteriorWeightedPrediction(wp, x, y) : _prepareWeightedPrediction(wp, x, y));
         var node = refinedTree;
         while (!node.isLeaf) {
           final int p = _property(parentChannels, channelIndex, streamIndex, node.property, maxError, y, x);
           node = p > node.value ? node.left! : node.right!;
         }
-        final int diff = stream.readSymbol(reader, node.context, distanceMultiplier: distMultiplier);
+        final int diff = stream.readSymbol(reader, node.context, distanceMultiplier: distanceMultiplier);
         // Truncate to signed 32 bits at each Java-`int` assignment point
         // (see [prediction]'s case-3 comment) -- this is *the* per-pixel
         // decode hot path, run unconditionally for every pixel, so an
         // untruncated `trueValue` here doesn't just corrupt one pixel, it
-        // feeds the WP error state (_err0-4 below) that every *later*
+        // feeds the WP error state (_predictionError0-4 below) that every *later*
         // pixel's context selection depends on, silently desyncing the
         // whole entropy stream for wide-range content (e.g. float samples
         // reinterpreted as packed 32-bit integers, see
@@ -691,21 +616,21 @@ final class ModularChannel {
           // shifts the already-narrow stored pixel value left by
           // kPredExtraBits within `pixel_type_w` (int64_t), with no
           // intermediate narrowing before `UpdateErrors`'s own per-array
-          // assignment (`pred_errors`/`error`, matched by _err0-4 being
+          // assignment (`pred_errors`/`error`, matched by _predictionError0-4 being
           // Int32List below -- storing into a typed list truncates on
           // write, exactly mirroring that assignment).
           final int tv3 = trueValue << 3;
-          _err0![o] = wideShrSigned((_subpred[0] - tv3).abs() + 3, 3);
-          _err1![o] = wideShrSigned((_subpred[1] - tv3).abs() + 3, 3);
-          _err2![o] = wideShrSigned((_subpred[2] - tv3).abs() + 3, 3);
-          _err3![o] = wideShrSigned((_subpred[3] - tv3).abs() + 3, 3);
-          _err4![o] = _pred![o] - tv3;
+          _predictionError0![o] = wideShrSigned((_predictorCandidates[0] - tv3).abs() + 3, 3);
+          _predictionError1![o] = wideShrSigned((_predictorCandidates[1] - tv3).abs() + 3, 3);
+          _predictionError2![o] = wideShrSigned((_predictorCandidates[2] - tv3).abs() + 3, 3);
+          _predictionError3![o] = wideShrSigned((_predictorCandidates[3] - tv3).abs() + 3, 3);
+          _weightedPredictionError![o] = _weightedPrediction![o] - tv3;
         }
       }
     }
     // Free the error planes, but keep pred: the delta-palette transform
-    // (dPred == 6) reads prediction(y, x, 6) after decoding.
-    _err0 = _err1 = _err2 = _err3 = _err4 = null;
+    // (deltaPredictor == 6) reads prediction(y, x, 6) after decoding.
+    _predictionError0 = _predictionError1 = _predictionError2 = _predictionError3 = _weightedPredictionError = null;
   }
 
   /// Inverse horizontal squeeze: interleaves `orig` (averages) and `res`
@@ -742,8 +667,7 @@ final class ModularChannel {
     return channel;
   }
 
+  /// Returns the sample two columns west using the border fallback.
   @pragma('vm:prefer-inline')
-  /// Processes the west west data used by the JPEG XL codec.
-  ///
   int _westWest(Int32List b, int o, int x, int y) => x > 1 ? b[o - 2] : _west(b, o, x, y);
 }

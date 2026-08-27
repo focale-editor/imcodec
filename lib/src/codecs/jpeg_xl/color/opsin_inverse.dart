@@ -1,53 +1,44 @@
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:imcodec/src/codecs/jpeg_xl/color/color_encoding.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/color/color_management.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
 
 /// The XYB → linear RGB opsin inverse matrix bundle.
 final class OpsinInverseMatrix {
-  /// Stores the default matrix state used internally by the JPEG XL codec.
-  ///
+  /// Specification constant identifying default matrix.
   static const _defaultMatrix = [
     11.031566901960783, -9.866943921568629, -0.16462299647058826, //
     -3.254147380392157, 4.418770392156863, -0.16462299647058826, //
     -3.6588512862745097, 2.7129230470588235, 1.9459282392156863,
   ];
 
-  /// Stores the default opsin bias state used internally by the JPEG XL codec.
-  ///
+  /// Specification constant identifying default opsin bias.
   static const _defaultOpsinBias = [-0.0037930732552754493, -0.0037930732552754493, -0.0037930732552754493];
 
-  /// Stores the default quant bias state used internally by the JPEG XL codec.
-  ///
+  /// Specification constant identifying default quant bias.
   static const _defaultQuantBias = [0.945349926692846, 0.9299455010825141, 0.9500648966626564];
 
-  /// Stores the default quant bias numerator state used internally by the JPEG XL codec.
-  ///
+  /// Specification constant identifying default quant bias numerator.
   static const _defaultQuantBiasNumerator = 0.145;
 
   /// Row-major 3x3 matrix.
   final List<double> matrix;
 
-  /// Stores the opsin bias value used while processing JPEG XL data.
-  ///
+  /// Bias subtracted before the opsin cube operation.
   final List<double> opsinBias;
 
-  /// Stores the quant bias value used while processing JPEG XL data.
-  ///
+  /// Per-channel bias used by quantization-field estimation.
   final List<double> quantBias;
 
-  /// Stores the quant bias numerator value used while processing JPEG XL data.
-  ///
+  /// Shared numerator used by quantization-field estimation.
   final double quantBiasNumerator;
 
-  /// Creates Opsin inverse matrix data for JPEG XL processing.
-  ///
+  /// Creates an opsin inverse matrix.
   const OpsinInverseMatrix() : matrix = _defaultMatrix, opsinBias = _defaultOpsinBias, quantBias = _defaultQuantBias, quantBiasNumerator = _defaultQuantBiasNumerator;
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
+  /// Reads this structure from the bitstream.
   factory OpsinInverseMatrix.read({
     required BitReader reader,
   }) {
@@ -61,8 +52,7 @@ final class OpsinInverseMatrix {
     return OpsinInverseMatrix._(matrix: matrix, opsinBias: opsinBias, quantBias: quantBias, quantBiasNumerator: quantBiasNumerator);
   }
 
-  /// Creates Opsin inverse matrix state for JPEG XL processing.
-  ///
+  /// Creates an opsin inverse matrix.
   const OpsinInverseMatrix._({
     required this.matrix,
     required this.opsinBias,
@@ -71,22 +61,21 @@ final class OpsinInverseMatrix {
   });
 
   /// Primaries/white point this matrix targets before any conversion.
-  CiePrimaries get primaries => ColorFlags.getPrimaries(ColorFlags.priSrgb)!;
+  CiePrimaries get primaries => ColorEncodingConstants.primariesCoordinates(ColorEncodingConstants.srgbPrimaries)!;
 
-  /// Processes white point information in a JPEG XL codestream.
-  ///
-  CieXy get whitePoint => ColorFlags.getWhitePoint(ColorFlags.wpD65)!;
+  /// D65 white point targeted by the default matrix.
+  CieXy get whitePoint => ColorEncodingConstants.whitePointCoordinates(ColorEncodingConstants.d65WhitePoint)!;
 
   /// Returns this matrix adapted to produce linear RGB with the given
   /// primaries and white point (instead of sRGB/D65).
   OpsinInverseMatrix getMatrix(CiePrimaries targetPrim, CieXy targetWP) {
-    final List<List<double>> conversion = getConversionMatrix(targetPrim, targetWP, primaries, whitePoint);
+    final List<List<double>> conversion = colorConversionMatrix(targetPrim, targetWP, primaries, whitePoint);
     final List<List<double>> m = [
       [matrix[0], matrix[1], matrix[2]],
       [matrix[3], matrix[4], matrix[5]],
       [matrix[6], matrix[7], matrix[8]],
     ];
-    final List<List<double>> adapted = matrixMultiply3(conversion, m);
+    final List<List<double>> adapted = multiplyThreeByThreeMatrices(conversion, m);
     return OpsinInverseMatrix._(matrix: [for (var y = 0; y < 3; y++) ...adapted[y]], opsinBias: opsinBias, quantBias: quantBias, quantBiasNumerator: quantBiasNumerator);
   }
 
@@ -101,9 +90,9 @@ final class OpsinInverseMatrix {
     final double ob0 = opsinBias[0];
     final double ob1 = opsinBias[1];
     final double ob2 = opsinBias[2];
-    final double cob0 = -_cbrt(opsinBias[0]);
-    final double cob1 = -_cbrt(opsinBias[1]);
-    final double cob2 = -_cbrt(opsinBias[2]);
+    final double cob0 = -realCubeRoot(opsinBias[0]);
+    final double cob1 = -realCubeRoot(opsinBias[1]);
+    final double cob2 = -realCubeRoot(opsinBias[2]);
     final vcob0 = Float32x4.splat(cob0);
     final vcob1 = Float32x4.splat(cob1);
     final vcob2 = Float32x4.splat(cob2);
@@ -158,8 +147,4 @@ final class OpsinInverseMatrix {
       }
     }
   }
-
-  /// Processes the cbrt data used by the JPEG XL codec.
-  ///
-  static double _cbrt(double v) => v < 0 ? -math.pow(-v, 1 / 3).toDouble() : math.pow(v, 1 / 3).toDouble();
 }

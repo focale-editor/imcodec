@@ -11,34 +11,28 @@ final _distPrefixTable = VlcTable.fromEntries(bits: 7, symbols: ansDistPrefixSym
 
 /// An alias-mapped rANS symbol distribution (12-bit precision).
 final class AnsSymbolDistribution extends SymbolDistribution {
-  /// Stores the frequencies state used internally by the JPEG XL codec.
-  ///
+  /// Normalized ANS frequency assigned to each symbol.
   late final Int32List _frequencies;
 
-  /// Stores the cutoffs state used internally by the JPEG XL codec.
-  ///
+  /// Cumulative frequency boundaries used to decode ANS states.
   late final Int32List _cutoffs;
 
-  /// Stores the symbols state used internally by the JPEG XL codec.
-  ///
+  /// Symbol lookup table indexed by normalized ANS state.
   late final Int32List _symbols;
 
-  /// Stores the offsets state used internally by the JPEG XL codec.
-  ///
+  /// Decode-table offset assigned to each symbol.
   late final Int32List _offsets;
 
-  /// Stores the bucket mask state used internally by the JPEG XL codec.
-  ///
+  /// Mask selecting the position within an alias bucket.
   late final int _bucketMask;
 
-  /// Creates Ans symbol distribution data for JPEG XL processing.
-  ///
+  /// Creates an ANS symbol distribution.
   AnsSymbolDistribution({
     required BitReader reader,
     required int logAlphabetSize,
   }) {
     this.logAlphabetSize = logAlphabetSize;
-    var uniqPos = -1;
+    var uniquePosition = -1;
     if (reader.readBool()) {
       // Simple distribution: one or two spikes.
       if (reader.readBool()) {
@@ -53,21 +47,21 @@ final class AnsSymbolDistribution extends SymbolDistribution {
         _frequencies[v1] = reader.readBits(12);
         _frequencies[v2] = (1 << 12) - _frequencies[v1];
         if (_frequencies[v1] == 0) {
-          uniqPos = v2;
+          uniquePosition = v2;
         }
       } else {
         final int x = reader.readU8();
         alphabetSize = 1 + x;
         _frequencies = Int32List(alphabetSize);
         _frequencies[x] = 1 << 12;
-        uniqPos = x;
+        uniquePosition = x;
       }
     } else if (reader.readBool()) {
       // Flat distribution.
       alphabetSize = 1 + reader.readU8();
       _checkAlphabetSize();
       if (alphabetSize == 1) {
-        uniqPos = 0;
+        uniquePosition = 0;
       }
       _frequencies = Int32List(alphabetSize);
       for (var i = 0; i < alphabetSize; i++) {
@@ -97,7 +91,7 @@ final class AnsSymbolDistribution extends SymbolDistribution {
       var omitLog = -1;
       var omitPos = -1;
       for (var i = 0; i < alphabetSize; i++) {
-        logCounts[i] = _distPrefixTable.getVlc(reader);
+        logCounts[i] = _distPrefixTable.readSymbol(reader);
         if (logCounts[i] == 13) {
           final int rle = reader.readU8();
           same[i] = rle + 5;
@@ -147,11 +141,10 @@ final class AnsSymbolDistribution extends SymbolDistribution {
         throw const JpegXlInvalidBitstreamException(message: 'ANS frequencies exceed 1 << 12');
       }
     }
-    _generateAliasMapping(uniqPos);
+    _generateAliasMapping(uniquePosition);
   }
 
   /// Checks alphabet size.
-  ///
   void _checkAlphabetSize() {
     if (alphabetSize > 1 << logAlphabetSize) {
       throw JpegXlInvalidBitstreamException(message: 'illegal alphabet size: $alphabetSize');
@@ -176,9 +169,8 @@ final class AnsSymbolDistribution extends SymbolDistribution {
     return symbol;
   }
 
-  /// Processes the generate alias mapping data used by the JPEG XL codec.
-  ///
-  void _generateAliasMapping(int uniqPos) {
+  /// Generates alias mapping.
+  void _generateAliasMapping(int uniquePosition) {
     logBucketSize = 12 - logAlphabetSize;
     _bucketMask = (1 << logBucketSize) - 1;
     final int bucketSize = 1 << logBucketSize;
@@ -188,9 +180,9 @@ final class AnsSymbolDistribution extends SymbolDistribution {
     _cutoffs = Int32List(tableSize);
     _offsets = Int32List(tableSize);
 
-    if (uniqPos >= 0) {
+    if (uniquePosition >= 0) {
       for (var i = 0; i < tableSize; i++) {
-        _symbols[i] = uniqPos;
+        _symbols[i] = uniquePosition;
         _offsets[i] = i * bucketSize;
         _cutoffs[i] = 0;
       }

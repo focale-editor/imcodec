@@ -6,78 +6,60 @@ import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
 
 /// Gaborish + edge-preserving-filter parameters from the frame header.
 final class RestorationFilter {
-  /// Stores the gab value used while processing JPEG XL data.
-  ///
-  bool gab = true;
+  /// Whether Gaborish deringing is enabled.
+  bool usesGaborish = true;
 
-  /// Stores the custom gab value used while processing JPEG XL data.
-  ///
-  bool customGab = false;
+  /// Whether custom Gaborish weights replace specification defaults.
+  bool usesCustomGaborish = false;
 
-  /// Processes gab1 weights information in a JPEG XL codestream.
-  ///
+  /// First-neighbor Gaborish weight for each color channel.
   final Float32List gab1Weights = Float32List.fromList(const [0.115169525, 0.115169525, 0.115169525]);
 
-  /// Processes gab2 weights information in a JPEG XL codestream.
-  ///
+  /// Diagonal-neighbor Gaborish weight for each color channel.
   final Float32List gab2Weights = Float32List.fromList(const [0.061248592, 0.061248592, 0.061248592]);
 
-  /// Stores the epf iterations value used while processing JPEG XL data.
-  ///
+  /// Number of edge-preserving filter passes.
   int epfIterations = 2;
 
-  /// Stores the epf sharp custom value used while processing JPEG XL data.
-  ///
+  /// Whether a custom sharpness lookup table is encoded.
   bool epfSharpCustom = false;
 
-  /// Processes epf sharp lut information in a JPEG XL codestream.
-  ///
+  /// Sigma multiplier selected by the quantized sharpness value.
   final Float32List epfSharpLut = Float32List.fromList(const [0, 1 / 7, 2 / 7, 3 / 7, 4 / 7, 5 / 7, 6 / 7, 1]);
 
-  /// Stores the epf weight custom value used while processing JPEG XL data.
-  ///
+  /// Whether custom per-channel filter scales are encoded.
   bool epfWeightCustom = false;
 
-  /// Processes epf channel scale information in a JPEG XL codestream.
-  ///
+  /// Edge-difference scale for each color channel.
   final Float32List epfChannelScale = Float32List.fromList(const [40.0, 5.0, 3.5]);
 
-  /// Stores the epf sigma custom value used while processing JPEG XL data.
-  ///
+  /// Whether custom sigma parameters are encoded.
   bool epfSigmaCustom = false;
 
-  /// Stores the epf quant mul value used while processing JPEG XL data.
-  ///
+  /// Multiplier converting the quantization field to filter sigma.
   double epfQuantMul = 0.46;
 
-  /// Stores the epf pass0 sigma scale value used while processing JPEG XL data.
-  ///
+  /// Sigma scale applied by the first filter pass.
   double epfPass0SigmaScale = 0.9;
 
-  /// Stores the epf pass2 sigma scale value used while processing JPEG XL data.
-  ///
+  /// Sigma scale applied by the third filter pass.
   double epfPass2SigmaScale = 6.5;
 
-  /// Stores the epf border sad mul value used while processing JPEG XL data.
-  ///
+  /// Border multiplier for the sum of absolute differences.
   double epfBorderSadMul = 2 / 3;
 
-  /// Stores the epf sigma for modular value used while processing JPEG XL data.
-  ///
+  /// Fixed sigma used for modular frames.
   double epfSigmaForModular = 1.0;
 
-  /// Processes extensions information in a JPEG XL codestream.
-  ///
+  /// Returns the extension payloads.
   Extensions extensions = const Extensions();
 
-  /// Processes defaults information in a JPEG XL codestream.
-  ///
+  /// Returns the specification defaults.
   RestorationFilter.defaults() {
     _bakeSharpLut();
   }
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
+  /// Reads this structure from the bitstream.
   factory RestorationFilter.read({
     required BitReader reader,
     required int encoding,
@@ -87,9 +69,9 @@ final class RestorationFilter {
       return RestorationFilter.defaults();
     }
     final rf = RestorationFilter._();
-    rf.gab = reader.readBool();
-    rf.customGab = rf.gab && reader.readBool();
-    if (rf.customGab) {
+    rf.usesGaborish = reader.readBool();
+    rf.usesCustomGaborish = rf.usesGaborish && reader.readBool();
+    if (rf.usesCustomGaborish) {
       for (var i = 0; i < 3; i++) {
         rf.gab1Weights[i] = reader.readF16();
         rf.gab2Weights[i] = reader.readF16();
@@ -120,12 +102,10 @@ final class RestorationFilter {
     return rf;
   }
 
-  /// Creates Restoration filter state for JPEG XL processing.
-  ///
+  /// Creates a restoration filter.
   RestorationFilter._();
 
-  /// Processes the bake sharp lut data used by the JPEG XL codec.
-  ///
+  /// Builds sharp lookup table.
   void _bakeSharpLut() {
     for (var i = 0; i < 8; i++) {
       epfSharpLut[i] *= epfQuantMul;

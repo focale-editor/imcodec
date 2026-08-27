@@ -1,122 +1,114 @@
 import 'package:imcodec/src/codecs/jpeg_xl/color/color_encoding.dart';
 
-/// Minimal color management: white-point adaptation and primaries
-/// conversion matrices (all math in doubles, 3x3 row-major lists).
-
-const _bradford = [
+/// Bradford cone-response matrix used for chromatic adaptation.
+const List<List<double>> _bradfordMatrix = [
   [0.8951, 0.2664, -0.1614],
   [-0.7502, 1.7135, 0.0367],
   [0.0389, -0.0685, 1.0296],
 ];
 
-/// Processes matrix multiply3 information in a JPEG XL codestream.
-///
-List<List<double>> matrixMultiply3(List<List<double>> left, List<List<double>> right) {
+/// Multiplies two row-major three-by-three matrices.
+List<List<double>> multiplyThreeByThreeMatrices(List<List<double>> left, List<List<double>> right) {
   final List<List<double>> result = List.generate(3, (_) => List<double>.filled(3, 0));
-  for (var y = 0; y < 3; y++) {
-    for (var x = 0; x < 3; x++) {
-      var total = 0.0;
-      for (var k = 0; k < 3; k++) {
-        total += left[y][k] * right[k][x];
+  for (int row = 0; row < 3; row++) {
+    for (int column = 0; column < 3; column++) {
+      double total = 0.0;
+      for (int innerIndex = 0; innerIndex < 3; innerIndex++) {
+        total += left[row][innerIndex] * right[innerIndex][column];
       }
-      result[y][x] = total;
+      result[row][column] = total;
     }
   }
   return result;
 }
 
-/// Processes matrix vector3 information in a JPEG XL codestream.
-///
-List<double> matrixVector3(List<List<double>> m, List<double> v) => [for (var y = 0; y < 3; y++) m[y][0] * v[0] + m[y][1] * v[1] + m[y][2] * v[2]];
+/// Multiplies a row-major three-by-three [matrix] by a three-value [vector].
+List<double> multiplyThreeByThreeMatrixAndVector(List<List<double>> matrix, List<double> vector) => [
+  for (int row = 0; row < 3; row++) matrix[row][0] * vector[0] + matrix[row][1] * vector[1] + matrix[row][2] * vector[2],
+];
 
-/// Processes invert matrix3x3 information in a JPEG XL codestream.
-///
-List<List<double>>? invertMatrix3x3(List<List<double>> matrix) {
-  var det = 0.0;
-  for (var c = 0; c < 3; c++) {
-    final int c1 = (c + 1) % 3;
-    final int c2 = (c + 2) % 3;
-    det += matrix[c][0] * matrix[c1][1] * matrix[c2][2] - matrix[c][0] * matrix[c1][2] * matrix[c2][1];
+/// Returns the inverse of [matrix], or `null` when it is singular.
+List<List<double>>? invertThreeByThreeMatrix(List<List<double>> matrix) {
+  double determinant = 0.0;
+  for (int column = 0; column < 3; column++) {
+    final int nextColumn = (column + 1) % 3;
+    final int finalColumn = (column + 2) % 3;
+    determinant += matrix[column][0] * matrix[nextColumn][1] * matrix[finalColumn][2] - matrix[column][0] * matrix[nextColumn][2] * matrix[finalColumn][1];
   }
-  if (det == 0) {
+  if (determinant == 0) {
     return null;
   }
-  final double invDet = 1.0 / det;
+  final double inverseDeterminant = 1.0 / determinant;
   final List<List<double>> inverse = List.generate(3, (_) => List<double>.filled(3, 0));
-  for (var x = 0; x < 3; x++) {
-    for (var y = 0; y < 3; y++) {
-      final int x1 = (x + 1) % 3;
-      final int x2 = (x + 2) % 3;
-      final int y1 = (y + 1) % 3;
-      final int y2 = (y + 2) % 3;
-      inverse[y][x] = (matrix[x1][y1] * matrix[x2][y2] - matrix[x2][y1] * matrix[x1][y2]) * invDet;
+  for (int column = 0; column < 3; column++) {
+    for (int row = 0; row < 3; row++) {
+      final int nextColumn = (column + 1) % 3;
+      final int finalColumn = (column + 2) % 3;
+      final int nextRow = (row + 1) % 3;
+      final int finalRow = (row + 2) % 3;
+      inverse[row][column] = (matrix[nextColumn][nextRow] * matrix[finalColumn][finalRow] - matrix[finalColumn][nextRow] * matrix[nextColumn][finalRow]) * inverseDeterminant;
     }
   }
   return inverse;
 }
 
-/// Processes matrix identity3 information in a JPEG XL codestream.
-///
-List<List<double>> matrixIdentity3() => [
+/// Returns a three-by-three identity matrix.
+List<List<double>> threeByThreeIdentityMatrix() => [
   [1, 0, 0],
   [0, 1, 0],
   [0, 0, 1],
 ];
 
-/// Processes the get xyz data used by the JPEG XL codec.
-///
-List<double> _getXYZ(CieXy xy) {
-  final double invY = 1.0 / xy.y;
-  return [xy.x * invY, 1.0, (1.0 - xy.x - xy.y) * invY];
+/// Converts a CIE xy [chromaticity] to normalized XYZ tristimulus values.
+List<double> _chromaticityToXyz(CieXy chromaticity) {
+  final double inverseY = 1.0 / chromaticity.y;
+  return [chromaticity.x * inverseY, 1.0, (1.0 - chromaticity.x - chromaticity.y) * inverseY];
 }
 
-/// Processes the adapt white point data used by the JPEG XL codec.
-///
-List<List<double>> _adaptWhitePoint(CieXy? targetWP, CieXy? currentWP) {
-  final CieXy target = targetWP ?? ColorFlags.getWhitePoint(ColorFlags.wpD50)!;
-  final CieXy current = currentWP ?? ColorFlags.getWhitePoint(ColorFlags.wpD50)!;
-  final List<double> lmsCurrent = matrixVector3(_bradford, _getXYZ(current));
-  final List<double> lmsTarget = matrixVector3(_bradford, _getXYZ(target));
-  final List<List<double>> a = List.generate(3, (_) => List<double>.filled(3, 0));
-  for (var i = 0; i < 3; i++) {
-    a[i][i] = lmsTarget[i] / lmsCurrent[i];
+/// Builds a Bradford adaptation matrix between two white points.
+List<List<double>> _whitePointAdaptationMatrix(CieXy? targetWhitePoint, CieXy? currentWhitePoint) {
+  final CieXy target = targetWhitePoint ?? ColorEncodingConstants.whitePointCoordinates(ColorEncodingConstants.d50WhitePoint)!;
+  final CieXy current = currentWhitePoint ?? ColorEncodingConstants.whitePointCoordinates(ColorEncodingConstants.d50WhitePoint)!;
+  final List<double> lmsCurrent = multiplyThreeByThreeMatrixAndVector(_bradfordMatrix, _chromaticityToXyz(current));
+  final List<double> lmsTarget = multiplyThreeByThreeMatrixAndVector(_bradfordMatrix, _chromaticityToXyz(target));
+  final List<List<double>> coneScale = List.generate(3, (_) => List<double>.filled(3, 0));
+  for (int channel = 0; channel < 3; channel++) {
+    coneScale[channel][channel] = lmsTarget[channel] / lmsCurrent[channel];
   }
-  final List<List<double>> bradfordInverse = invertMatrix3x3(_bradford)!;
-  return matrixMultiply3(matrixMultiply3(bradfordInverse, a), _bradford);
+  final List<List<double>> bradfordInverse = invertThreeByThreeMatrix(_bradfordMatrix)!;
+  return multiplyThreeByThreeMatrices(multiplyThreeByThreeMatrices(bradfordInverse, coneScale), _bradfordMatrix);
 }
 
-/// Processes the primaries to xyz data used by the JPEG XL codec.
-///
-List<List<double>> _primariesToXYZ(CiePrimaries primaries, CieXy? wp) {
-  final CieXy whitePoint = wp ?? ColorFlags.getWhitePoint(ColorFlags.wpD50)!;
-  final List<List<double>> primariesTr = [_getXYZ(primaries.red), _getXYZ(primaries.green), _getXYZ(primaries.blue)];
+/// Builds the RGB-to-XYZ matrix for [primaries] and [whitePoint].
+List<List<double>> _primariesToXyzMatrix(CiePrimaries primaries, CieXy? whitePoint) {
+  final CieXy resolvedWhitePoint = whitePoint ?? ColorEncodingConstants.whitePointCoordinates(ColorEncodingConstants.d50WhitePoint)!;
+  final List<List<double>> primaryTristimulusValues = [_chromaticityToXyz(primaries.red), _chromaticityToXyz(primaries.green), _chromaticityToXyz(primaries.blue)];
   // Transpose.
-  final List<List<double>> primariesMatrix = List.generate(3, (y) => List<double>.generate(3, (x) => primariesTr[x][y]));
-  final List<List<double>> inversePrimaries = invertMatrix3x3(primariesMatrix)!;
-  final List<double> xyz = matrixVector3(inversePrimaries, _getXYZ(whitePoint));
-  final List<List<double>> a = [
-    [xyz[0], 0.0, 0.0],
-    [0.0, xyz[1], 0.0],
-    [0.0, 0.0, xyz[2]],
+  final List<List<double>> primariesMatrix = List.generate(3, (row) => List<double>.generate(3, (column) => primaryTristimulusValues[column][row]));
+  final List<List<double>> inversePrimaries = invertThreeByThreeMatrix(primariesMatrix)!;
+  final List<double> channelScales = multiplyThreeByThreeMatrixAndVector(inversePrimaries, _chromaticityToXyz(resolvedWhitePoint));
+  final List<List<double>> scaleMatrix = [
+    [channelScales[0], 0.0, 0.0],
+    [0.0, channelScales[1], 0.0],
+    [0.0, 0.0, channelScales[2]],
   ];
-  return matrixMultiply3(primariesMatrix, a);
+  return multiplyThreeByThreeMatrices(primariesMatrix, scaleMatrix);
 }
 
-/// Conversion matrix from (currentPrim, currentWP) linear RGB to
-/// (targetPrim, targetWP) linear RGB.
-List<List<double>> getConversionMatrix(CiePrimaries targetPrim, CieXy targetWP, CiePrimaries currentPrim, CieXy currentWP) {
-  if (targetPrim.matches(currentPrim) && targetWP.matches(currentWP)) {
-    return matrixIdentity3();
+/// Builds a linear-RGB conversion matrix between two color encodings.
+List<List<double>> colorConversionMatrix(CiePrimaries targetPrimaries, CieXy targetWhitePoint, CiePrimaries currentPrimaries, CieXy currentWhitePoint) {
+  if (targetPrimaries.matches(currentPrimaries) && targetWhitePoint.matches(currentWhitePoint)) {
+    return threeByThreeIdentityMatrix();
   }
-  List<List<double>>? whitePointConv;
-  if (!targetWP.matches(currentWP)) {
-    whitePointConv = _adaptWhitePoint(targetWP, currentWP);
+  List<List<double>>? whitePointConversion;
+  if (!targetWhitePoint.matches(currentWhitePoint)) {
+    whitePointConversion = _whitePointAdaptationMatrix(targetWhitePoint, currentWhitePoint);
   }
-  final List<List<double>> forward = _primariesToXYZ(currentPrim, currentWP);
-  final List<List<double>> reverse = invertMatrix3x3(_primariesToXYZ(targetPrim, targetWP))!;
-  var result = forward;
-  if (whitePointConv != null) {
-    result = matrixMultiply3(whitePointConv, result);
+  final List<List<double>> forward = _primariesToXyzMatrix(currentPrimaries, currentWhitePoint);
+  final List<List<double>> reverse = invertThreeByThreeMatrix(_primariesToXyzMatrix(targetPrimaries, targetWhitePoint))!;
+  List<List<double>> result = forward;
+  if (whitePointConversion != null) {
+    result = multiplyThreeByThreeMatrices(whitePointConversion, result);
   }
-  return matrixMultiply3(reverse, result);
+  return multiplyThreeByThreeMatrices(reverse, result);
 }

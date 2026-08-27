@@ -3,42 +3,35 @@ import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
 
 /// Per-channel blending parameters from the frame header.
 final class BlendingInfo {
-  /// Stores the mode value used while processing JPEG XL data.
-  ///
+  /// Blending mode identifier defined by the JPEG XL specification.
   final int mode;
 
-  /// Stores the alpha channel value used while processing JPEG XL data.
-  ///
+  /// Extra-channel index supplying alpha for blending.
   final int alphaChannel;
 
-  /// Stores the clamp value used while processing JPEG XL data.
-  ///
+  /// Whether blended samples are clamped to the nominal range.
   final bool clamp;
 
-  /// Stores the source value used while processing JPEG XL data.
-  ///
+  /// Reference-frame slot used as the blending source.
   final int source;
 
-  /// Processes defaults information in a JPEG XL codestream.
-  ///
+  /// Creates the replace-mode defaults used for a full frame.
   const BlendingInfo.defaults() : mode = FrameFlags.blendReplace, alphaChannel = 0, clamp = false, source = 0;
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
+  /// Reads this structure from the bitstream.
   factory BlendingInfo.read({
     required BitReader reader,
     required bool extra,
-    required bool fullFrame,
+    required bool coversFullCanvas,
   }) {
     final int mode = reader.readU32(0, 0, 1, 0, 2, 0, 3, 2);
     final int alphaChannel = extra && (mode == FrameFlags.blendBlend || mode == FrameFlags.blendMulAdd) ? reader.readU32(0, 0, 1, 0, 2, 0, 3, 3) : 0;
-    final bool clamp = extra && (mode == FrameFlags.blendBlend || mode == FrameFlags.blendMult || mode == FrameFlags.blendMulAdd) && reader.readBool();
-    final int source = mode != FrameFlags.blendReplace || !fullFrame ? reader.readBits(2) : 0;
+    final bool clamp = extra && (mode == FrameFlags.blendBlend || mode == FrameFlags.blendMultiply || mode == FrameFlags.blendMulAdd) && reader.readBool();
+    final int source = mode != FrameFlags.blendReplace || !coversFullCanvas ? reader.readBits(2) : 0;
     return BlendingInfo._(mode: mode, alphaChannel: alphaChannel, clamp: clamp, source: source);
   }
 
-  /// Creates Blending info state for JPEG XL processing.
-  ///
+  /// Creates decoded blending settings.
   const BlendingInfo._({
     required this.mode,
     required this.alphaChannel,

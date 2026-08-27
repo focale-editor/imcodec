@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/entropy/ans.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/entropy/entropy_tables.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/entropy/hybrid_uint.dart';
@@ -7,67 +8,53 @@ import 'package:imcodec/src/codecs/jpeg_xl/entropy/prefix.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/entropy/symbol_distribution.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
 
 /// An entropy-coded symbol stream: clustered distributions (prefix or ANS),
 /// hybrid-integer token expansion, and an optional LZ77 window.
 final class EntropyStream {
-  /// Stores the uses lz77 value used while processing JPEG XL data.
-  ///
+  /// Whether entropy coding uses LZ77 references.
   late final bool usesLz77;
 
-  /// Stores the lz77 min symbol state used internally by the JPEG XL codec.
-  ///
+  /// First entropy symbol reserved for an LZ77 match.
   int _lz77MinSymbol = 0;
 
-  /// Stores the lz77 min length state used internally by the JPEG XL codec.
-  ///
+  /// Length of lz 77 min in the entropy stream.
   int _lz77MinLength = 0;
 
-  /// Stores the lz length config state used internally by the JPEG XL codec.
-  ///
-  HybridIntegerConfig? _lzLengthConfig;
+  /// Hybrid-integer configuration used for LZ77 match lengths.
+  HybridIntegerConfig? _lz77LengthConfig;
 
-  /// Stores the cluster map state used internally by the JPEG XL codec.
-  ///
+  /// Mapping used to resolve cluster in the entropy stream.
   late final Int32List _clusterMap;
 
-  /// Stores the dists state used internally by the JPEG XL codec.
-  ///
-  late final List<SymbolDistribution> _dists;
+  /// Symbol distributions selected through [_clusterMap].
+  late final List<SymbolDistribution> _distributions;
 
-  /// Stores the log alphabet size state used internally by the JPEG XL codec.
-  ///
+  /// Dimensions or allocation size of log alphabet in the entropy stream.
   late final int _logAlphabetSize;
 
-  /// Stores the window state used internally by the JPEG XL codec.
-  ///
+  /// Circular history buffer used by LZ77 back-references.
   Int32List? _window;
 
-  /// Stores the num to copy state used internally by the JPEG XL codec.
-  ///
-  int _numToCopy = 0;
+  /// Number of symbols remaining in the active LZ77 back-reference.
+  int _remainingCopyCount = 0;
 
-  /// Copies pos.
-  ///
-  int _copyPos = 0;
+  /// Source position of the active LZ77 back-reference.
+  int _copyPosition = 0;
 
-  /// Stores the num decoded state used internally by the JPEG XL codec.
-  ///
-  int _numDecoded = 0;
+  /// Number of decoded symbols written to the history window.
+  int _decodedSymbolCount = 0;
 
-  /// Processes the ans state data used by the JPEG XL codec.
-  ///
+  /// Range-ANS state shared by the stream's symbol distributions.
   final AnsState _ansState = AnsState();
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
+  /// Reads this structure from the bitstream.
   EntropyStream.read({
     required BitReader reader,
-    required int numDists,
+    required int distributionCount,
   }) : this._(
          reader: reader,
-         numDists: numDists,
+         distributionCount: distributionCount,
          disallowLz77: false,
        );
 
@@ -78,25 +65,24 @@ final class EntropyStream {
   }) : usesLz77 = other.usesLz77,
        _lz77MinSymbol = other._lz77MinSymbol,
        _lz77MinLength = other._lz77MinLength,
-       _lzLengthConfig = other._lzLengthConfig,
+       _lz77LengthConfig = other._lz77LengthConfig,
        _clusterMap = other._clusterMap,
-       _dists = other._dists,
+       _distributions = other._distributions,
        _logAlphabetSize = other._logAlphabetSize {
     if (usesLz77) {
       _window = Int32List(1 << 20);
     }
   }
 
-  /// Creates Entropy stream state for JPEG XL processing.
-  ///
+  /// Creates an entropy stream.
   EntropyStream._({
     required BitReader reader,
-    required int numDists,
+    required int distributionCount,
     required bool disallowLz77,
   }) {
-    int distributionCount = numDists;
-    if (distributionCount <= 0) {
-      throw ArgumentError('numDists must be positive');
+    int decodedDistributionCount = distributionCount;
+    if (decodedDistributionCount <= 0) {
+      throw ArgumentError('distributionCount must be positive');
     }
     usesLz77 = reader.readBool();
     if (usesLz77) {
@@ -105,93 +91,92 @@ final class EntropyStream {
       }
       _lz77MinSymbol = reader.readU32(224, 0, 512, 0, 4096, 0, 8, 15);
       _lz77MinLength = reader.readU32(3, 0, 4, 0, 5, 2, 9, 8);
-      distributionCount++;
-      _lzLengthConfig = HybridIntegerConfig.read(reader: reader, logAlphabetSize: 8);
+      decodedDistributionCount++;
+      _lz77LengthConfig = HybridIntegerConfig.read(reader: reader, logAlphabetSize: 8);
       _window = Int32List(1 << 20);
     }
 
-    _clusterMap = Int32List(distributionCount);
-    final int numClusters = readClusterMap(reader, _clusterMap, distributionCount);
+    _clusterMap = Int32List(decodedDistributionCount);
+    final int clusterCount = readClusterMap(reader, _clusterMap, decodedDistributionCount);
 
     final bool prefixCodes = reader.readBool();
     _logAlphabetSize = prefixCodes ? 15 : 5 + reader.readBits(2);
-    final configs = List<HybridIntegerConfig>.generate(numClusters, (_) => HybridIntegerConfig.read(reader: reader, logAlphabetSize: _logAlphabetSize));
+    final configs = List<HybridIntegerConfig>.generate(clusterCount, (_) => HybridIntegerConfig.read(reader: reader, logAlphabetSize: _logAlphabetSize));
 
     if (prefixCodes) {
-      final alphabetSizes = List<int>.generate(numClusters, (_) {
+      final alphabetSizes = List<int>.generate(clusterCount, (_) {
         if (!reader.readBool()) {
           return 1;
         }
         final int n = reader.readBits(4);
         return 1 + (1 << n) + reader.readBits(n);
       });
-      _dists = List<SymbolDistribution>.generate(numClusters, (i) => PrefixSymbolDistribution(reader: reader, alphabetSize: alphabetSizes[i]));
+      _distributions = List<SymbolDistribution>.generate(clusterCount, (i) => PrefixSymbolDistribution(reader: reader, alphabetSize: alphabetSizes[i]));
     } else {
-      _dists = List<SymbolDistribution>.generate(numClusters, (_) => AnsSymbolDistribution(reader: reader, logAlphabetSize: _logAlphabetSize));
+      _distributions = List<SymbolDistribution>.generate(clusterCount, (_) => AnsSymbolDistribution(reader: reader, logAlphabetSize: _logAlphabetSize));
     }
-    for (var i = 0; i < numClusters; i++) {
-      _dists[i].config = configs[i];
+    for (var i = 0; i < clusterCount; i++) {
+      _distributions[i].config = configs[i];
     }
   }
 
   /// Reads a cluster map of `clusterMap.length` entries; returns the number
   /// of clusters.
   static int readClusterMap(BitReader reader, Int32List clusterMap, int maxClusters) {
-    final int numDists = clusterMap.length;
-    if (numDists == 1) {
+    final int distributionCount = clusterMap.length;
+    if (distributionCount == 1) {
       clusterMap[0] = 0;
     } else if (reader.readBool()) {
       // Simple clustering.
       final int nbits = reader.readBits(2);
-      for (var i = 0; i < numDists; i++) {
+      for (var i = 0; i < distributionCount; i++) {
         clusterMap[i] = reader.readBits(nbits);
       }
     } else {
-      final bool useMtf = reader.readBool();
-      final nested = EntropyStream._(reader: reader, numDists: 1, disallowLz77: numDists <= 2);
-      for (var i = 0; i < numDists; i++) {
+      final bool usesMoveToFront = reader.readBool();
+      final nested = EntropyStream._(reader: reader, distributionCount: 1, disallowLz77: distributionCount <= 2);
+      for (var i = 0; i < distributionCount; i++) {
         clusterMap[i] = nested.readSymbol(reader, 0);
       }
       if (!nested.validateFinalState()) {
         throw const JpegXlInvalidBitstreamException(message: 'nested cluster-map distribution');
       }
-      if (useMtf) {
-        final mtf = Int32List(256);
+      if (usesMoveToFront) {
+        final moveToFront = Int32List(256);
         for (var i = 0; i < 256; i++) {
-          mtf[i] = i;
+          moveToFront[i] = i;
         }
-        for (var i = 0; i < numDists; i++) {
+        for (var i = 0; i < distributionCount; i++) {
           final int index = clusterMap[i];
           if (index > 255) {
             throw const JpegXlInvalidBitstreamException(message: 'MTF index out of range');
           }
-          clusterMap[i] = mtf[index];
+          clusterMap[i] = moveToFront[index];
           if (index != 0) {
-            final int value = mtf[index];
+            final int value = moveToFront[index];
             for (var j = index; j > 0; j--) {
-              mtf[j] = mtf[j - 1];
+              moveToFront[j] = moveToFront[j - 1];
             }
-            mtf[0] = value;
+            moveToFront[0] = value;
           }
         }
       }
     }
-    var numClusters = 0;
-    for (var i = 0; i < numDists; i++) {
-      if (clusterMap[i] >= numClusters) {
-        numClusters = clusterMap[i] + 1;
+    var clusterCount = 0;
+    for (var i = 0; i < distributionCount; i++) {
+      if (clusterMap[i] >= clusterCount) {
+        clusterCount = clusterMap[i] + 1;
       }
     }
-    if (numClusters > maxClusters) {
+    if (clusterCount > maxClusters) {
       throw const JpegXlInvalidBitstreamException(message: 'too many clusters');
     }
-    return numClusters;
+    return clusterCount;
   }
 
-  /// Processes reset information in a JPEG XL codestream.
-  ///
+  /// Resets the accumulated state.
   void reset() {
-    _numToCopy = 0;
+    _remainingCopyCount = 0;
     _ansState.reset();
   }
 
@@ -199,14 +184,13 @@ final class EntropyStream {
   /// final value (or never have been initialized at all).
   bool validateFinalState() => !_ansState.hasState || _ansState.state == 0x130000;
 
-  /// Processes read symbol information in a JPEG XL codestream.
-  ///
+  /// Reads one entropy-coded symbol.
   int readSymbol(BitReader reader, int context, {int distanceMultiplier = 0}) {
-    if (_numToCopy > 0) {
+    if (_remainingCopyCount > 0) {
       final Int32List window = _window!;
-      final int hybridInt = window[_copyPos++ & 0xFFFFF];
-      _numToCopy--;
-      window[_numDecoded++ & 0xFFFFF] = hybridInt;
+      final int hybridInt = window[_copyPosition++ & 0xFFFFF];
+      _remainingCopyCount--;
+      window[_decodedSymbolCount++ & 0xFFFFF] = hybridInt;
       return hybridInt;
     }
 
@@ -214,12 +198,12 @@ final class EntropyStream {
       throw const JpegXlInvalidBitstreamException(message: 'entropy context out of range');
     }
     final int cluster = _clusterMap[context];
-    final SymbolDistribution dist = _dists[cluster];
+    final SymbolDistribution dist = _distributions[cluster];
     int token = dist.readSymbol(reader, _ansState);
 
     if (usesLz77 && token >= _lz77MinSymbol) {
-      final SymbolDistribution lz77dist = _dists[_clusterMap[_clusterMap.length - 1]];
-      _numToCopy = _lz77MinLength + _readHybridInteger(reader, _lzLengthConfig!, token - _lz77MinSymbol);
+      final SymbolDistribution lz77dist = _distributions[_clusterMap[_clusterMap.length - 1]];
+      _remainingCopyCount = _lz77MinLength + _readHybridInteger(reader, _lz77LengthConfig!, token - _lz77MinSymbol);
       token = lz77dist.readSymbol(reader, _ansState);
       int distance = _readHybridInteger(reader, lz77dist.config!, token);
       if (distanceMultiplier == 0) {
@@ -235,23 +219,22 @@ final class EntropyStream {
       if (distance > 1 << 20) {
         distance = 1 << 20;
       }
-      if (distance > _numDecoded) {
-        distance = _numDecoded;
+      if (distance > _decodedSymbolCount) {
+        distance = _decodedSymbolCount;
       }
-      _copyPos = _numDecoded - distance;
+      _copyPosition = _decodedSymbolCount - distance;
       return readSymbol(reader, context, distanceMultiplier: distanceMultiplier);
     }
 
     final int hybridInt = _readHybridInteger(reader, dist.config!, token);
     if (usesLz77) {
-      _window![_numDecoded++ & 0xFFFFF] = hybridInt;
+      _window![_decodedSymbolCount++ & 0xFFFFF] = hybridInt;
     }
     return hybridInt;
   }
 
+  /// Expands a hybrid-integer [encodedToken] from the bitstream.
   @pragma('vm:prefer-inline')
-  /// Reads hybrid integer.
-  ///
   int _readHybridInteger(BitReader reader, HybridIntegerConfig config, int encodedToken) {
     int token = encodedToken;
     final int split = 1 << config.splitExponent;

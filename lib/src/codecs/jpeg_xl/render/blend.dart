@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/image_buffer.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/blending_info.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/frame.dart';
@@ -7,11 +8,9 @@ import 'package:imcodec/src/codecs/jpeg_xl/frame/frame_flags.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/header/bit_depth.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/header/extra_channel.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/header/image_header.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/image_buffer.dart';
 
 /// Frame and patch blending onto a canvas (port of jxlatte's
 /// JXLCodestreamDecoder blend machinery).
-///
 /// Throughout, "new" is the incoming frame content and "old" is the existing
 /// reference content; parameter names follow jxlatte's (frame*/ref*) offsets.
 
@@ -22,7 +21,6 @@ double _clamp01(double v) => v < 0
     : v;
 
 /// Copies to canvas.
-///
 void _copyToCanvas(ImageBuffer canvas, int patchY, int patchX, int frameY, int frameX, int height, int width, ImageBuffer frame) {
   if (canvas.isInt) {
     final List<Int32List> c = canvas.intRows;
@@ -39,8 +37,7 @@ void _copyToCanvas(ImageBuffer canvas, int patchY, int patchX, int frameY, int f
   }
 }
 
-/// Processes the blend add data used by the JPEG XL codec.
-///
+/// Blends add.
 void _blendAdd(ImageBuffer canvas, ImageBuffer frame, ImageBuffer ref, int patchY, int patchX, int frameY, int frameX, int refY, int refX, int height, int width) {
   if (frame.isInt) {
     final List<Int32List> cb = canvas.intRows;
@@ -63,8 +60,7 @@ void _blendAdd(ImageBuffer canvas, ImageBuffer frame, ImageBuffer ref, int patch
   }
 }
 
-/// Processes the blend mult data used by the JPEG XL codec.
-///
+/// Blends mult.
 void _blendMult(ImageBuffer canvas, ImageBuffer frame, ImageBuffer ref, int patchY, int patchX, int frameY, int frameX, int refY, int refX, int height, int width, bool clamp) {
   final List<Float32List> cb = canvas.floatRows;
   final List<Float32List> fb = frame.floatRows;
@@ -80,8 +76,7 @@ void _blendMult(ImageBuffer canvas, ImageBuffer frame, ImageBuffer ref, int patc
   }
 }
 
-/// Processes the blend blend data used by the JPEG XL codec.
-///
+/// Blends blend.
 void _blendBlend(
   ImageBuffer canvas,
   ImageBuffer frame,
@@ -136,8 +131,7 @@ void _blendBlend(
   }
 }
 
-/// Processes the blend mul add data used by the JPEG XL codec.
-///
+/// Blends mul add.
 void _blendMulAdd(
   ImageBuffer canvas,
   ImageBuffer frame,
@@ -233,7 +227,7 @@ void blendBuffers({
       case 2:
         mode = FrameFlags.blendAdd;
       case 3:
-        mode = FrameFlags.blendMult;
+        mode = FrameFlags.blendMultiply;
       case 4:
         mode = FrameFlags.blendBlend;
       case 5:
@@ -268,7 +262,7 @@ void blendBuffers({
     frameBuffers[frameColors + info.alphaChannel].castToFloat(alphaDepth);
     frameAlpha = frameBuffers[frameColors + info.alphaChannel];
   }
-  final bool shouldCast = mode == FrameFlags.blendMult || mode == FrameFlags.blendBlend && hasExtra || mode == FrameFlags.blendMulAdd && hasExtra && !isAlpha;
+  final bool shouldCast = mode == FrameFlags.blendMultiply || mode == FrameFlags.blendBlend && hasExtra || mode == FrameFlags.blendMulAdd && hasExtra && !isAlpha;
   if (shouldCast || refBuffer.isInt != frameBuffer.isInt) {
     frameBuffer.castToFloat(bitDepth.bitsPerSample);
     canvas.castToFloat(bitDepth.bitsPerSample);
@@ -288,7 +282,7 @@ void blendBuffers({
   switch (mode) {
     case FrameFlags.blendAdd:
       _blendAdd(canvas, newBuffer, oldBuffer, patchY, patchX, frameY, frameX, refY, refX, blendHeight, blendWidth);
-    case FrameFlags.blendMult:
+    case FrameFlags.blendMultiply:
       _blendMult(canvas, newBuffer, oldBuffer, patchY, patchX, frameY, frameX, refY, refX, blendHeight, blendWidth, info.clamp);
     case FrameFlags.blendBlend:
       _blendBlend(canvas, newBuffer, oldBuffer, frameAlpha, refAlpha, patchY, patchX, frameY, frameX, refY, refX, blendHeight, blendWidth, isAlpha, hasExtra, info.clamp, premult);

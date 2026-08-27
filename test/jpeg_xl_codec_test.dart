@@ -4,13 +4,14 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:imcodec/imcodec.dart';
 
+/// Exercises the public JPEG XL codec behavior.
 void main() {
   group('JPEG XL', () {
-    test('round-trips lossless RGBA exactly', () async {
+    test('round-trips lossless RGBA exactly', () {
       final Image source = _testImage();
 
       final Uint8List encoded = encodeJpegXl(source);
-      final Image decoded = await decodeJpegXl(encoded);
+      final Image decoded = decodeJpegXl(encoded);
 
       expect(ImageFormat.sniff(encoded), ImageFormat.jpegXl);
       expect(decoded.width, source.width);
@@ -18,10 +19,10 @@ void main() {
       expect(decoded.bytes, source.bytes);
     });
 
-    test('decodes an independently encoded lossy VarDCT fixture', () async {
+    test('decodes an independently encoded lossy VarDCT fixture', () {
       final Uint8List encoded = File('test/fixtures/jpeg_xl/screentone_256_d0_e5.jxl').readAsBytesSync();
 
-      final Image decoded = await decodeJxl(encoded);
+      final Image decoded = decodeJxl(encoded);
 
       expect(decoded.width, 256);
       expect(decoded.height, 256);
@@ -29,19 +30,22 @@ void main() {
       expect(_fnv1a(decoded.bytes), 529052100);
     });
 
-    test('automatic dispatch decodes JPEG XL', () async {
+    test('automatic dispatch decodes JPEG XL', () {
       final Image source = _testImage();
 
-      final Image decoded = await decodeImage(encodeJxl(source));
+      final Image decoded = decodeImage(encodeJxl(source));
 
       expect(decoded.bytes, source.bytes);
     });
 
-    test('enforces pixel limits and rejects truncation', () async {
+    test('enforces pixel limits and rejects truncation', () {
       final Uint8List encoded = encodeJxl(_testImage());
 
-      await expectLater(decodeJxl(encoded, maxPixels: 1), throwsA(isA<ImageCodecException>()));
-      await expectLater(decodeJxl(Uint8List.sublistView(encoded, 0, 3)), throwsA(isA<ImageCodecException>()));
+      expect(() => decodeJxl(encoded, maxPixels: 1), throwsA(isA<ImageCodecException>()));
+      expect(
+        () => decodeJxl(Uint8List.sublistView(encoded, 0, 3)),
+        throwsA(isA<ImageCodecException>()),
+      );
     });
   });
 }

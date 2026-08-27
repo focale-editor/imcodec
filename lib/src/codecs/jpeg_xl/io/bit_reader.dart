@@ -1,36 +1,29 @@
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
 
 /// Reads a JPEG XL codestream bit by bit.
-///
 /// JPEG XL bitstreams are read LSB-first within each byte: the first bit read
 /// from a byte is its least significant bit, and the first bit read
 /// contributes the least significant bit of the returned value.
-///
 /// The cache invariant keeps [_cache] strictly below 2^40 (at most 39 live
 /// bits), so all arithmetic stays in non-negative Dart ints and never touches
 /// the sign bit.
 final class BitReader {
-  /// Stores the data state used internally by the JPEG XL codec.
-  ///
+  /// Encoded data being processed.
   final Uint8List _data;
 
-  /// Stores the pos state used internally by the JPEG XL codec.
-  ///
-  int _pos = 0;
+  /// Current position within bit.
+  int _bitPosition = 0;
 
-  /// Stores the cache state used internally by the JPEG XL codec.
-  ///
+  /// Least-significant-bit-first window of unread input bits.
   int _cache = 0;
 
-  /// Stores the cache bits state used internally by the JPEG XL codec.
-  ///
+  /// Number of unread bits currently held in [_cache].
   int _cacheBits = 0;
 
-  /// Creates Bit reader data for JPEG XL processing.
-  ///
+  /// Creates a bit reader.
   BitReader({
     required this._data,
   });
@@ -43,10 +36,10 @@ final class BitReader {
   }) : this(data: Uint8List.sublistView(data, start, end));
 
   /// Total number of bits consumed so far.
-  int get bitsRead => (_pos << 3) - _cacheBits;
+  int get bitsRead => (_bitPosition << 3) - _cacheBits;
 
   /// Whether every bit of the input has been consumed.
-  bool get atEnd => _cacheBits == 0 && _pos >= _data.length;
+  bool get atEnd => _cacheBits == 0 && _bitPosition >= _data.length;
 
   /// Whether the read position is on a byte boundary.
   bool get isAligned => _cacheBits & 7 == 0;
@@ -54,7 +47,7 @@ final class BitReader {
   /// Byte offset of the read position. Only valid when [isAligned].
   int get bytePosition {
     assert(isAligned, 'The reader must be byte-aligned.');
-    return _pos - (_cacheBits >> 3);
+    return _bitPosition - (_cacheBits >> 3);
   }
 
   /// Bytes remaining from the current (aligned) position, as a no-copy view.
@@ -71,7 +64,7 @@ final class BitReader {
       return 0;
     }
     while (_cacheBits < bits) {
-      if (_pos >= _data.length) {
+      if (_bitPosition >= _data.length) {
         throw JpegXlTruncatedException(message: 'unable to read $bits bits at bit position $bitsRead');
       }
       // += (not |=): _cacheBits is always < 32 here (the loop can add at
@@ -82,7 +75,7 @@ final class BitReader {
       // high bits already in _cache. Addition doesn't have that limit,
       // and is equivalent here since the new byte's bit range never
       // overlaps what's already in _cache.
-      _cache += _data[_pos++] * (1 << _cacheBits);
+      _cache += _data[_bitPosition++] * (1 << _cacheBits);
       _cacheBits += 8;
     }
     // bits == 32 is a real call (ANS state init reads a raw 32-bit word):
@@ -97,13 +90,12 @@ final class BitReader {
   }
 
   /// Returns the next `bits` bits without consuming them.
-  ///
   /// Bits past the end of the input read as zero (required by prefix-code
   /// lookup near the end of a stream).
   @pragma('vm:prefer-inline')
   int peekBits(int bits) {
     assert(bits >= 0 && bits <= 32, 'The bit count must be between 0 and 32.');
-    while (_cacheBits < bits && _pos < _data.length) {
+    while (_cacheBits < bits && _bitPosition < _data.length) {
       // += (not |=): _cacheBits is always < 32 here (the loop can add at
       // most 4 bytes before bits <= 32 stops it), so `1 << _cacheBits` is
       // itself safe, but the ACCUMULATED _cache can exceed 2^32 - and
@@ -112,14 +104,13 @@ final class BitReader {
       // high bits already in _cache. Addition doesn't have that limit,
       // and is equivalent here since the new byte's bit range never
       // overlaps what's already in _cache.
-      _cache += _data[_pos++] * (1 << _cacheBits);
+      _cache += _data[_bitPosition++] * (1 << _cacheBits);
       _cacheBits += 8;
     }
     return _cache & (bits == 32 ? 0xFFFFFFFF : (1 << bits) - 1);
   }
 
-  /// Processes read bool information in a JPEG XL codestream.
-  ///
+  /// Reads one Boolean value from the bitstream.
   bool readBool() => readBits(1) != 0;
 
   /// The spec's `U32(...)` field: a 2-bit selector choosing one of four
@@ -172,7 +163,7 @@ final class BitReader {
       throw const JpegXlInvalidBitstreamException(message: 'illegal infinite/NaN float16');
     }
     // Subnormal: m * 2^-24; normal: (m + 1024) * 2^(e - 25).
-    final double magnitude = exp == 0 ? mantissa * 5.9604644775390625e-8 : (mantissa + 1024) * _pow2(exp - 25);
+    final double magnitude = exp == 0 ? mantissa * 5.9604644775390625e-8 : (mantissa + 1024) * _powerOfTwo(exp - 25);
     return bits16 & 0x8000 != 0 ? -magnitude : magnitude;
   }
 
@@ -214,7 +205,6 @@ final class BitReader {
   }
 
   /// Consumes bits up to the next byte boundary, which must all be zero.
-  ///
   /// Bits are only ever consumed from the cache, so `_cacheBits % 8` is
   /// always the exact distance to the next byte boundary.
   void zeroPadToByte() {
@@ -237,27 +227,26 @@ final class BitReader {
     _cache = 0;
     _cacheBits = 0;
     final int bytes = bits >> 3;
-    if (_pos + bytes > _data.length) {
+    if (_bitPosition + bytes > _data.length) {
       throw JpegXlTruncatedException(message: 'unable to skip $bits bits');
     }
-    _pos += bytes;
+    _bitPosition += bytes;
     readBits(bits & 7);
   }
 }
 
-/// Processes the pow2 data used by the JPEG XL codec.
-///
-double _pow2(int e) {
-  // e is in [-25, 6] for f16; direct ldexp.
-  var v = 1.0;
-  var n = e;
-  while (n > 0) {
-    v *= 2.0;
-    n--;
+/// Returns two raised to the signed integer [exponent].
+double _powerOfTwo(int exponent) {
+  // The exponent is in [-25, 6] for a 16-bit float.
+  double value = 1;
+  int remainingExponent = exponent;
+  while (remainingExponent > 0) {
+    value *= 2;
+    remainingExponent--;
   }
-  while (n < 0) {
-    v /= 2.0;
-    n++;
+  while (remainingExponent < 0) {
+    value /= 2;
+    remainingExponent++;
   }
-  return v;
+  return value;
 }

@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
 
 /// Result of container demuxing: the raw codestream plus container metadata.
 final class DemuxedStream {
@@ -14,22 +14,20 @@ final class DemuxedStream {
   /// Whether the input was wrapped in an ISOBMFF container.
   final bool isContainer;
 
-  /// The `jbrd` (JPEG bitstream reconstruction data) box payload, if present.
-  /// Non-null only for JPEG-transcoded files.
-  final Uint8List? jbrd;
+  /// Payload of the JPEG bitstream reconstruction-data box, when present.
+  /// Only JPEG-transcoded files carry this `jbrd` box.
+  final Uint8List? jpegReconstructionData;
 
-  /// Creates Demuxed stream state for JPEG XL processing.
-  ///
+  /// Creates a demuxed stream.
   const DemuxedStream._({
     required this.codestream,
     required this.level,
     required this.isContainer,
-    this.jbrd,
+    this.jpegReconstructionData,
   });
 }
 
-/// Stores the container signature state used internally by the JPEG XL codec.
-///
+/// JPEG XL container signature bytes.
 const _containerSignature = [
   0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, // ....JXL(space)
   0x0D, 0x0A, 0x87, 0x0A,
@@ -37,7 +35,6 @@ const _containerSignature = [
 
 /// Whether [bytes] start with a JPEG XL signature — the bare codestream
 /// marker (`FF 0A`) or the 12-byte ISOBMFF container signature box.
-///
 /// A cheap prefix check for routing bytes of mixed image formats to the
 /// right decoder; it validates nothing beyond the signature (a `true` can
 /// still fail to decode — use `JpegXlCodestreamInfo.parse` to actually inspect the
@@ -74,7 +71,7 @@ DemuxedStream demuxContainer(Uint8List data) {
 
   final byteData = ByteData.sublistView(data);
   var level = 5;
-  Uint8List? jbrd;
+  Uint8List? jpegReconstructionData;
   final parts = <Uint8List>[];
   var offset = 12;
   while (offset < data.length) {
@@ -127,7 +124,7 @@ DemuxedStream demuxContainer(Uint8List data) {
         }
         parts.add(Uint8List.sublistView(data, payloadStart + 4, payloadEnd));
       case 'jbrd':
-        jbrd = Uint8List.sublistView(data, payloadStart, payloadEnd);
+        jpegReconstructionData = Uint8List.sublistView(data, payloadStart, payloadEnd);
       default:
         break; // Exif, xml , brob, ftyp, ... — skipped.
     }
@@ -149,7 +146,12 @@ DemuxedStream demuxContainer(Uint8List data) {
       pos += part.length;
     }
   }
-  return DemuxedStream._(codestream: codestream, level: level, isContainer: true, jbrd: jbrd);
+  return DemuxedStream._(
+    codestream: codestream,
+    level: level,
+    isContainer: true,
+    jpegReconstructionData: jpegReconstructionData,
+  );
 }
 
 /// Extracts as much of the codestream as [data] (a growing prefix of a JXL

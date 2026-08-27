@@ -4,41 +4,40 @@ import 'package:imcodec/src/codecs/jpeg_xl/frame/frame.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/frame_header.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/var_dct/afv_basis.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/var_dct/dct.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/var_dct/hf_coefficients.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/var_dct/hf_metadata.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/var_dct/high_frequency_coefficients.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/var_dct/high_frequency_metadata.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/var_dct/transform_type.dart';
 
-/// Processes the lay block data used by the JPEG XL codec.
-///
-void _layBlock(List<Float32List> block, List<Float32List> buffer, int inY, int inX, int outY, int outX, int height, int width) {
+/// Copies a rectangular transform block into its output position.
+void _copyTransformBlock(List<Float32List> block, List<Float32List> buffer, int inputOriginY, int inputOriginX, int outputOriginY, int outputOriginX, int height, int width) {
   for (var y = 0; y < height; y++) {
-    buffer[y + outY].setRange(outX, outX + width, block[y + inY], inX);
+    buffer[y + outputOriginY].setRange(outputOriginX, outputOriginX + width, block[y + inputOriginY], inputOriginX);
   }
 }
 
-/// Processes the invert afv data used by the JPEG XL codec.
-///
-void _invertAFV(
-  List<Float32List> coeffs,
+/// Reconstructs one asymmetric-frequency-varying transform block.
+void _invertAfv(
+  List<Float32List> coefficients,
   List<Float32List> buffer,
-  TransformType tt,
-  int ppgY,
-  int ppgX,
-  int ppfY,
-  int ppfX,
-  List<Float32List> s0,
-  List<Float32List> s1,
-  List<Float32List> s2,
-  List<Float32List> s3,
+  TransformType transformType,
+  int coefficientOriginY,
+  int coefficientOriginX,
+  int outputOriginY,
+  int outputOriginX,
+  List<Float32List> firstScratch,
+  List<Float32List> secondScratch,
+  List<Float32List> thirdScratch,
+  List<Float32List> fourthScratch,
 ) {
-  s0[0][0] = (coeffs[ppgY][ppgX] + coeffs[ppgY + 1][ppgX] + coeffs[ppgY][ppgX + 1]) * 4.0;
+  firstScratch[0][0] =
+      (coefficients[coefficientOriginY][coefficientOriginX] + coefficients[coefficientOriginY + 1][coefficientOriginX] + coefficients[coefficientOriginY][coefficientOriginX + 1]) * 4.0;
   for (var iy = 0; iy < 4; iy++) {
     for (var ix = iy == 0 ? 1 : 0; ix < 4; ix++) {
-      s0[iy][ix] = coeffs[ppgY + iy * 2][ppgX + ix * 2];
+      firstScratch[iy][ix] = coefficients[coefficientOriginY + iy * 2][coefficientOriginX + ix * 2];
     }
   }
-  final flipY = tt.type == 16 || tt.type == 17 ? 1 : 0; // AFV2, AFV3
-  final flipX = tt.type == 15 || tt.type == 17 ? 1 : 0; // AFV1, AFV3
+  final flipY = transformType.type == 16 || transformType.type == 17 ? 1 : 0; // AFV2, AFV3
+  final flipX = transformType.type == 15 || transformType.type == 17 ? 1 : 0; // AFV1, AFV3
 
   for (var iy = 0; iy < 4; iy++) {
     for (var ix = 0; ix < 4; ix++) {
@@ -46,55 +45,54 @@ void _invertAFV(
       for (var j = 0; j < 16; j++) {
         final int jy = j >> 2;
         final int jx = j & 3;
-        sample += s0[jy][jx] * afvBasis[j * 16 + iy * 4 + ix];
+        sample += firstScratch[jy][jx] * afvBasis[j * 16 + iy * 4 + ix];
       }
-      s1[iy][ix] = sample;
+      secondScratch[iy][ix] = sample;
     }
   }
   for (var iy = 0; iy < 4; iy++) {
     for (var ix = 0; ix < 4; ix++) {
-      buffer[ppfY + flipY * 4 + iy][ppfX + flipX * 4 + ix] = s1[flipY == 1 ? 3 - iy : iy][flipX == 1 ? 3 - ix : ix];
+      buffer[outputOriginY + flipY * 4 + iy][outputOriginX + flipX * 4 + ix] = secondScratch[flipY == 1 ? 3 - iy : iy][flipX == 1 ? 3 - ix : ix];
     }
   }
   // SPEC: watch signs here.
-  s0[0][0] = coeffs[ppgY][ppgX] + coeffs[ppgY + 1][ppgX] - coeffs[ppgY][ppgX + 1];
+  firstScratch[0][0] = coefficients[coefficientOriginY][coefficientOriginX] + coefficients[coefficientOriginY + 1][coefficientOriginX] - coefficients[coefficientOriginY][coefficientOriginX + 1];
   for (var iy = 0; iy < 4; iy++) {
     for (var ix = iy == 0 ? 1 : 0; ix < 4; ix++) {
-      s0[iy][ix] = coeffs[ppgY + iy * 2][ppgX + ix * 2 + 1];
+      firstScratch[iy][ix] = coefficients[coefficientOriginY + iy * 2][coefficientOriginX + ix * 2 + 1];
     }
   }
-  inverseDCT2D(s0, s1, 0, 0, 0, 0, 4, 4, s2, s3, false);
+  inverseDct2d(firstScratch, secondScratch, 0, 0, 0, 0, 4, 4, thirdScratch, fourthScratch, false);
   for (var iy = 0; iy < 4; iy++) {
     for (var ix = 0; ix < 4; ix++) {
       // Transposed intentionally.
-      buffer[ppfY + flipY * 4 + iy][ppfX + (flipX == 1 ? 0 : 4) + ix] = s1[ix][iy];
+      buffer[outputOriginY + flipY * 4 + iy][outputOriginX + (flipX == 1 ? 0 : 4) + ix] = secondScratch[ix][iy];
     }
   }
-  s0[0][0] = coeffs[ppgY][ppgX] - coeffs[ppgY + 1][ppgX];
+  firstScratch[0][0] = coefficients[coefficientOriginY][coefficientOriginX] - coefficients[coefficientOriginY + 1][coefficientOriginX];
   for (var iy = 0; iy < 4; iy++) {
     for (var ix = iy == 0 ? 1 : 0; ix < 8; ix++) {
-      s0[iy][ix] = coeffs[ppgY + 1 + iy * 2][ppgX + ix];
+      firstScratch[iy][ix] = coefficients[coefficientOriginY + 1 + iy * 2][coefficientOriginX + ix];
     }
   }
-  inverseDCT2D(s0, s1, 0, 0, 0, 0, 4, 8, s2, s3, false);
+  inverseDct2d(firstScratch, secondScratch, 0, 0, 0, 0, 4, 8, thirdScratch, fourthScratch, false);
   for (var iy = 0; iy < 4; iy++) {
     for (var ix = 0; ix < 8; ix++) {
-      buffer[ppfY + (flipY == 1 ? 0 : 4) + iy][ppfX + ix] = s1[iy][ix];
+      buffer[outputOriginY + (flipY == 1 ? 0 : 4) + iy][outputOriginX + ix] = secondScratch[iy][ix];
     }
   }
 }
 
-/// Processes the aux dct2 data used by the JPEG XL codec.
-///
-void _auxDCT2(List<Float32List> coeffs, List<Float32List> result, int pY, int pX, int psY, int psX, int s) {
-  _layBlock(coeffs, result, pY, pX, psY, psX, 8, 8);
+/// Applies the auxiliary two-by-two inverse transform to one coefficient block.
+void _applyAuxiliaryDct2(List<Float32List> coefficients, List<Float32List> result, int pY, int pX, int psY, int psX, int s) {
+  _copyTransformBlock(coefficients, result, pY, pX, psY, psX, 8, 8);
   final int num = s ~/ 2;
   for (var iy = 0; iy < num; iy++) {
     for (var ix = 0; ix < num; ix++) {
-      final double c00 = coeffs[pY + iy][pX + ix];
-      final double c01 = coeffs[pY + iy][pX + ix + num];
-      final double c10 = coeffs[pY + iy + num][pX + ix];
-      final double c11 = coeffs[pY + iy + num][pX + ix + num];
+      final double c00 = coefficients[pY + iy][pX + ix];
+      final double c01 = coefficients[pY + iy][pX + ix + num];
+      final double c10 = coefficients[pY + iy + num][pX + ix];
+      final double c11 = coefficients[pY + iy + num][pX + ix + num];
       result[psY + iy * 2][psX + ix * 2] = c00 + c01 + c10 + c11;
       result[psY + iy * 2][psX + ix * 2 + 1] = c00 + c01 - c10 - c11;
       result[psY + iy * 2 + 1][psX + ix * 2] = c00 - c01 + c10 - c11;
@@ -103,49 +101,49 @@ void _auxDCT2(List<Float32List> coeffs, List<Float32List> result, int pY, int pX
   }
 }
 
-/// Accumulates previous-pass coefficients, bakes dequantized coefficients,
-/// and inverse-transforms every varblock of this group into the frame's
-/// float channel rows.
-void invertVarDCTGroup(
-  HfCoefficients hf,
-  HfCoefficients? prev,
-  List<Float32List> fb0,
-  List<Float32List> fb1,
-  List<Float32List> fb2,
-  List<Float32List> s0,
-  List<Float32List> s1,
-  List<Float32List> s2,
-  List<Float32List> s3,
-  List<Float32List> s4,
-  List<Float32x4List>? fbV0,
-  List<Float32x4List>? fbV1,
-  List<Float32x4List>? fbV2,
+/// Reconstructs every variable-DCT block in one coding group.
+/// Coefficients from a previous progressive pass are accumulated before the
+/// current pass is dequantized and transformed into the frame buffers.
+void invertVarDctGroup(
+  HighFrequencyCoefficients highFrequencyCoefficients,
+  HighFrequencyCoefficients? previousPassCoefficients,
+  List<Float32List> firstFrameBuffer,
+  List<Float32List> secondFrameBuffer,
+  List<Float32List> thirdFrameBuffer,
+  List<Float32List> firstScratch,
+  List<Float32List> secondScratch,
+  List<Float32List> thirdScratch,
+  List<Float32List> fourthScratch,
+  List<Float32List> fifthScratch,
+  List<Float32x4List>? firstVectorFrameBuffer,
+  List<Float32x4List>? secondVectorFrameBuffer,
+  List<Float32x4List>? thirdVectorFrameBuffer,
 ) {
-  final Frame frame = hf.frame;
+  final Frame frame = highFrequencyCoefficients.frame;
   final FrameHeader header = frame.header;
-  final HfMetadata meta = hf.lfg.hfMetadata!;
+  final HighFrequencyMetadata meta = highFrequencyCoefficients.lowFrequencyGroup.highFrequencyMetadata!;
 
-  if (prev != null) {
-    for (final int i in hf.includedIndices) {
-      final int posY = meta.blockY[i];
-      final int posX = meta.blockX[i];
-      final TransformType tt = meta.dctSelectAt(posY, posX)!;
-      final int groupY = posY - hf.groupPosY;
-      final int groupX = posX - hf.groupPosX;
+  if (previousPassCoefficients != null) {
+    for (final int i in highFrequencyCoefficients.includedIndices) {
+      final int posY = meta.blockRows[i];
+      final int posX = meta.blockColumns[i];
+      final TransformType transformType = meta.transformTypeAt(posY, posX)!;
+      final int groupY = posY - highFrequencyCoefficients.groupOriginY;
+      final int groupX = posX - highFrequencyCoefficients.groupOriginX;
       for (var c = 0; c < 3; c++) {
-        final int sGroupY = groupY >> header.jpegUpsamplingY[c];
-        final int sGroupX = groupX >> header.jpegUpsamplingX[c];
-        if (sGroupY << header.jpegUpsamplingY[c] != groupY || sGroupX << header.jpegUpsamplingX[c] != groupX) {
+        final int sGroupY = groupY >> header.jpegVerticalUpsamplingShift[c];
+        final int sGroupX = groupX >> header.jpegHorizontalUpsamplingShift[c];
+        if (sGroupY << header.jpegVerticalUpsamplingShift[c] != groupY || sGroupX << header.jpegHorizontalUpsamplingShift[c] != groupX) {
           continue;
         }
         final int pixelY = sGroupY << 3;
         final int pixelX = sGroupX << 3;
-        final Float32List qc = hf.quantizedCoeffs[c];
-        final Float32List pqc = prev.quantizedCoeffs[c];
-        final int qw = hf.coeffWidth[c];
-        for (var iy = 0; iy < tt.pixelHeight; iy++) {
+        final Float32List qc = highFrequencyCoefficients.quantizedCoefficients[c];
+        final Float32List pqc = previousPassCoefficients.quantizedCoefficients[c];
+        final int qw = highFrequencyCoefficients.coefficientWidth[c];
+        for (var iy = 0; iy < transformType.pixelHeight; iy++) {
           final int base = (pixelY + iy) * qw + pixelX;
-          for (var ix = 0; ix < tt.pixelWidth; ix++) {
+          for (var ix = 0; ix < transformType.pixelWidth; ix++) {
             qc[base + ix] += pqc[base + ix];
           }
         }
@@ -153,114 +151,130 @@ void invertVarDCTGroup(
     }
   }
 
-  hf.bakeDequantizedCoeffs();
-  final ({int x, int y}) groupLoc = frame.getGroupLocation(hf.groupID);
+  highFrequencyCoefficients.bakeDequantizedCoefficients();
+  final ({int x, int y}) groupLoc = frame.getGroupLocation(highFrequencyCoefficients.groupId);
   final int groupLocY = groupLoc.y << 8;
   final int groupLocX = groupLoc.x << 8;
 
-  for (final int i in hf.includedIndices) {
-    final int posY = meta.blockY[i];
-    final int posX = meta.blockX[i];
-    final TransformType tt = meta.dctSelectAt(posY, posX)!;
-    final int groupY = posY - hf.groupPosY;
-    final int groupX = posX - hf.groupPosX;
+  for (final int i in highFrequencyCoefficients.includedIndices) {
+    final int posY = meta.blockRows[i];
+    final int posX = meta.blockColumns[i];
+    final TransformType transformType = meta.transformTypeAt(posY, posX)!;
+    final int groupY = posY - highFrequencyCoefficients.groupOriginY;
+    final int groupX = posX - highFrequencyCoefficients.groupOriginX;
     for (var c = 0; c < 3; c++) {
-      final int sGroupY = groupY >> header.jpegUpsamplingY[c];
-      final int sGroupX = groupX >> header.jpegUpsamplingX[c];
-      if (sGroupY << header.jpegUpsamplingY[c] != groupY || sGroupX << header.jpegUpsamplingX[c] != groupX) {
+      final int sGroupY = groupY >> header.jpegVerticalUpsamplingShift[c];
+      final int sGroupX = groupX >> header.jpegHorizontalUpsamplingShift[c];
+      if (sGroupY << header.jpegVerticalUpsamplingShift[c] != groupY || sGroupX << header.jpegHorizontalUpsamplingShift[c] != groupX) {
         continue;
       }
-      final int ppgY = sGroupY << 3;
-      final int ppgX = sGroupX << 3;
-      final int ppfY = ppgY + (groupLocY >> header.jpegUpsamplingY[c]);
-      final int ppfX = ppgX + (groupLocX >> header.jpegUpsamplingX[c]);
-      final List<Float32List> cc = hf.dequantHFCoeffAt(c);
-      final fb = c == 0 ? fb0 : (c == 1 ? fb1 : fb2);
-      switch (tt.transformMethod) {
+      final int coefficientOriginY = sGroupY << 3;
+      final int coefficientOriginX = sGroupX << 3;
+      final int outputOriginY = coefficientOriginY + (groupLocY >> header.jpegVerticalUpsamplingShift[c]);
+      final int outputOriginX = coefficientOriginX + (groupLocX >> header.jpegHorizontalUpsamplingShift[c]);
+      final List<Float32List> cc = highFrequencyCoefficients.dequantizedHighFrequencyCoefficientsAt(c);
+      final fb = c == 0 ? firstFrameBuffer : (c == 1 ? secondFrameBuffer : thirdFrameBuffer);
+      switch (transformType.transformMethod) {
         case TransformMethod.dct:
-          if (tt.pixelHeight == 8 && tt.pixelWidth == 8 && fbV0 != null && hf.simdViews) {
-            inverseDCT8x8Simd(hf.dequantHFCoeffVAt(c), c == 0 ? fbV0 : (c == 1 ? fbV1! : fbV2!), ppgY, ppgX >> 2, ppfY, ppfX >> 2);
-          } else if (fbV0 != null && hf.simdViews) {
-            inverseDCT2DSimd(hf.dequantHFCoeffVAt(c), c == 0 ? fbV0 : (c == 1 ? fbV1! : fbV2!), ppgY, ppgX >> 2, ppfY, ppfX >> 2, tt.pixelHeight, tt.pixelWidth);
+          if (transformType.pixelHeight == 8 && transformType.pixelWidth == 8 && firstVectorFrameBuffer != null && highFrequencyCoefficients.hasSimdViews) {
+            inverseDct8x8Simd(
+              highFrequencyCoefficients.dequantizedHighFrequencyCoefficientsSimdAt(c),
+              c == 0 ? firstVectorFrameBuffer : (c == 1 ? secondVectorFrameBuffer! : thirdVectorFrameBuffer!),
+              coefficientOriginY,
+              coefficientOriginX >> 2,
+              outputOriginY,
+              outputOriginX >> 2,
+            );
+          } else if (firstVectorFrameBuffer != null && highFrequencyCoefficients.hasSimdViews) {
+            inverseDct2dSimd(
+              highFrequencyCoefficients.dequantizedHighFrequencyCoefficientsSimdAt(c),
+              c == 0 ? firstVectorFrameBuffer : (c == 1 ? secondVectorFrameBuffer! : thirdVectorFrameBuffer!),
+              coefficientOriginY,
+              coefficientOriginX >> 2,
+              outputOriginY,
+              outputOriginX >> 2,
+              transformType.pixelHeight,
+              transformType.pixelWidth,
+            );
           } else {
-            inverseDCT2D(cc, fb, ppgY, ppgX, ppfY, ppfX, tt.pixelHeight, tt.pixelWidth, s0, s1, false);
+            inverseDct2d(cc, fb, coefficientOriginY, coefficientOriginX, outputOriginY, outputOriginX, transformType.pixelHeight, transformType.pixelWidth, firstScratch, secondScratch, false);
           }
         case TransformMethod.dct8x4:
-          final double coeff0 = cc[ppgY][ppgX];
-          final double coeff1 = cc[ppgY + 1][ppgX];
+          final double coeff0 = cc[coefficientOriginY][coefficientOriginX];
+          final double coeff1 = cc[coefficientOriginY + 1][coefficientOriginX];
           final List<double> lfs = [coeff0 + coeff1, coeff0 - coeff1];
           for (var x = 0; x < 2; x++) {
-            s0[0][0] = lfs[x];
+            firstScratch[0][0] = lfs[x];
             for (var iy = 0; iy < 4; iy++) {
               for (var ix = iy == 0 ? 1 : 0; ix < 8; ix++) {
-                s0[iy][ix] = cc[ppgY + x + iy * 2][ppgX + ix];
+                firstScratch[iy][ix] = cc[coefficientOriginY + x + iy * 2][coefficientOriginX + ix];
               }
             }
-            inverseDCT2D(s0, fb, 0, 0, ppfY, ppfX + (x << 2), 4, 8, s1, s2, true);
+            inverseDct2d(firstScratch, fb, 0, 0, outputOriginY, outputOriginX + (x << 2), 4, 8, secondScratch, thirdScratch, true);
           }
         case TransformMethod.dct4x8:
-          final double coeff0 = cc[ppgY][ppgX];
-          final double coeff1 = cc[ppgY + 1][ppgX];
+          final double coeff0 = cc[coefficientOriginY][coefficientOriginX];
+          final double coeff1 = cc[coefficientOriginY + 1][coefficientOriginX];
           final List<double> lfs = [coeff0 + coeff1, coeff0 - coeff1];
           for (var y = 0; y < 2; y++) {
-            s0[0][0] = lfs[y];
+            firstScratch[0][0] = lfs[y];
             for (var iy = 0; iy < 4; iy++) {
               for (var ix = iy == 0 ? 1 : 0; ix < 8; ix++) {
-                s0[iy][ix] = cc[ppgY + y + iy * 2][ppgX + ix];
+                firstScratch[iy][ix] = cc[coefficientOriginY + y + iy * 2][coefficientOriginX + ix];
               }
             }
-            inverseDCT2D(s0, fb, 0, 0, ppfY + (y << 2), ppfX, 4, 8, s1, s2, false);
+            inverseDct2d(firstScratch, fb, 0, 0, outputOriginY + (y << 2), outputOriginX, 4, 8, secondScratch, thirdScratch, false);
           }
         case TransformMethod.afv:
-          _invertAFV(cc, fb, tt, ppgY, ppgX, ppfY, ppfX, s0, s1, s2, s3);
+          _invertAfv(cc, fb, transformType, coefficientOriginY, coefficientOriginX, outputOriginY, outputOriginX, firstScratch, secondScratch, thirdScratch, fourthScratch);
         case TransformMethod.dct2:
-          _auxDCT2(cc, s0, ppgY, ppgX, 0, 0, 2);
-          _auxDCT2(s0, s1, 0, 0, 0, 0, 4);
-          _auxDCT2(s1, fb, 0, 0, ppfY, ppfX, 8);
+          _applyAuxiliaryDct2(cc, firstScratch, coefficientOriginY, coefficientOriginX, 0, 0, 2);
+          _applyAuxiliaryDct2(firstScratch, secondScratch, 0, 0, 0, 0, 4);
+          _applyAuxiliaryDct2(secondScratch, fb, 0, 0, outputOriginY, outputOriginX, 8);
         case TransformMethod.hornuss:
-          _auxDCT2(cc, s1, ppgY, ppgX, 0, 0, 2);
+          _applyAuxiliaryDct2(cc, secondScratch, coefficientOriginY, coefficientOriginX, 0, 0, 2);
           for (var y = 0; y < 2; y++) {
             for (var x = 0; x < 2; x++) {
-              final double blockLF = s1[y][x];
+              final double blockLowestFrequency = secondScratch[y][x];
               var residual = 0.0;
               for (var iy = 0; iy < 4; iy++) {
                 for (var ix = iy == 0 ? 1 : 0; ix < 4; ix++) {
-                  residual += cc[ppgY + y + iy * 2][ppgX + x + ix * 2];
+                  residual += cc[coefficientOriginY + y + iy * 2][coefficientOriginX + x + ix * 2];
                 }
               }
-              s0[4 * y + 1][4 * x + 1] = blockLF - residual * 0.0625;
+              firstScratch[4 * y + 1][4 * x + 1] = blockLowestFrequency - residual * 0.0625;
               for (var iy = 0; iy < 4; iy++) {
                 for (var ix = 0; ix < 4; ix++) {
                   if (ix == 1 && iy == 1) {
                     continue;
                   }
-                  s0[y * 4 + iy][x * 4 + ix] = cc[ppgY + y + iy * 2][ppgX + x + ix * 2] + s0[4 * y + 1][4 * x + 1];
+                  firstScratch[y * 4 + iy][x * 4 + ix] = cc[coefficientOriginY + y + iy * 2][coefficientOriginX + x + ix * 2] + firstScratch[4 * y + 1][4 * x + 1];
                 }
               }
-              s0[4 * y][4 * x] = cc[ppgY + y + 2][ppgX + x + 2] + s0[4 * y + 1][4 * x + 1];
+              firstScratch[4 * y][4 * x] = cc[coefficientOriginY + y + 2][coefficientOriginX + x + 2] + firstScratch[4 * y + 1][4 * x + 1];
             }
           }
-          _layBlock(s0, fb, 0, 0, ppfY, ppfX, tt.pixelHeight, tt.pixelWidth);
+          _copyTransformBlock(firstScratch, fb, 0, 0, outputOriginY, outputOriginX, transformType.pixelHeight, transformType.pixelWidth);
         case TransformMethod.dct4:
-          _auxDCT2(cc, s4, ppgY, ppgX, 0, 0, 2);
+          _applyAuxiliaryDct2(cc, fifthScratch, coefficientOriginY, coefficientOriginX, 0, 0, 2);
           for (var y = 0; y < 2; y++) {
             for (var x = 0; x < 2; x++) {
-              s0[0][0] = s4[y][x];
+              firstScratch[0][0] = fifthScratch[y][x];
               for (var iy = 0; iy < 4; iy++) {
                 for (var ix = iy == 0 ? 1 : 0; ix < 4; ix++) {
-                  s0[iy][ix] = cc[ppgY + y + iy * 2][ppgX + x + ix * 2];
+                  firstScratch[iy][ix] = cc[coefficientOriginY + y + iy * 2][coefficientOriginX + x + ix * 2];
                 }
               }
-              inverseDCT2D(s0, s1, 0, 0, 0, 0, 4, 4, s2, s3, true);
+              inverseDct2d(firstScratch, secondScratch, 0, 0, 0, 0, 4, 4, thirdScratch, fourthScratch, true);
               for (var iy = 0; iy < 4; iy++) {
                 for (var ix = 0; ix < 4; ix++) {
-                  fb[ppfY + 4 * y + iy][ppfX + 4 * x + ix] = s1[iy][ix];
+                  fb[outputOriginY + 4 * y + iy][outputOriginX + 4 * x + ix] = secondScratch[iy][ix];
                 }
               }
             }
           }
         default:
-          throw UnsupportedError('transform not implemented: $tt');
+          throw UnsupportedError('transform not implemented: $transformType');
       }
     }
   }

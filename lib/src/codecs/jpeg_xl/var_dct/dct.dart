@@ -1,47 +1,41 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 
 /// 1D DCT engine using the JXL scaling convention:
-///
 ///   IDCT_N(c)[j] = c[0] + sum_{n>=1} c[n] * sqrt(2) * cos(pi*n*(j+0.5)/N)
 ///   DCT_N(x)[k]  = (alpha(k)/N) * sum_j x[j] * cos(pi*k*(j+0.5)/N)
-///
 /// Small sizes (<= 8) use direct transposed-LUT evaluation; larger sizes use
 /// Lee's O(N log N) recursion with the sqrt(2) factors folded into the
 /// lifting steps, matching the naive evaluation to float precision.
 
-const _invSqrt2 = 0.7071067811865476;
+/// Inverse square root of two used by the lifting steps.
+const double _inverseSquareRootOfTwo = 0.7071067811865476;
 
-/// Stores the w4x0 state used internally by the JPEG XL codec.
-///
-const _w4x0 = 0.76536686473017956;
+/// First rotation weight for the four-point transform.
+const double _dct4Weight0 = 0.76536686473017956;
 
-/// Stores the w4x1 state used internally by the JPEG XL codec.
-///
-const _w4x1 = 1.8477590650225733;
+/// Second rotation weight for the four-point transform.
+const double _dct4Weight1 = 1.8477590650225733;
 
-/// Stores the w8x0 state used internally by the JPEG XL codec.
-///
-const _w8x0 = 0.72095982200694797;
+/// First rotation weight for the eight-point transform.
+const double _dct8Weight0 = 0.72095982200694797;
 
-/// Stores the w8x1 state used internally by the JPEG XL codec.
-///
-const _w8x1 = 0.85043009476725651;
+/// Second rotation weight for the eight-point transform.
+const double _dct8Weight1 = 0.85043009476725651;
 
-/// Stores the w8x2 state used internally by the JPEG XL codec.
-///
-const _w8x2 = 1.2727585805728339;
+/// Third rotation weight for the eight-point transform.
+const double _dct8Weight2 = 1.2727585805728339;
 
-/// Stores the w8x3 state used internally by the JPEG XL codec.
-///
-const _w8x3 = 3.6245097854115502;
+/// Fourth rotation weight for the eight-point transform.
+const double _dct8Weight3 = 3.6245097854115502;
 
-/// lutT[log2(s)][k][n]: cos basis, transposed so the inner (n) loop is
-/// sequential. Entry n==0 is 1 (folded into the DC term by the caller
-/// loops). Sizes up to 8 only; larger sizes use the recursion.
-final List<List<Float32List>> _lutT = () {
+/// Transposed cosine bases indexed by size, output, and input position.
+/// The input-position dimension is sequential. Its first entry is one and is
+/// folded into the direct-current term by the caller. Sizes up to eight use
+/// this table; larger sizes use the recursive transform.
+final List<List<Float32List>> _transposedCosineLookupTables = () {
   final double root2 = math.sqrt(2.0);
   return List.generate(4, (l) {
     final int s = 1 << l;
@@ -56,8 +50,8 @@ final List<List<Float32List>> _lutT = () {
   });
 }();
 
-/// twiddles[log2(N)][j] = sqrt(2) / (2 * cos(pi*(j+0.5)/N)) for j < N/2.
-final List<Float32List> _twiddles = List.generate(9, (l) {
+/// Rotation weights used by each level of the recursive transforms.
+final List<Float32List> _rotationWeights = List.generate(9, (l) {
   final int n = 1 << l;
   final int h = n >> 1;
   final t = Float32List(h < 1 ? 1 : h);
@@ -69,38 +63,35 @@ final List<Float32List> _twiddles = List.generate(9, (l) {
 
 /// Per-isolate scratch for the recursions (max size 256 -> 2*256 floats per
 /// working set; two independent regions for extraction and copies).
-final Float32List _scratch = Float32List(1024);
+final Float32List _scalarScratch = Float32List(1024);
 
-/// Processes the idct2 data used by the JPEG XL codec.
-///
-void _idct2(Float32List src, int so, Float32List dest, int dOff) {
+/// Applies a two-point inverse DCT.
+void _inverseDct2(Float32List src, int so, Float32List dest, int dOff) {
   final double a = src[so];
   final double b = src[so + 1];
   dest[dOff] = a + b;
   dest[dOff + 1] = a - b;
 }
 
-/// Processes the idct4 data used by the JPEG XL codec.
-///
-void _idct4(Float32List src, int so, Float32List dest, int dOff) {
+/// Applies a four-point inverse DCT.
+void _inverseDct4(Float32List src, int so, Float32List dest, int dOff) {
   final double c0 = src[so];
   final double c1 = src[so + 1];
   final double c2 = src[so + 2];
   final double c3 = src[so + 3];
   final double e0 = c0 + c2;
   final double e1 = c0 - c2;
-  final double d1 = (c1 + c3) * _invSqrt2;
-  final double t0 = (c1 + d1) * _w4x0;
-  final double t1 = (c1 - d1) * _w4x1;
+  final double d1 = (c1 + c3) * _inverseSquareRootOfTwo;
+  final double t0 = (c1 + d1) * _dct4Weight0;
+  final double t1 = (c1 - d1) * _dct4Weight1;
   dest[dOff] = e0 + t0;
   dest[dOff + 3] = e0 - t0;
   dest[dOff + 1] = e1 + t1;
   dest[dOff + 2] = e1 - t1;
 }
 
-/// Processes the idct8 data used by the JPEG XL codec.
-///
-void _idct8(Float32List src, int so, Float32List dest, int dOff) {
+/// Applies an eight-point inverse DCT.
+void _inverseDct8(Float32List src, int so, Float32List dest, int dOff) {
   final double c0 = src[so];
   final double c1 = src[so + 1];
   final double c2 = src[so + 2];
@@ -112,26 +103,26 @@ void _idct8(Float32List src, int so, Float32List dest, int dOff) {
   // E = idct4 of even coefficients.
   final double ee0 = c0 + c4;
   final double ee1 = c0 - c4;
-  final double ed1 = (c2 + c6) * _invSqrt2;
-  final double et0 = (c2 + ed1) * _w4x0;
-  final double et1 = (c2 - ed1) * _w4x1;
+  final double ed1 = (c2 + c6) * _inverseSquareRootOfTwo;
+  final double et0 = (c2 + ed1) * _dct4Weight0;
+  final double et1 = (c2 - ed1) * _dct4Weight1;
   final double e0 = ee0 + et0;
   final double e3 = ee0 - et0;
   final double e1 = ee1 + et1;
   final double e2 = ee1 - et1;
   // T = idct4 of the lifted odd sequence.
-  final double f1 = (c1 + c3) * _invSqrt2;
-  final double f2 = (c3 + c5) * _invSqrt2;
-  final double f3 = (c5 + c7) * _invSqrt2;
+  final double f1 = (c1 + c3) * _inverseSquareRootOfTwo;
+  final double f2 = (c3 + c5) * _inverseSquareRootOfTwo;
+  final double f3 = (c5 + c7) * _inverseSquareRootOfTwo;
   final double g0 = c1 + f2;
   final double g1 = c1 - f2;
-  final double h1 = (f1 + f3) * _invSqrt2;
-  final double u0 = (f1 + h1) * _w4x0;
-  final double u1 = (f1 - h1) * _w4x1;
-  final double t0 = (g0 + u0) * _w8x0;
-  final double t3 = (g0 - u0) * _w8x3;
-  final double t1 = (g1 + u1) * _w8x1;
-  final double t2 = (g1 - u1) * _w8x2;
+  final double h1 = (f1 + f3) * _inverseSquareRootOfTwo;
+  final double u0 = (f1 + h1) * _dct4Weight0;
+  final double u1 = (f1 - h1) * _dct4Weight1;
+  final double t0 = (g0 + u0) * _dct8Weight0;
+  final double t3 = (g0 - u0) * _dct8Weight3;
+  final double t1 = (g1 + u1) * _dct8Weight1;
+  final double t2 = (g1 - u1) * _dct8Weight2;
   dest[dOff] = e0 + t0;
   dest[dOff + 7] = e0 - t0;
   dest[dOff + 1] = e1 + t1;
@@ -142,16 +133,15 @@ void _idct8(Float32List src, int so, Float32List dest, int dOff) {
   dest[dOff + 4] = e3 - t3;
 }
 
-/// Processes the idct small data used by the JPEG XL codec.
-///
-void _idctSmall(Float32List src, int srcOff, Float32List dest, int destOff, int n) {
+/// Dispatches an inverse DCT no longer than eight samples.
+void _inverseDctSmall(Float32List src, int srcOff, Float32List dest, int destOff, int n) {
   switch (n) {
     case 8:
-      _idct8(src, srcOff, dest, destOff);
+      _inverseDct8(src, srcOff, dest, destOff);
     case 4:
-      _idct4(src, srcOff, dest, destOff);
+      _inverseDct4(src, srcOff, dest, destOff);
     case 2:
-      _idct2(src, srcOff, dest, destOff);
+      _inverseDct2(src, srcOff, dest, destOff);
     default:
       dest[destOff] = src[srcOff];
   }
@@ -159,29 +149,29 @@ void _idctSmall(Float32List src, int srcOff, Float32List dest, int destOff, int 
 
 /// Recursive IDCT: input and output must not alias; scratch region
 /// [so, so + 2n) is free for use.
-void _idct(Float32List src, int srcOff, Float32List dest, int destOff, int n, int logN, int so) {
+void _inverseDct(Float32List src, int srcOff, Float32List dest, int destOff, int n, int logN, int so) {
   if (n <= 8) {
-    _idctSmall(src, srcOff, dest, destOff, n);
+    _inverseDctSmall(src, srcOff, dest, destOff, n);
     return;
   }
   final int h = n >> 1;
-  final Float32List s = _scratch;
+  final Float32List s = _scalarScratch;
   // Extract even coefficients and the lifted odd sequence.
   for (var r = 0; r < h; r++) {
     s[so + r] = src[srcOff + 2 * r];
   }
   s[so + h] = src[srcOff + 1];
   for (var r = 1; r < h; r++) {
-    s[so + h + r] = (src[srcOff + 2 * r - 1] + src[srcOff + 2 * r + 1]) * _invSqrt2;
+    s[so + h + r] = (src[srcOff + 2 * r - 1] + src[srcOff + 2 * r + 1]) * _inverseSquareRootOfTwo;
   }
   // Recurse: E into dest lower half, T into dest upper half.
-  _idct(s, so, dest, destOff, h, logN - 1, so + n);
-  _idct(s, so + h, dest, destOff + h, h, logN - 1, so + n);
+  _inverseDct(s, so, dest, destOff, h, logN - 1, so + n);
+  _inverseDct(s, so + h, dest, destOff + h, h, logN - 1, so + n);
   // Save T (the upper half) before the butterfly overwrites it.
   for (var j = 0; j < h; j++) {
     s[so + j] = dest[destOff + h + j];
   }
-  final Float32List w = _twiddles[logN];
+  final Float32List w = _rotationWeights[logN];
   for (var j = 0; j < h; j++) {
     final double e = dest[destOff + j];
     final double o = w[j] * s[so + j];
@@ -190,13 +180,12 @@ void _idct(Float32List src, int srcOff, Float32List dest, int destOff, int n, in
   }
 }
 
-/// Processes the dct small data used by the JPEG XL codec.
-///
-void _dctSmall(Float32List src, int srcOff, Float32List dest, int destOff, int logN, int n) {
+/// Applies a direct forward DCT no longer than eight samples.
+void _forwardDctSmall(Float32List src, int srcOff, Float32List dest, int destOff, int logN, int n) {
   // G[k] = sum_j x[j] * alpha(k) * cos(pi*k*(j+0.5)/N); the table entry
-  // _lutT[logN][j][k] is exactly alpha(k)*cos(pi*k*(j+0.5)/N), so accumulate
+  // _transposedCosineLookupTables[logN][j][k] is exactly alpha(k)*cos(pi*k*(j+0.5)/N), so accumulate
   // one source row at a time to keep the inner loop sequential.
-  final List<Float32List> lutJ = _lutT[logN];
+  final List<Float32List> lutJ = _transposedCosineLookupTables[logN];
   final double x0 = src[srcOff];
   final Float32List lut0 = lutJ[0];
   for (var k = 0; k < n; k++) {
@@ -212,22 +201,22 @@ void _dctSmall(Float32List src, int srcOff, Float32List dest, int destOff, int l
 }
 
 /// Recursive unscaled forward transform G_N (caller divides by N).
-void _dct(Float32List src, int srcOff, Float32List dest, int destOff, int n, int logN, int so) {
+void _forwardDct(Float32List src, int srcOff, Float32List dest, int destOff, int n, int logN, int so) {
   if (n <= 8) {
-    _dctSmall(src, srcOff, dest, destOff, logN, n);
+    _forwardDctSmall(src, srcOff, dest, destOff, logN, n);
     return;
   }
   final int h = n >> 1;
-  final Float32List s = _scratch;
-  final Float32List w = _twiddles[logN];
+  final Float32List s = _scalarScratch;
+  final Float32List w = _rotationWeights[logN];
   for (var j = 0; j < h; j++) {
     final double a = src[srcOff + j];
     final double b = src[srcOff + n - 1 - j];
     s[so + j] = a + b;
     s[so + h + j] = w[j] * (a - b);
   }
-  _dct(s, so, dest, destOff, h, logN - 1, so + n);
-  _dct(s, so + h, dest, destOff + h, h, logN - 1, so + n);
+  _forwardDct(s, so, dest, destOff, h, logN - 1, so + n);
+  _forwardDct(s, so + h, dest, destOff + h, h, logN - 1, so + n);
   // Copy Gu | Gv aside, then interleave with the lifting transpose.
   for (var j = 0; j < n; j++) {
     s[so + j] = dest[destOff + j];
@@ -236,29 +225,28 @@ void _dct(Float32List src, int srcOff, Float32List dest, int destOff, int n, int
     dest[destOff + 2 * r] = s[so + r];
   }
   final int gv = so + h;
-  dest[destOff + 1] = s[gv] + (h > 1 ? s[gv + 1] * _invSqrt2 : 0);
+  dest[destOff + 1] = s[gv] + (h > 1 ? s[gv + 1] * _inverseSquareRootOfTwo : 0);
   for (var r = 1; r < h; r++) {
     final double next = r + 1 < h ? s[gv + r + 1] : 0.0;
-    dest[destOff + 2 * r + 1] = (s[gv + r] + next) * _invSqrt2;
+    dest[destOff + 2 * r + 1] = (s[gv + r] + next) * _inverseSquareRootOfTwo;
   }
 }
 
 /// One row of inverse DCT (DCT-III with jxl scaling).
-void inverseDCTHorizontal(Float32List src, Float32List dest, int xStartIn, int xStartOut, int xLogLength, int xLength) {
-  _idct(src, xStartIn, dest, xStartOut, xLength, xLogLength, 0);
+void inverseDctHorizontal(Float32List src, Float32List dest, int xStartIn, int xStartOut, int xLogLength, int xLength) {
+  _inverseDct(src, xStartIn, dest, xStartOut, xLength, xLogLength, 0);
 }
 
 /// One row of forward DCT (DCT-II with jxl scaling).
-void forwardDCTHorizontal(Float32List src, Float32List dest, int xStartIn, int xStartOut, int xLogLength, int xLength) {
-  _dct(src, xStartIn, dest, xStartOut, xLength, xLogLength, 0);
+void forwardDctHorizontal(Float32List src, Float32List dest, int xStartIn, int xStartOut, int xLogLength, int xLength) {
+  _forwardDct(src, xStartIn, dest, xStartOut, xLength, xLogLength, 0);
   final double invLength = 1.0 / xLength;
   for (var k = 0; k < xLength; k++) {
     dest[xStartOut + k] *= invLength;
   }
 }
 
-/// Processes transpose matrix into information in a JPEG XL codestream.
-///
+/// Transposes matrix into.
 void transposeMatrixInto(List<Float32List> src, List<Float32List> dest, int srcStartY, int srcStartX, int destStartY, int destStartX, int srcHeight, int srcWidth) {
   for (var y = 0; y < srcHeight; y++) {
     final Float32List srcy = src[srcStartY + y];
@@ -269,10 +257,10 @@ void transposeMatrixInto(List<Float32List> src, List<Float32List> dest, int srcS
 }
 
 /// Fused, transpose-free 8x8 inverse DCT (the dominant block size).
-void _inverseDCT8x8(List<Float32List> src, List<Float32List> dest, int startInY, int startInX, int startOutY, int startOutX, bool transposed) {
-  final Float32List t = _scratch;
+void _inverseDct8x8(List<Float32List> src, List<Float32List> dest, int startInY, int startInX, int startOutY, int startOutX, bool transposed) {
+  final Float32List t = _scalarScratch;
   for (var k = 0; k < 8; k++) {
-    _idct8(src[startInY + k], startInX, t, k << 3);
+    _inverseDct8(src[startInY + k], startInX, t, k << 3);
   }
   if (transposed) {
     for (var x = 0; x < 8; x++) {
@@ -286,25 +274,25 @@ void _inverseDCT8x8(List<Float32List> src, List<Float32List> dest, int startInY,
       final double c7 = t[56 + x];
       final double ee0 = c0 + c4;
       final double ee1 = c0 - c4;
-      final double ed1 = (c2 + c6) * _invSqrt2;
-      final double et0 = (c2 + ed1) * _w4x0;
-      final double et1 = (c2 - ed1) * _w4x1;
+      final double ed1 = (c2 + c6) * _inverseSquareRootOfTwo;
+      final double et0 = (c2 + ed1) * _dct4Weight0;
+      final double et1 = (c2 - ed1) * _dct4Weight1;
       final double e0 = ee0 + et0;
       final double e3 = ee0 - et0;
       final double e1 = ee1 + et1;
       final double e2 = ee1 - et1;
-      final double f1 = (c1 + c3) * _invSqrt2;
-      final double f2 = (c3 + c5) * _invSqrt2;
-      final double f3 = (c5 + c7) * _invSqrt2;
+      final double f1 = (c1 + c3) * _inverseSquareRootOfTwo;
+      final double f2 = (c3 + c5) * _inverseSquareRootOfTwo;
+      final double f3 = (c5 + c7) * _inverseSquareRootOfTwo;
       final double g0 = c1 + f2;
       final double g1 = c1 - f2;
-      final double h1 = (f1 + f3) * _invSqrt2;
-      final double u0 = (f1 + h1) * _w4x0;
-      final double u1 = (f1 - h1) * _w4x1;
-      final double t0 = (g0 + u0) * _w8x0;
-      final double t3 = (g0 - u0) * _w8x3;
-      final double t1 = (g1 + u1) * _w8x1;
-      final double t2 = (g1 - u1) * _w8x2;
+      final double h1 = (f1 + f3) * _inverseSquareRootOfTwo;
+      final double u0 = (f1 + h1) * _dct4Weight0;
+      final double u1 = (f1 - h1) * _dct4Weight1;
+      final double t0 = (g0 + u0) * _dct8Weight0;
+      final double t3 = (g0 - u0) * _dct8Weight3;
+      final double t1 = (g1 + u1) * _dct8Weight1;
+      final double t2 = (g1 - u1) * _dct8Weight2;
       final Float32List dr = dest[startOutY + x];
       dr[startOutX] = e0 + t0;
       dr[startOutX + 7] = e0 - t0;
@@ -336,25 +324,25 @@ void _inverseDCT8x8(List<Float32List> src, List<Float32List> dest, int startInY,
     final double c7 = t[56 + x];
     final double ee0 = c0 + c4;
     final double ee1 = c0 - c4;
-    final double ed1 = (c2 + c6) * _invSqrt2;
-    final double et0 = (c2 + ed1) * _w4x0;
-    final double et1 = (c2 - ed1) * _w4x1;
+    final double ed1 = (c2 + c6) * _inverseSquareRootOfTwo;
+    final double et0 = (c2 + ed1) * _dct4Weight0;
+    final double et1 = (c2 - ed1) * _dct4Weight1;
     final double e0 = ee0 + et0;
     final double e3 = ee0 - et0;
     final double e1 = ee1 + et1;
     final double e2 = ee1 - et1;
-    final double f1 = (c1 + c3) * _invSqrt2;
-    final double f2 = (c3 + c5) * _invSqrt2;
-    final double f3 = (c5 + c7) * _invSqrt2;
+    final double f1 = (c1 + c3) * _inverseSquareRootOfTwo;
+    final double f2 = (c3 + c5) * _inverseSquareRootOfTwo;
+    final double f3 = (c5 + c7) * _inverseSquareRootOfTwo;
     final double g0 = c1 + f2;
     final double g1 = c1 - f2;
-    final double h1 = (f1 + f3) * _invSqrt2;
-    final double u0 = (f1 + h1) * _w4x0;
-    final double u1 = (f1 - h1) * _w4x1;
-    final double t0 = (g0 + u0) * _w8x0;
-    final double t3 = (g0 - u0) * _w8x3;
-    final double t1 = (g1 + u1) * _w8x1;
-    final double t2 = (g1 - u1) * _w8x2;
+    final double h1 = (f1 + f3) * _inverseSquareRootOfTwo;
+    final double u0 = (f1 + h1) * _dct4Weight0;
+    final double u1 = (f1 - h1) * _dct4Weight1;
+    final double t0 = (g0 + u0) * _dct8Weight0;
+    final double t3 = (g0 - u0) * _dct8Weight3;
+    final double t1 = (g1 + u1) * _dct8Weight1;
+    final double t2 = (g1 - u1) * _dct8Weight2;
     final int ox = startOutX + x;
     r0[ox] = e0 + t0;
     r7[ox] = e0 - t0;
@@ -369,7 +357,7 @@ void _inverseDCT8x8(List<Float32List> src, List<Float32List> dest, int startInY,
 
 /// 2D inverse DCT of a (height x width) block from src(startIn) into
 /// dest(startOut). Scratch spaces must be at least max(dim) square.
-void inverseDCT2D(
+void inverseDct2d(
   List<Float32List> src,
   List<Float32List> dest,
   int startInY,
@@ -383,33 +371,33 @@ void inverseDCT2D(
   bool transposed,
 ) {
   if (height == 8 && width == 8) {
-    _inverseDCT8x8(src, dest, startInY, startInX, startOutY, startOutX, transposed);
+    _inverseDct8x8(src, dest, startInY, startInX, startOutY, startOutX, transposed);
     return;
   }
   final int logHeight = ceilLog2(height);
   final int logWidth = ceilLog2(width);
   if (transposed) {
     for (var y = 0; y < height; y++) {
-      inverseDCTHorizontal(src[startInY + y], scratch1[y], startInX, 0, logWidth, width);
+      inverseDctHorizontal(src[startInY + y], scratch1[y], startInX, 0, logWidth, width);
     }
     transposeMatrixInto(scratch1, scratch0, 0, 0, 0, 0, height, width);
     for (var y = 0; y < width; y++) {
-      inverseDCTHorizontal(scratch0[y], dest[startOutY + y], 0, startOutX, logHeight, height);
+      inverseDctHorizontal(scratch0[y], dest[startOutY + y], 0, startOutX, logHeight, height);
     }
   } else {
     transposeMatrixInto(src, scratch0, startInY, startInX, 0, 0, height, width);
     for (var y = 0; y < width; y++) {
-      inverseDCTHorizontal(scratch0[y], scratch1[y], 0, 0, logHeight, height);
+      inverseDctHorizontal(scratch0[y], scratch1[y], 0, 0, logHeight, height);
     }
     transposeMatrixInto(scratch1, scratch0, 0, 0, 0, 0, width, height);
     for (var y = 0; y < height; y++) {
-      inverseDCTHorizontal(scratch0[y], dest[startOutY + y], 0, startOutX, logWidth, width);
+      inverseDctHorizontal(scratch0[y], dest[startOutY + y], 0, startOutX, logWidth, width);
     }
   }
 }
 
 /// 2D forward DCT (used to produce LLF coefficients from LF values).
-void forwardDCT2D(
+void forwardDct2d(
   List<Float32List> src,
   List<Float32List> dest,
   int startInY,
@@ -424,11 +412,11 @@ void forwardDCT2D(
   final int yLogLength = ceilLog2(height);
   final int xLogLength = ceilLog2(width);
   for (var y = 0; y < height; y++) {
-    forwardDCTHorizontal(src[y + startInY], scratch0[y], startInX, 0, xLogLength, width);
+    forwardDctHorizontal(src[y + startInY], scratch0[y], startInX, 0, xLogLength, width);
   }
   transposeMatrixInto(scratch0, scratch1, 0, 0, 0, 0, height, width);
   for (var x = 0; x < width; x++) {
-    forwardDCTHorizontal(scratch1[x], scratch0[x], 0, 0, yLogLength, height);
+    forwardDctHorizontal(scratch1[x], scratch0[x], 0, 0, yLogLength, height);
   }
   transposeMatrixInto(scratch0, dest, 0, 0, startOutY, startOutX, width, height);
 }
@@ -436,14 +424,14 @@ void forwardDCT2D(
 /// Fully-SIMD fused 8x8 inverse DCT: rows-in-vector loads, two in-register
 /// 8x8 transposes (quadrant shuffleMix), four vector butterfly passes.
 /// Offsets are in Float32x4 units; callers guarantee 8-pixel alignment.
-void inverseDCT8x8Simd(List<Float32x4List> src, List<Float32x4List> dest, int srcY, int srcVX, int destY, int destVX) {
-  final vis2 = Float32x4.splat(_invSqrt2);
-  final vw40 = Float32x4.splat(_w4x0);
-  final vw41 = Float32x4.splat(_w4x1);
-  final vw80 = Float32x4.splat(_w8x0);
-  final vw81 = Float32x4.splat(_w8x1);
-  final vw82 = Float32x4.splat(_w8x2);
-  final vw83 = Float32x4.splat(_w8x3);
+void inverseDct8x8Simd(List<Float32x4List> src, List<Float32x4List> dest, int srcY, int srcVX, int destY, int destVX) {
+  final vis2 = Float32x4.splat(_inverseSquareRootOfTwo);
+  final vw40 = Float32x4.splat(_dct4Weight0);
+  final vw41 = Float32x4.splat(_dct4Weight1);
+  final vw80 = Float32x4.splat(_dct8Weight0);
+  final vw81 = Float32x4.splat(_dct8Weight1);
+  final vw82 = Float32x4.splat(_dct8Weight2);
+  final vw83 = Float32x4.splat(_dct8Weight3);
   final Float32x4List r0 = src[srcY + 0];
   final Float32x4 l0 = r0[srcVX];
   final Float32x4 h0 = r0[srcVX + 1];
@@ -680,25 +668,20 @@ void inverseDCT8x8Simd(List<Float32x4List> src, List<Float32x4List> dest, int sr
 // Batched-vector inverse DCT: the 1D recursion applied to Float32x4 elements
 // (4 image columns, or 4 rows after an in-register transpose, per lane).
 
-/// Processes the scratch v data used by the JPEG XL codec.
-///
-final Float32x4List _scratchV = Float32x4List(1024);
+/// Four-lane scratch storage used by recursive inverse transforms.
+final Float32x4List _vectorScratch = Float32x4List(1024);
 
-/// Processes the seq a data used by the JPEG XL codec.
-///
-final Float32x4List _seqA = Float32x4List(256);
+/// First four-lane sequence used by two-dimensional transforms.
+final Float32x4List _firstVectorSequence = Float32x4List(256);
 
-/// Processes the seq b data used by the JPEG XL codec.
-///
-final Float32x4List _seqB = Float32x4List(256);
+/// Second four-lane sequence used by two-dimensional transforms.
+final Float32x4List _secondVectorSequence = Float32x4List(256);
 
-/// Processes the inter v data used by the JPEG XL codec.
-///
-final List<Float32x4List> _interV = List.generate(256, (_) => Float32x4List(64), growable: false);
+/// Intermediate four-lane rows used between transform dimensions.
+final List<Float32x4List> _intermediateVectors = List.generate(256, (_) => Float32x4List(64), growable: false);
 
-/// Processes the idct8 vec data used by the JPEG XL codec.
-///
-void _idct8Vec(Float32x4List src, int so, Float32x4List dest, int dOff) {
+/// Applies an eight-point inverse DCT to four lanes in parallel.
+void _inverseDct8Vector(Float32x4List src, int so, Float32x4List dest, int dOff) {
   final Float32x4 c0 = src[so];
   final Float32x4 c1 = src[so + 1];
   final Float32x4 c2 = src[so + 2];
@@ -709,25 +692,25 @@ void _idct8Vec(Float32x4List src, int so, Float32x4List dest, int dOff) {
   final Float32x4 c7 = src[so + 7];
   final Float32x4 ee0 = c0 + c4;
   final Float32x4 ee1 = c0 - c4;
-  final Float32x4 ed1 = (c2 + c6).scale(_invSqrt2);
-  final Float32x4 et0 = (c2 + ed1).scale(_w4x0);
-  final Float32x4 et1 = (c2 - ed1).scale(_w4x1);
+  final Float32x4 ed1 = (c2 + c6).scale(_inverseSquareRootOfTwo);
+  final Float32x4 et0 = (c2 + ed1).scale(_dct4Weight0);
+  final Float32x4 et1 = (c2 - ed1).scale(_dct4Weight1);
   final Float32x4 e0 = ee0 + et0;
   final Float32x4 e3 = ee0 - et0;
   final Float32x4 e1 = ee1 + et1;
   final Float32x4 e2 = ee1 - et1;
-  final Float32x4 f1 = (c1 + c3).scale(_invSqrt2);
-  final Float32x4 f2 = (c3 + c5).scale(_invSqrt2);
-  final Float32x4 f3 = (c5 + c7).scale(_invSqrt2);
+  final Float32x4 f1 = (c1 + c3).scale(_inverseSquareRootOfTwo);
+  final Float32x4 f2 = (c3 + c5).scale(_inverseSquareRootOfTwo);
+  final Float32x4 f3 = (c5 + c7).scale(_inverseSquareRootOfTwo);
   final Float32x4 g0 = c1 + f2;
   final Float32x4 g1 = c1 - f2;
-  final Float32x4 h1 = (f1 + f3).scale(_invSqrt2);
-  final Float32x4 u0 = (f1 + h1).scale(_w4x0);
-  final Float32x4 u1 = (f1 - h1).scale(_w4x1);
-  final Float32x4 t0 = (g0 + u0).scale(_w8x0);
-  final Float32x4 t3 = (g0 - u0).scale(_w8x3);
-  final Float32x4 t1 = (g1 + u1).scale(_w8x1);
-  final Float32x4 t2 = (g1 - u1).scale(_w8x2);
+  final Float32x4 h1 = (f1 + f3).scale(_inverseSquareRootOfTwo);
+  final Float32x4 u0 = (f1 + h1).scale(_dct4Weight0);
+  final Float32x4 u1 = (f1 - h1).scale(_dct4Weight1);
+  final Float32x4 t0 = (g0 + u0).scale(_dct8Weight0);
+  final Float32x4 t3 = (g0 - u0).scale(_dct8Weight3);
+  final Float32x4 t1 = (g1 + u1).scale(_dct8Weight1);
+  final Float32x4 t2 = (g1 - u1).scale(_dct8Weight2);
   dest[dOff] = e0 + t0;
   dest[dOff + 7] = e0 - t0;
   dest[dOff + 1] = e1 + t1;
@@ -738,27 +721,27 @@ void _idct8Vec(Float32x4List src, int so, Float32x4List dest, int dOff) {
   dest[dOff + 4] = e3 - t3;
 }
 
-/// Vector analogue of [_idct]; input and output must not alias.
-void _idctVec(Float32x4List src, int srcOff, Float32x4List dest, int destOff, int n, int logN, int so) {
+/// Vector analogue of [_inverseDct]; input and output must not alias.
+void _inverseDctVector(Float32x4List src, int srcOff, Float32x4List dest, int destOff, int n, int logN, int so) {
   if (n == 8) {
-    _idct8Vec(src, srcOff, dest, destOff);
+    _inverseDct8Vector(src, srcOff, dest, destOff);
     return;
   }
   final int h = n >> 1;
-  final Float32x4List s = _scratchV;
+  final Float32x4List s = _vectorScratch;
   for (var r = 0; r < h; r++) {
     s[so + r] = src[srcOff + 2 * r];
   }
   s[so + h] = src[srcOff + 1];
   for (var r = 1; r < h; r++) {
-    s[so + h + r] = (src[srcOff + 2 * r - 1] + src[srcOff + 2 * r + 1]).scale(_invSqrt2);
+    s[so + h + r] = (src[srcOff + 2 * r - 1] + src[srcOff + 2 * r + 1]).scale(_inverseSquareRootOfTwo);
   }
-  _idctVec(s, so, dest, destOff, h, logN - 1, so + n);
-  _idctVec(s, so + h, dest, destOff + h, h, logN - 1, so + n);
+  _inverseDctVector(s, so, dest, destOff, h, logN - 1, so + n);
+  _inverseDctVector(s, so + h, dest, destOff + h, h, logN - 1, so + n);
   for (var j = 0; j < h; j++) {
     s[so + j] = dest[destOff + h + j];
   }
-  final Float32List w = _twiddles[logN];
+  final Float32List w = _rotationWeights[logN];
   for (var j = 0; j < h; j++) {
     final Float32x4 e = dest[destOff + j];
     final Float32x4 o = s[so + j].scale(w[j]);
@@ -771,24 +754,24 @@ void _idctVec(Float32x4List src, int srcOff, Float32x4List dest, int destOff, in
 /// both >= 8. Column transforms use 4 adjacent columns per lane directly;
 /// row transforms go through in-register 4x4 transposes. Offsets are in
 /// Float32x4 units.
-void inverseDCT2DSimd(List<Float32x4List> src, List<Float32x4List> dest, int srcY, int srcVX, int destY, int destVX, int height, int width) {
+void inverseDct2dSimd(List<Float32x4List> src, List<Float32x4List> dest, int srcY, int srcVX, int destY, int destVX, int height, int width) {
   final int logH = ceilLog2(height);
   final int logW = ceilLog2(width);
   final int w4 = width >> 2;
   for (var g = 0; g < w4; g++) {
     for (var k = 0; k < height; k++) {
-      _seqA[k] = src[srcY + k][srcVX + g];
+      _firstVectorSequence[k] = src[srcY + k][srcVX + g];
     }
-    _idctVec(_seqA, 0, _seqB, 0, height, logH, 0);
+    _inverseDctVector(_firstVectorSequence, 0, _secondVectorSequence, 0, height, logH, 0);
     for (var k = 0; k < height; k++) {
-      _interV[k][g] = _seqB[k];
+      _intermediateVectors[k][g] = _secondVectorSequence[k];
     }
   }
   for (var r = 0; r < height; r += 4) {
-    final Float32x4List i0 = _interV[r];
-    final Float32x4List i1 = _interV[r + 1];
-    final Float32x4List i2 = _interV[r + 2];
-    final Float32x4List i3 = _interV[r + 3];
+    final Float32x4List i0 = _intermediateVectors[r];
+    final Float32x4List i1 = _intermediateVectors[r + 1];
+    final Float32x4List i2 = _intermediateVectors[r + 2];
+    final Float32x4List i3 = _intermediateVectors[r + 3];
     for (var vj = 0; vj < w4; vj++) {
       final Float32x4 a = i0[vj];
       final Float32x4 b = i1[vj];
@@ -799,22 +782,22 @@ void inverseDCT2DSimd(List<Float32x4List> src, List<Float32x4List> dest, int src
       final Float32x4 s2 = cc.shuffleMix(d, Float32x4.xzxz);
       final Float32x4 s3 = cc.shuffleMix(d, Float32x4.ywyw);
       final int j4 = vj << 2;
-      _seqA[j4] = s0.shuffleMix(s2, Float32x4.xzxz);
-      _seqA[j4 + 1] = s1.shuffleMix(s3, Float32x4.xzxz);
-      _seqA[j4 + 2] = s0.shuffleMix(s2, Float32x4.ywyw);
-      _seqA[j4 + 3] = s1.shuffleMix(s3, Float32x4.ywyw);
+      _firstVectorSequence[j4] = s0.shuffleMix(s2, Float32x4.xzxz);
+      _firstVectorSequence[j4 + 1] = s1.shuffleMix(s3, Float32x4.xzxz);
+      _firstVectorSequence[j4 + 2] = s0.shuffleMix(s2, Float32x4.ywyw);
+      _firstVectorSequence[j4 + 3] = s1.shuffleMix(s3, Float32x4.ywyw);
     }
-    _idctVec(_seqA, 0, _seqB, 0, width, logW, 0);
+    _inverseDctVector(_firstVectorSequence, 0, _secondVectorSequence, 0, width, logW, 0);
     final Float32x4List d0 = dest[destY + r];
     final Float32x4List d1 = dest[destY + r + 1];
     final Float32x4List d2 = dest[destY + r + 2];
     final Float32x4List d3 = dest[destY + r + 3];
     for (var vj = 0; vj < w4; vj++) {
       final int j4 = vj << 2;
-      final Float32x4 a = _seqB[j4];
-      final Float32x4 b = _seqB[j4 + 1];
-      final Float32x4 cc = _seqB[j4 + 2];
-      final Float32x4 d = _seqB[j4 + 3];
+      final Float32x4 a = _secondVectorSequence[j4];
+      final Float32x4 b = _secondVectorSequence[j4 + 1];
+      final Float32x4 cc = _secondVectorSequence[j4 + 2];
+      final Float32x4 d = _secondVectorSequence[j4 + 3];
       final Float32x4 s0 = a.shuffleMix(b, Float32x4.xzxz);
       final Float32x4 s1 = a.shuffleMix(b, Float32x4.ywyw);
       final Float32x4 s2 = cc.shuffleMix(d, Float32x4.xzxz);

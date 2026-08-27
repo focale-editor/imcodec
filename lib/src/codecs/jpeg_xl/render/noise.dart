@@ -1,12 +1,11 @@
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/image_buffer.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/frame.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/image_buffer.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/var_dct/lf_channel_correlation.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/var_dct/low_frequency_channel_correlation.dart';
 
 /// xorshift128+ with 8 lanes, matching the JXL noise RNG.
-///
 /// Every 64-bit lane is stored as an (hi, lo) pair of 32-bit-unsigned `int`s
 /// rather than a single 64-bit value: dart2js's `int` cannot exactly
 /// represent values, literals, or intermediate shift/multiply results above
@@ -16,46 +15,36 @@ import 'package:imcodec/src/codecs/jpeg_xl/var_dct/lf_channel_correlation.dart';
 /// did. Every operation below is deliberately mask-before-shift and
 /// add-with-carry so no intermediate value ever exceeds 2^32, which keeps
 /// every platform (VM, AOT, dart2js, dart2wasm) bit-identical.
-final class XorShiro {
-  /// Processes the mask64 data used by the JPEG XL codec.
-  ///
+final class Xoroshiro128Plus {
+  /// Mask selecting the low 64 bits of a seed calculation.
   static final BigInt _mask64 = (BigInt.one << 64) - BigInt.one;
 
-  /// Processes the mul1 data used by the JPEG XL codec.
-  ///
+  /// First SplitMix64 scrambling multiplier.
   static final BigInt _mul1 = BigInt.parse('bf58476d1ce4e5b9', radix: 16);
 
-  /// Processes the mul2 data used by the JPEG XL codec.
-  ///
+  /// Second SplitMix64 scrambling multiplier.
   static final BigInt _mul2 = BigInt.parse('94d049bb133111eb', radix: 16);
 
-  /// Processes the state0 hi data used by the JPEG XL codec.
-  ///
+  /// High words of the first generator state across eight lanes.
   final Uint32List _state0Hi = Uint32List(8);
 
-  /// Processes the state0 lo data used by the JPEG XL codec.
-  ///
+  /// Low words of the first generator state across eight lanes.
   final Uint32List _state0Lo = Uint32List(8);
 
-  /// Processes the state1 hi data used by the JPEG XL codec.
-  ///
+  /// High words of the second generator state across eight lanes.
   final Uint32List _state1Hi = Uint32List(8);
 
-  /// Processes the state1 lo data used by the JPEG XL codec.
-  ///
+  /// Low words of the second generator state across eight lanes.
   final Uint32List _state1Lo = Uint32List(8);
 
-  /// Processes the batch data used by the JPEG XL codec.
-  ///
+  /// Generated 32-bit words waiting to be consumed.
   final Uint32List _batch = Uint32List(16);
 
-  /// Stores the batch pos state used internally by the JPEG XL codec.
-  ///
-  int _batchPos = 16;
+  /// Current position within batch.
+  int _batchPosition = 16;
 
-  /// Creates Xor shiro data for JPEG XL processing.
-  ///
-  XorShiro({
+  /// Creates eight deterministic generator lanes from two 64-bit seeds.
+  Xoroshiro128Plus({
     required int seed0Hi,
     required int seed0Lo,
     required int seed1Hi,
@@ -79,7 +68,7 @@ final class XorShiro {
     }
   }
 
-  /// The seeding-only mixing step: only ~16 calls per [XorShiro] (one per
+  /// The seeding-only mixing step: only ~16 calls per [Xoroshiro128Plus] (one per
   /// image group), so exactness via [BigInt] costs nothing that matters,
   /// and removes the error-prone part (a full 64x64 multiply) from the
   /// hand-rolled 32-bit-limb surface entirely.
@@ -97,19 +86,17 @@ final class XorShiro {
     return ((aHi + bHi + (loSum >> 32)) & 0xFFFFFFFF, loSum & 0xFFFFFFFF);
   }
 
-  /// Processes fill information in a JPEG XL codestream.
-  ///
+  /// Fills the destination with the supplied value.
   void fill(Uint32List bits) {
     for (var i = 0; i < bits.length; i++) {
-      if (_batchPos >= 16) {
+      if (_batchPosition >= 16) {
         _fillBatch();
       }
-      bits[i] = _batch[_batchPos++];
+      bits[i] = _batch[_batchPosition++];
     }
   }
 
-  /// Processes the fill batch data used by the JPEG XL codec.
-  ///
+  /// Fills batch.
   void _fillBatch() {
     for (var i = 0; i < 8; i++) {
       final int aHi = _state1Hi[i];
@@ -134,12 +121,11 @@ final class XorShiro {
       _batch[2 * i] = cLo;
       _batch[2 * i + 1] = cHi;
     }
-    _batchPos = 0;
+    _batchPosition = 0;
   }
 }
 
-/// Stores the laplacian state used internally by the JPEG XL codec.
-///
+/// Specification constant used for laplacian.
 const _laplacian = [
   [0.16, 0.16, 0.16, 0.16, 0.16],
   [0.16, 0.16, 0.16, 0.16, 0.16],
@@ -150,12 +136,11 @@ const _laplacian = [
 
 /// Generates the per-group noise field (uniform [1,2) floats convolved with
 /// a Laplacian kernel). Must run after upsampling, before synthesis.
-///
 /// [seed0Hi]/[seed0Lo] are the high/low 32 bits of the frame-wide 64-bit
 /// seed (kept as a pair rather than one packed 64-bit int for the same
-/// web-safety reason as [XorShiro]).
+/// web-safety reason as [Xoroshiro128Plus]).
 List<List<Float32List>>? initializeNoise(Frame frame, int seed0Hi, int seed0Lo) {
-  if (frame.lfGlobal.noiseParameters == null) {
+  if (frame.lowFrequencyGlobal.noiseParameters == null) {
     return null;
   }
   final int colors = frame.colorChannelCount;
@@ -164,13 +149,13 @@ List<List<Float32List>>? initializeNoise(Frame frame, int seed0Hi, int seed0Lo) 
   final List<List<Float32List>> localNoise = [for (var c = 0; c < colors; c++) floatMatrix(height, width)];
   final bitsView = Uint32List(16);
   final floatView = Float32List.view(bitsView.buffer);
-  for (var group = 0; group < frame.numGroups; group++) {
+  for (var group = 0; group < frame.groupCount; group++) {
     final ({int x, int y}) loc = frame.getGroupLocation(group);
-    final int y0 = loc.y << frame.header.logGroupDim;
-    final int x0 = loc.x << frame.header.logGroupDim;
-    final int ySize = frame.header.groupDim < height - y0 ? frame.header.groupDim : height - y0;
-    final int xSize = frame.header.groupDim < width - x0 ? frame.header.groupDim : width - x0;
-    final rng = XorShiro(seed0Hi: seed0Hi, seed0Lo: seed0Lo, seed1Hi: x0 & 0xFFFFFFFF, seed1Lo: y0 & 0xFFFFFFFF);
+    final int y0 = loc.y << frame.header.logGroupDimension;
+    final int x0 = loc.x << frame.header.logGroupDimension;
+    final int ySize = frame.header.groupDimension < height - y0 ? frame.header.groupDimension : height - y0;
+    final int xSize = frame.header.groupDimension < width - x0 ? frame.header.groupDimension : width - x0;
+    final rng = Xoroshiro128Plus(seed0Hi: seed0Hi, seed0Lo: seed0Lo, seed1Hi: x0 & 0xFFFFFFFF, seed1Lo: y0 & 0xFFFFFFFF);
     for (var c = 0; c < colors; c++) {
       for (var y = 0; y < ySize; y++) {
         for (var x = 0; x < xSize; x += 16) {
@@ -204,12 +189,12 @@ List<List<Float32List>>? initializeNoise(Frame frame, int seed0Hi, int seed0Lo) 
 
 /// Adds synthesized noise to the (XYB-space) color channels.
 void synthesizeNoise(Frame frame, List<List<Float32List>>? noiseBuffer) {
-  final List<double>? lut = frame.lfGlobal.noiseParameters;
+  final List<double>? lut = frame.lowFrequencyGlobal.noiseParameters;
   if (lut == null || noiseBuffer == null) {
     return;
   }
   final List<List<Float32List>> buffers = [for (var c = 0; c < 3; c++) frame.buffer[c].floatRows];
-  final LfChannelCorrelation lfc = frame.lfGlobal.lfChanCorr;
+  final LowFrequencyChannelCorrelation lfc = frame.lowFrequencyGlobal.lowFrequencyChannelCorrelation;
   for (var y = 0; y < frame.boundsHeight; y++) {
     for (var x = 0; x < frame.boundsWidth; x++) {
       double inScaledR = buffers[1][y][x] + buffers[0][y][x];

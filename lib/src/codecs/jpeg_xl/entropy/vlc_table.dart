@@ -3,30 +3,26 @@ import 'dart:typed_data';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
 
-/// Processes the reverse32 data used by the JPEG XL codec.
-///
-int _reverse32(int value) {
-  int v = value;
-  v = ((v >> 1) & 0x55555555) | ((v & 0x55555555) << 1);
-  v = ((v >> 2) & 0x33333333) | ((v & 0x33333333) << 2);
-  v = ((v >> 4) & 0x0F0F0F0F) | ((v & 0x0F0F0F0F) << 4);
-  v = ((v >> 8) & 0x00FF00FF) | ((v & 0x00FF00FF) << 8);
-  return ((v >> 16) & 0xFFFF) | ((v & 0xFFFF) << 16);
+/// Reverses all 32 bits in [value].
+int _reverseUint32Bits(int value) {
+  int reversed = value;
+  reversed = ((reversed >> 1) & 0x55555555) | ((reversed & 0x55555555) << 1);
+  reversed = ((reversed >> 2) & 0x33333333) | ((reversed & 0x33333333) << 2);
+  reversed = ((reversed >> 4) & 0x0f0f0f0f) | ((reversed & 0x0f0f0f0f) << 4);
+  reversed = ((reversed >> 8) & 0x00ff00ff) | ((reversed & 0x00ff00ff) << 8);
+  return ((reversed >> 16) & 0xffff) | ((reversed & 0xffff) << 16);
 }
 
 /// A lookup-table prefix (Huffman) decoder: peek [bits] bits, map directly to
 /// (symbol, code length), consume the code length.
 final class VlcTable {
-  /// Stores the bits value used while processing JPEG XL data.
-  ///
+  /// Lookup width used to index the variable-length-code table.
   final int bits;
 
-  /// Stores the symbols state used internally by the JPEG XL codec.
-  ///
+  /// Decoded symbol stored in each lookup entry.
   final Int32List _symbols;
 
-  /// Stores the lengths state used internally by the JPEG XL codec.
-  ///
+  /// Decoded code length stored in each lookup entry.
   final Int32List _lengths;
 
   /// Builds from a pre-expanded table of (symbol, length) entries indexed by
@@ -86,7 +82,7 @@ final class VlcTable {
       if (len > bits) {
         throw const JpegXlInvalidBitstreamException(message: 'VLC table size too small');
       }
-      int index = _reverse32(codes[i]);
+      int index = _reverseUint32Bits(codes[i]);
       final int number = 1 << (bits - len);
       final int offset = 1 << len;
       for (var j = 0; j < number; j++) {
@@ -102,18 +98,16 @@ final class VlcTable {
     return VlcTable._(bits: bits, symbols: tableSymbols, lengths: tableLengths);
   }
 
-  /// Creates Vlc table state for JPEG XL processing.
-  ///
+  /// Creates a fully expanded variable-length-code lookup table.
   VlcTable._({
     required this.bits,
     required this._symbols,
     required this._lengths,
   });
 
-  /// Processes get vlc information in a JPEG XL codestream.
-  ///
+  /// Reads and returns one symbol from [reader].
   @pragma('vm:prefer-inline')
-  int getVlc(BitReader reader) {
+  int readSymbol(BitReader reader) {
     final int index = reader.peekBits(bits);
     reader.skipBits(_lengths[index]);
     return _symbols[index];

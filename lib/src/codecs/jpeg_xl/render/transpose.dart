@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:imcodec/src/codecs/jpeg_xl/util/image_buffer.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/core/image_buffer.dart';
 
 /// Applies the EXIF-style [orientation] (1-8) to a plane, returning a new
 /// buffer (or the input for orientation 1).

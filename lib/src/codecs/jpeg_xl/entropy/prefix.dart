@@ -1,8 +1,8 @@
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/entropy/symbol_distribution.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/entropy/vlc_table.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
 
 /// The fixed 4-bit level-0 table used to read code lengths of the level-1
 /// code-length code (Brotli-style).
@@ -16,22 +16,18 @@ final _level0Table = VlcTable.fromEntries(
   ],
 );
 
-/// Stores the codelen map state used internally by the JPEG XL codec.
-///
-const _codelenMap = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+/// Mapping used for codelen.
+const _codeLengthOrder = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 /// A Brotli-style prefix-code symbol distribution.
 final class PrefixSymbolDistribution extends SymbolDistribution {
-  /// Stores the table state used internally by the JPEG XL codec.
-  ///
+  /// Variable-length-code lookup table for multi-symbol distributions.
   VlcTable? _table;
 
-  /// Stores the default symbol state used internally by the JPEG XL codec.
-  ///
+  /// Only symbol emitted by a single-symbol distribution.
   int _defaultSymbol = 0;
 
-  /// Creates Prefix symbol distribution data for JPEG XL processing.
-  ///
+  /// Creates a prefix symbol distribution.
   PrefixSymbolDistribution({
     required BitReader reader,
     required int alphabetSize,
@@ -52,8 +48,7 @@ final class PrefixSymbolDistribution extends SymbolDistribution {
     }
   }
 
-  /// Processes the populate simple data used by the JPEG XL codec.
-  ///
+  /// Populates simple.
   void _populateSimple(BitReader reader) {
     final symbols = List<int>.filled(4, 0);
     final int nsym = 1 + reader.readBits(2);
@@ -102,8 +97,7 @@ final class PrefixSymbolDistribution extends SymbolDistribution {
     _table = VlcTable.canonical(bits: bits, lengths: lens, symbols: symbols);
   }
 
-  /// Processes the populate complex data used by the JPEG XL codec.
-  ///
+  /// Populates complex.
   void _populateComplex(BitReader reader, int hskip) {
     final level1Lengths = List<int>.filled(18, 0);
     final level1Codecounts = List<int>.filled(19, 0);
@@ -112,7 +106,7 @@ final class PrefixSymbolDistribution extends SymbolDistribution {
     var totalCode = 0;
     var numCodes = 0;
     for (var i = hskip; i < 18; i++) {
-      final int code = level1Lengths[_codelenMap[i]] = _level0Table.getVlc(reader);
+      final int code = level1Lengths[_codeLengthOrder[i]] = _level0Table.readSymbol(reader);
       level1Codecounts[code]++;
       if (code != 0) {
         totalCode += 32 >> code;
@@ -155,7 +149,7 @@ final class PrefixSymbolDistribution extends SymbolDistribution {
     final level2Counts = List<int>.filled(alphabetSize + 1, 0);
     var prev = 8;
     for (var i = 0; i < alphabetSize; i++) {
-      final int code = level1Table.getVlc(reader);
+      final int code = level1Table.readSymbol(reader);
       if (code == 16) {
         int extra = 3 + reader.readBits(2);
         if (prevRepeatCount > 0) {
@@ -228,6 +222,6 @@ final class PrefixSymbolDistribution extends SymbolDistribution {
     if (table == null) {
       return _defaultSymbol;
     }
-    return table.getVlc(reader);
+    return table.readSymbol(reader);
   }
 }

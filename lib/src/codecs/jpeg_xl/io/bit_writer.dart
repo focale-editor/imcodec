@@ -1,26 +1,22 @@
 import 'dart:typed_data';
 
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 
 /// LSB-first bit writer: the exact mirror of [BitReader].
 final class BitWriter {
-  /// Processes the bytes data used by the JPEG XL codec.
-  ///
+  /// Returns the buffered bytes.
   final _bytes = BytesBuilder();
 
-  /// Stores the cache state used internally by the JPEG XL codec.
-  ///
+  /// Pending least-significant-bit-first bits waiting to be emitted.
   int _cache = 0;
 
-  /// Stores the cache bits state used internally by the JPEG XL codec.
-  ///
+  /// Number of valid bits currently held in [_cache].
   int _cacheBits = 0;
 
   /// Bits written so far (including unflushed cache bits).
   int get bitsWritten => _bytes.length * 8 + _cacheBits;
 
-  /// Processes write bits information in a JPEG XL codestream.
-  ///
+  /// Writes the requested low-order bits.
   void writeBits(int value, int bits) {
     assert(bits >= 0 && bits <= 32, 'The bit count must be between 0 and 32.');
     assert(value >= 0 && (bits >= 32 || value < (1 << bits)), 'value $value does not fit in $bits bits');
@@ -39,8 +35,7 @@ final class BitWriter {
     }
   }
 
-  /// Processes write bool information in a JPEG XL codestream.
-  ///
+  /// Writes one Boolean value to the bitstream.
   void writeBool(bool value) => writeBits(value ? 1 : 0, 1);
 
   /// Writes [value] with the U32 distribution that encodes it in the
@@ -145,8 +140,7 @@ final class BitWriter {
     _bytes.add(bytes);
   }
 
-  /// Processes to bytes information in a JPEG XL codestream.
-  ///
+  /// Serializes the buffered bits to bytes.
   Uint8List toBytes() {
     zeroPadToByte();
     return _bytes.toBytes();

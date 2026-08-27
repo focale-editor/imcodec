@@ -2,49 +2,42 @@ import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
 
 /// The `BitDepth` header bundle.
 final class BitDepthHeader {
-  /// Stores the uses float samples value used while processing JPEG XL data.
-  ///
+  /// Whether samples use floating-point representation.
   final bool usesFloatSamples;
 
-  /// Stores the bits per sample value used while processing JPEG XL data.
-  ///
+  /// Number of encoded bits used for each sample.
   final int bitsPerSample;
 
-  /// Stores the exp bits value used while processing JPEG XL data.
-  ///
-  final int expBits;
+  /// Number of exponent bits used by floating-point samples.
+  final int exponentBits;
 
-  /// Creates Bit depth header data for JPEG XL processing.
-  ///
-  const BitDepthHeader() : usesFloatSamples = false, bitsPerSample = 8, expBits = 0;
+  /// Creates a bit depth header.
+  const BitDepthHeader() : usesFloatSamples = false, bitsPerSample = 8, exponentBits = 0;
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
+  /// Reads this structure from the bitstream.
   factory BitDepthHeader.read({
     required BitReader reader,
   }) {
     final bool usesFloatSamples = reader.readBool();
     if (usesFloatSamples) {
       final int bits = reader.readU32(32, 0, 16, 0, 24, 0, 1, 6);
-      final int expBits = 1 + reader.readBits(4);
-      return BitDepthHeader._(usesFloatSamples: true, bitsPerSample: bits, expBits: expBits);
+      final int exponentBits = 1 + reader.readBits(4);
+      return BitDepthHeader._(usesFloatSamples: true, bitsPerSample: bits, exponentBits: exponentBits);
     }
     final int bits = reader.readU32(8, 0, 10, 0, 12, 0, 1, 6);
-    return BitDepthHeader._(usesFloatSamples: false, bitsPerSample: bits, expBits: 0);
+    return BitDepthHeader._(usesFloatSamples: false, bitsPerSample: bits, exponentBits: 0);
   }
 
-  /// Creates Bit depth header state for JPEG XL processing.
-  ///
+  /// Creates a bit depth header.
   const BitDepthHeader._({
     required this.usesFloatSamples,
     required this.bitsPerSample,
-    required this.expBits,
+    required this.exponentBits,
   });
 
-  /// Processes max value information in a JPEG XL codestream.
-  ///
+  /// Maximum sample value represented by this bit depth.
   int get maxValue => (1 << bitsPerSample) - 1;
 
   @override
-  String toString() => usesFloatSamples ? '$bitsPerSample-bit float (exp $expBits)' : '$bitsPerSample-bit';
+  String toString() => usesFloatSamples ? '$bitsPerSample-bit float (exponent $exponentBits)' : '$bitsPerSample-bit';
 }

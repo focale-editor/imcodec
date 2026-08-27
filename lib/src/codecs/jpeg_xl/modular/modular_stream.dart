@@ -4,13 +4,12 @@ import 'package:imcodec/src/codecs/jpeg_xl/entropy/entropy_stream.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/modular/delta_palette.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/modular/ma_tree.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/modular/meta_adaptive_tree.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/modular/modular_channel.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/modular/transform_info.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/modular/wp_params.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/modular/modular_transform.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/modular/weighted_predictor_parameters.dart';
 
-/// Stores the permutation lut state used internally by the JPEG XL codec.
-///
+/// Permutation used to decode modular transform order.
 const _permutationLut = [
   [0, 1, 2], [1, 2, 0], [2, 0, 1], //
   [0, 2, 1], [1, 0, 2], [2, 1, 0],
@@ -21,75 +20,67 @@ final class ModularFrameContext {
   /// The modular frame size (frame bounds).
   final int frameWidth;
 
-  /// Stores the frame height value used while processing JPEG XL data.
-  ///
+  /// Frame height in samples.
   final int frameHeight;
 
-  /// Stores the group dim value used while processing JPEG XL data.
-  ///
-  final int groupDim;
+  /// Full-resolution coding-group dimension in pixels.
+  final int groupDimension;
 
-  /// Stores the global tree value used while processing JPEG XL data.
-  ///
-  final MaTree? globalTree;
+  /// Image-wide meta-adaptive tree, when the frame defines one.
+  final MetaAdaptiveTree? globalTree;
 
-  /// dimShift per extra channel.
-  final List<int> ecDimShifts;
+  /// dimensionShift per extra channel.
+  final List<int> extraChannelDimensionShifts;
 
   /// Image bits per sample (used by the palette transform).
   final int bitDepth;
 
-  /// Creates Modular frame context data for JPEG XL processing.
-  ///
-  const ModularFrameContext({required this.frameWidth, required this.frameHeight, required this.groupDim, required this.globalTree, required this.ecDimShifts, required this.bitDepth});
+  /// Creates a modular frame context.
+  const ModularFrameContext({
+    required this.frameWidth,
+    required this.frameHeight,
+    required this.groupDimension,
+    required this.globalTree,
+    required this.extraChannelDimensionShifts,
+    required this.bitDepth,
+  });
 }
 
 /// A modular bitstream section: channel list, transform chain, MA tree and
 /// entropy stream, with forward parsing and inverse transform application.
 final class ModularStream {
-  /// Stores the ctx value used while processing JPEG XL data.
-  ///
-  final ModularFrameContext ctx;
+  /// Geometry and image metadata inherited from the enclosing frame.
+  final ModularFrameContext context;
 
-  /// Stores the stream index value used while processing JPEG XL data.
-  ///
+  /// Codestream identifier of this modular substream.
   final int streamIndex;
 
-  /// Stores the nb meta channels value used while processing JPEG XL data.
-  ///
-  int nbMetaChannels = 0;
+  /// Number of metadata channel entries in the modular stream.
+  int metadataChannelCount = 0;
 
-  /// Stores the dist multiplier value used while processing JPEG XL data.
-  ///
-  int distMultiplier = 1;
+  /// Multiplier converting entropy distances to pixel-buffer offsets.
+  int distanceMultiplier = 1;
 
-  /// Stores the tree value used while processing JPEG XL data.
-  ///
-  MaTree? tree;
+  /// Meta-adaptive tree used to choose predictors and contexts.
+  MetaAdaptiveTree? tree;
 
-  /// Stores the wp params value used while processing JPEG XL data.
-  ///
-  WpParams? wpParams;
+  /// Parameters used by self-correcting weighted prediction.
+  WeightedPredictorParameters? weightedPredictorParameters;
 
-  /// Stores the transforms value used while processing JPEG XL data.
-  ///
-  List<TransformInfo> transforms = const [];
+  /// Transform chain applied before residual decoding.
+  List<ModularTransform> transforms = const [];
 
-  /// Stores the stream value used while processing JPEG XL data.
-  ///
+  /// Entropy stream containing modular residuals.
   EntropyStream? stream;
 
-  /// Transforms ed.
-  ///
+  /// Whether inverse transforms have already been applied.
   bool _transformed = false;
 
-  /// Stores the channels value used while processing JPEG XL data.
-  ///
+  /// Channels decoded by this modular stream.
   final List<ModularChannel> channels = [];
 
-  /// Stores the squeeze map state used internally by the JPEG XL codec.
-  ///
-  final Map<int, List<SqueezeParam>> _squeezeMap = {};
+  /// Original channel positions recorded for inverse squeeze transforms.
+  final Map<int, List<SqueezeParameters>> _squeezeMap = {};
 
   /// Reads the stream header. If [channelArray] is given, those channels are
   /// used directly (group streams); otherwise [channelCount] full-frame
@@ -97,7 +88,7 @@ final class ModularStream {
   /// extra channels.
   ModularStream.read({
     required BitReader reader,
-    required this.ctx,
+    required this.context,
     required this.streamIndex,
     List<ModularChannel>? channelArray,
     int channelCount = 0,
@@ -105,163 +96,160 @@ final class ModularStream {
   }) {
     final int effectiveChannelCount = channelArray?.length ?? channelCount;
     if (effectiveChannelCount == 0) {
-      distMultiplier = 1;
+      distanceMultiplier = 1;
       return;
     }
     final bool useGlobalTree = reader.readBool();
-    wpParams = WpParams.read(reader: reader);
-    final int nbTransforms = reader.readU32(0, 0, 1, 0, 2, 4, 18, 8);
-    transforms = List.generate(nbTransforms, (_) => TransformInfo.read(reader: reader));
+    weightedPredictorParameters = WeightedPredictorParameters.read(reader: reader);
+    final int transformCount = reader.readU32(0, 0, 1, 0, 2, 4, 18, 8);
+    transforms = List.generate(transformCount, (_) => ModularTransform.read(reader: reader));
 
     if (channelArray == null) {
       for (var i = 0; i < channelCount; i++) {
-        final int dimShift = i < ecStart ? 0 : ctx.ecDimShifts[i - ecStart];
-        channels.add(ModularChannel(height: ctx.frameHeight, width: ctx.frameWidth, vshift: dimShift, hshift: dimShift));
+        final int dimensionShift = i < ecStart ? 0 : context.extraChannelDimensionShifts[i - ecStart];
+        channels.add(ModularChannel(height: context.frameHeight, width: context.frameWidth, verticalShift: dimensionShift, horizontalShift: dimensionShift));
       }
     } else {
       channels.addAll(channelArray);
     }
 
-    for (var i = 0; i < nbTransforms; i++) {
-      final TransformInfo t = transforms[i];
-      if (t.tr == TransformInfo.palette || t.tr == TransformInfo.rct) {
-        final int needed = t.tr == TransformInfo.rct ? 3 : t.numC;
-        if (t.beginC < 0 || needed < 1 || t.beginC + needed > channels.length) {
+    for (var i = 0; i < transformCount; i++) {
+      final ModularTransform transform = transforms[i];
+      if (transform.type == ModularTransform.palette || transform.type == ModularTransform.reversibleColor) {
+        final int needed = transform.type == ModularTransform.reversibleColor ? 3 : transform.channelCount;
+        if (transform.firstChannel < 0 || needed < 1 || transform.firstChannel + needed > channels.length) {
           throw const JpegXlInvalidBitstreamException(message: 'transform channel range out of bounds');
         }
       }
-      if (t.tr == TransformInfo.palette) {
-        if (t.beginC < nbMetaChannels) {
-          nbMetaChannels += 2 - t.numC;
+      if (transform.type == ModularTransform.palette) {
+        if (transform.firstChannel < metadataChannelCount) {
+          metadataChannelCount += 2 - transform.channelCount;
         } else {
-          nbMetaChannels++;
+          metadataChannelCount++;
         }
-        final int start = t.beginC + 1;
-        for (var j = start; j < t.beginC + t.numC; j++) {
+        final int start = transform.firstChannel + 1;
+        for (var j = start; j < transform.firstChannel + transform.channelCount; j++) {
           channels.removeAt(start);
         }
-        if (t.nbDeltas > 0 && t.dPred == 6) {
-          channels[t.beginC].forceWp = true;
+        if (transform.deltaCount > 0 && transform.deltaPredictor == 6) {
+          channels[transform.firstChannel].forceWeightedPredictor = true;
         }
-        channels.insert(0, ModularChannel(height: t.numC, width: t.nbColors, vshift: -1, hshift: -1));
-      } else if (t.tr == TransformInfo.squeeze) {
-        final squeezeList = <SqueezeParam>[];
-        if (t.sp!.isEmpty) {
-          final int first = nbMetaChannels;
+        channels.insert(0, ModularChannel(height: transform.channelCount, width: transform.colorCount, verticalShift: -1, horizontalShift: -1));
+      } else if (transform.type == ModularTransform.squeeze) {
+        final squeezeList = <SqueezeParameters>[];
+        if (transform.squeezeParameters!.isEmpty) {
+          final int first = metadataChannelCount;
           final int count = channels.length - first;
           // Default squeeze parameters operate on the first non-meta
           // channel's size (libjxl uses channel[nb_meta_channels]).
           int w = channels[first].width;
           int h = channels[first].height;
           if (count > 2 && channels[first + 1].sizeEquals(channels[first])) {
-            squeezeList.add(SqueezeParam(horizontal: true, inPlace: false, beginC: first + 1, numC: 2));
-            squeezeList.add(SqueezeParam(horizontal: false, inPlace: false, beginC: first + 1, numC: 2));
+            squeezeList.add(SqueezeParameters(horizontal: true, inPlace: false, firstChannel: first + 1, channelCount: 2));
+            squeezeList.add(SqueezeParameters(horizontal: false, inPlace: false, firstChannel: first + 1, channelCount: 2));
           }
           if (h >= w && h > 8) {
-            squeezeList.add(SqueezeParam(horizontal: false, inPlace: true, beginC: first, numC: count));
+            squeezeList.add(SqueezeParameters(horizontal: false, inPlace: true, firstChannel: first, channelCount: count));
             h = (h + 1) ~/ 2;
           }
           while (w > 8 || h > 8) {
             if (w > 8) {
-              squeezeList.add(SqueezeParam(horizontal: true, inPlace: true, beginC: first, numC: count));
+              squeezeList.add(SqueezeParameters(horizontal: true, inPlace: true, firstChannel: first, channelCount: count));
               w = (w + 1) ~/ 2;
             }
             if (h > 8) {
-              squeezeList.add(SqueezeParam(horizontal: false, inPlace: true, beginC: first, numC: count));
+              squeezeList.add(SqueezeParameters(horizontal: false, inPlace: true, firstChannel: first, channelCount: count));
               h = (h + 1) ~/ 2;
             }
           }
         } else {
-          squeezeList.addAll(t.sp!);
+          squeezeList.addAll(transform.squeezeParameters!);
         }
         _squeezeMap[i] = squeezeList;
-        for (final sp in squeezeList) {
-          final int begin = sp.beginC;
-          final int end = begin + sp.numC - 1;
-          if (begin < 0 || sp.numC < 1 || end >= channels.length) {
+        for (final SqueezeParameters squeeze in squeezeList) {
+          final int begin = squeeze.firstChannel;
+          final int end = begin + squeeze.channelCount - 1;
+          if (begin < 0 || squeeze.channelCount < 1 || end >= channels.length) {
             throw const JpegXlInvalidBitstreamException(message: 'squeeze channel range out of bounds');
           }
-          final int offset = sp.inPlace ? end + 1 : channels.length;
-          if (begin < nbMetaChannels) {
-            if (!sp.inPlace) {
+          final int offset = squeeze.inPlace ? end + 1 : channels.length;
+          if (begin < metadataChannelCount) {
+            if (!squeeze.inPlace) {
               throw const JpegXlInvalidBitstreamException(message: 'squeeze meta must be in place');
             }
-            if (end >= nbMetaChannels) {
+            if (end >= metadataChannelCount) {
               throw const JpegXlInvalidBitstreamException(message: 'squeeze meta must end in meta');
             }
-            nbMetaChannels += sp.numC;
+            metadataChannelCount += squeeze.channelCount;
           }
           for (var k = begin; k <= end; k++) {
             final ModularChannel chan = channels[k];
             final int r = offset + k - begin;
             final ModularChannel residu;
-            if (sp.horizontal) {
+            if (squeeze.horizontal) {
               final int w = chan.width;
               chan.width = (w + 1) ~/ 2;
-              chan.hshift++;
+              chan.horizontalShift++;
               residu = ModularChannel.copy(other: chan);
               residu.width = w ~/ 2;
             } else {
               final int h = chan.height;
               chan.height = (h + 1) ~/ 2;
-              chan.vshift++;
+              chan.verticalShift++;
               residu = ModularChannel.copy(other: chan);
               residu.height = h ~/ 2;
             }
             channels.insert(r, residu);
           }
         }
-      } else if (t.tr == TransformInfo.rct) {
-        // RCT doesn't modify the channel list.
+      } else if (transform.type == ModularTransform.reversibleColor) {
+        // RCT doesn'transform modify the channel list.
         continue;
       } else {
-        throw JpegXlInvalidBitstreamException(message: 'illegal transform ${t.tr}');
+        throw JpegXlInvalidBitstreamException(message: 'illegal transform ${transform.type}');
       }
     }
 
     if (!useGlobalTree) {
-      tree = MaTree.read(reader: reader);
+      tree = MetaAdaptiveTree.read(reader: reader);
     } else {
-      tree = ctx.globalTree;
+      tree = context.globalTree;
       if (tree == null) {
         throw const JpegXlInvalidBitstreamException(message: 'stream uses global tree but no global tree exists');
       }
     }
     stream = EntropyStream.clone(other: tree!.stream!);
 
-    distMultiplier = 0;
+    distanceMultiplier = 0;
     for (final ModularChannel c in channels) {
-      if (c.width > distMultiplier) {
-        distMultiplier = c.width;
+      if (c.width > distanceMultiplier) {
+        distanceMultiplier = c.width;
       }
     }
   }
 
-  /// Stores the encoded channel count value used while processing JPEG XL data.
-  ///
+  /// Number of encoded channel entries in the modular stream.
   int get encodedChannelCount => channels.length;
 
   /// Whether this stream applies a Squeeze (responsive) transform — the
   /// precondition for the decoder's low-res Squeeze downscale path.
-  bool get usesSqueeze => transforms.any((t) => t.tr == TransformInfo.squeeze);
+  bool get usesSqueeze => transforms.any((transform) => transform.type == ModularTransform.squeeze);
 
-  /// Processes get channel information in a JPEG XL codestream.
-  ///
+  /// Returns the decoded channel at [index].
   ModularChannel getChannel(int index) => channels[index];
 
-  /// Processes decode channels information in a JPEG XL codestream.
-  ///
+  /// Decodes channels.
   void decodeChannels(BitReader reader, {bool partial = false}) {
     var channelIndex = 0;
     for (var i = 0; i < channels.length; i++) {
       final ModularChannel channel = channels[i];
-      if (partial && i >= nbMetaChannels && (channel.height > ctx.groupDim || channel.width > ctx.groupDim)) {
+      if (partial && i >= metadataChannelCount && (channel.height > context.groupDimension || channel.width > context.groupDimension)) {
         break;
       }
       if (channel.width == 0 || channel.height == 0) {
         channel.allocate();
       } else {
-        channel.decode(reader, stream!, wpParams, tree!, channels, channelIndex, streamIndex, distMultiplier);
+        channel.decode(reader, stream!, weightedPredictorParameters, tree!, channels, channelIndex, streamIndex, distanceMultiplier);
         channelIndex++;
       }
     }
@@ -273,31 +261,38 @@ final class ModularStream {
     }
   }
 
-  /// Processes apply transforms information in a JPEG XL codestream.
-  ///
+  /// Applies the decoded modular transforms.
   void applyTransforms() {
     if (_transformed) {
       return;
     }
     _transformed = true;
     for (int i = transforms.length - 1; i >= 0; i--) {
-      final TransformInfo t = transforms[i];
-      if (t.tr == TransformInfo.squeeze) {
-        final List<SqueezeParam> spa = _squeezeMap[i]!;
-        for (int j = spa.length - 1; j >= 0; j--) {
-          final SqueezeParam sp = spa[j];
-          final int begin = sp.beginC;
-          final int end = begin + sp.numC - 1;
-          final int offset = sp.inPlace ? end + 1 : channels.length + begin - end - 1;
+      final ModularTransform transform = transforms[i];
+      if (transform.type == ModularTransform.squeeze) {
+        final List<SqueezeParameters> squeezeParametersList = _squeezeMap[i]!;
+        for (int j = squeezeParametersList.length - 1; j >= 0; j--) {
+          final SqueezeParameters squeeze = squeezeParametersList[j];
+          final int begin = squeeze.firstChannel;
+          final int end = begin + squeeze.channelCount - 1;
+          final int offset = squeeze.inPlace ? end + 1 : channels.length + begin - end - 1;
           for (var c = begin; c <= end; c++) {
             final int r = offset + c - begin;
             final ModularChannel chan = channels[c];
             final ModularChannel residu = channels[r];
             final ModularChannel output;
-            if (sp.horizontal) {
-              output = ModularChannel.inverseHorizontalSqueeze(ModularChannel(height: chan.height, width: chan.width + residu.width, vshift: chan.vshift, hshift: chan.hshift - 1), chan, residu);
+            if (squeeze.horizontal) {
+              output = ModularChannel.inverseHorizontalSqueeze(
+                ModularChannel(height: chan.height, width: chan.width + residu.width, verticalShift: chan.verticalShift, horizontalShift: chan.horizontalShift - 1),
+                chan,
+                residu,
+              );
             } else {
-              output = ModularChannel.inverseVerticalSqueeze(ModularChannel(height: chan.height + residu.height, width: chan.width, vshift: chan.vshift - 1, hshift: chan.hshift), chan, residu);
+              output = ModularChannel.inverseVerticalSqueeze(
+                ModularChannel(height: chan.height + residu.height, width: chan.width, verticalShift: chan.verticalShift - 1, horizontalShift: chan.horizontalShift),
+                chan,
+                residu,
+              );
             }
             channels[c] = output;
           }
@@ -305,13 +300,13 @@ final class ModularStream {
             channels.removeAt(offset);
           }
         }
-      } else if (t.tr == TransformInfo.rct) {
-        final int permutation = t.rctType ~/ 7;
-        final int type = t.rctType % 7;
+      } else if (transform.type == ModularTransform.reversibleColor) {
+        final int permutation = transform.reversibleColorTransformType ~/ 7;
+        final int type = transform.reversibleColorTransformType % 7;
         if (permutation >= _permutationLut.length) {
           throw const JpegXlInvalidBitstreamException(message: 'invalid RCT permutation');
         }
-        final int start = t.beginC;
+        final int start = transform.firstChannel;
         final List<ModularChannel> v = [channels[start], channels[start + 1], channels[start + 2]];
         if (!v[1].sizeEquals(v[0]) || !v[2].sizeEquals(v[1])) {
           throw const JpegXlInvalidBitstreamException(message: 'RCT needs three equal-size channels');
@@ -362,29 +357,29 @@ final class ModularStream {
         for (var j = 0; j < 3; j++) {
           channels[start + _permutationLut[permutation][j]] = v[j];
         }
-      } else if (t.tr == TransformInfo.palette) {
-        final int first = t.beginC + 1;
-        final int endC = t.beginC + t.numC - 1;
+      } else if (transform.type == ModularTransform.palette) {
+        final int first = transform.firstChannel + 1;
+        final int endC = transform.firstChannel + transform.channelCount - 1;
         final int last = endC + 1;
-        final int bitDepth = ctx.bitDepth;
+        final int bitDepth = context.bitDepth;
         final ModularChannel firstChannel = channels[first];
         final ModularChannel c0 = channels[0];
         for (int j = first + 1; j <= last; j++) {
           channels.insert(j, ModularChannel.copy(other: firstChannel));
         }
-        for (var c = 0; c < t.numC; c++) {
+        for (var c = 0; c < transform.channelCount; c++) {
           final ModularChannel chan = channels[first + c];
           final Int32List cb = chan.buffer!;
           for (var y = 0; y < firstChannel.height; y++) {
             for (var x = 0; x < firstChannel.width; x++) {
               final int o = y * firstChannel.width + x;
               int index = cb[o];
-              final bool isDelta = index < t.nbDeltas;
+              final bool isDelta = index < transform.deltaCount;
               int value;
-              if (index >= 0 && index < t.nbColors) {
-                value = c0.get(c, index);
-              } else if (index >= t.nbColors) {
-                index -= t.nbColors;
+              if (index >= 0 && index < transform.colorCount) {
+                value = c0.sampleAt(c, index);
+              } else if (index >= transform.colorCount) {
+                index -= transform.colorCount;
                 if (index < 64) {
                   value = ((index >> (2 * c)) % 4) * ((1 << bitDepth) - 1) ~/ 4 + (1 << (bitDepth - 3 > 0 ? bitDepth - 3 : 0));
                 } else {
@@ -408,16 +403,16 @@ final class ModularStream {
               }
               cb[o] = value;
               if (isDelta) {
-                cb[o] += chan.prediction(y, x, t.dPred);
+                cb[o] += chan.prediction(y, x, transform.deltaPredictor);
               }
             }
           }
         }
         channels.removeAt(0);
-        if (t.beginC < nbMetaChannels) {
-          nbMetaChannels -= 2 - t.numC;
+        if (transform.firstChannel < metadataChannelCount) {
+          metadataChannelCount -= 2 - transform.channelCount;
         } else {
-          nbMetaChannels--;
+          metadataChannelCount--;
         }
       }
     }

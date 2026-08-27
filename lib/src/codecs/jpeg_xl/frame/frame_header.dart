@@ -1,159 +1,125 @@
 import 'dart:convert';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/blending_info.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/frame_flags.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/frame/passes_info.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/frame/progressive_passes.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/restoration_filter.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/header/extensions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/header/image_header.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
 
 /// The frame header bundle, including the resolved frame bounds.
 final class FrameHeader {
-  /// Stores the group dim value used while processing JPEG XL data.
-  ///
-  int groupDim = 256;
+  /// Full-resolution coding-group dimension in pixels.
+  int groupDimension = 256;
 
-  /// Processes extensions information in a JPEG XL codestream.
-  ///
-  Extensions extensions = const Extensions();
+  /// Optional frame-header extension payloads.
+    Extensions extensions = const Extensions();
 
-  /// Stores the type value used while processing JPEG XL data.
-  ///
-  int type = FrameFlags.regularFrame;
+  /// Type identifier defined by the JPEG XL specification.
+    int type = FrameFlags.regularFrame;
 
-  /// Stores the encoding value used while processing JPEG XL data.
-  ///
-  int encoding = FrameFlags.vardct;
+  /// Encoding identifier for the frame header.
+    int encoding = FrameFlags.vardct;
 
-  /// Stores the flags value used while processing JPEG XL data.
-  ///
-  int flags = 0;
+  /// Bit flags defined for the frame header.
+    int flags = 0;
 
-  /// Stores the do yCb cr value used while processing JPEG XL data.
-  ///
-  bool doYCbCr = false;
+  /// Whether color channels are represented as YCbCr.
+    bool usesYcbcr = false;
 
-  /// Stores the jpeg upsampling y value used while processing JPEG XL data.
-  ///
-  final List<int> jpegUpsamplingY = [0, 0, 0];
+  /// Vertical JPEG subsampling shift for each color channel.
+    final List<int> jpegVerticalUpsamplingShift = [0, 0, 0];
 
-  /// Stores the jpeg upsampling x value used while processing JPEG XL data.
-  ///
-  final List<int> jpegUpsamplingX = [0, 0, 0];
+  /// Horizontal JPEG subsampling shift for each color channel.
+    final List<int> jpegHorizontalUpsamplingShift = [0, 0, 0];
 
-  /// Stores the upsampling value used while processing JPEG XL data.
-  ///
-  int upsampling = 1;
+  /// Upsampling factor applied to color channels.
+    int upsampling = 1;
 
-  /// Stores the ec upsampling value used while processing JPEG XL data.
-  ///
-  List<int> ecUpsampling = const [];
+  /// Upsampling factor for each extra channel.
+    List<int> extraChannelUpsampling = const [];
 
-  /// Stores the group size shift value used while processing JPEG XL data.
-  ///
-  int groupSizeShift = 1;
+  /// Exponent selecting the coding-group dimension.
+    int groupSizeShift = 1;
 
-  /// Processes restoration filter information in a JPEG XL codestream.
-  ///
-  RestorationFilter restorationFilter = RestorationFilter.defaults();
+  /// Restoration filters applied after frame reconstruction.
+    RestorationFilter restorationFilter = RestorationFilter.defaults();
 
-  /// Stores the lf group dim value used while processing JPEG XL data.
-  ///
-  int lfGroupDim = 2048;
+  /// Low-frequency group dimension in pixels.
+    int lowFrequencyGroupDimension = 2048;
 
-  /// Stores the log group dim value used while processing JPEG XL data.
-  ///
-  int logGroupDim = 8;
+  /// Base-two logarithm of [groupDimension].
+    int logGroupDimension = 8;
 
-  /// Stores the log lf group dim value used while processing JPEG XL data.
-  ///
-  int logLfGroupDim = 11;
+  /// Base-two logarithm of [lowFrequencyGroupDimension].
+    int logLowFrequencyGroupDimension = 11;
 
-  /// Stores the xqm scale value used while processing JPEG XL data.
-  ///
-  int xqmScale = 2;
+  /// Quantization scale for the opsin X channel.
+    int xQuantizationScale = 2;
 
-  /// Stores the bqm scale value used while processing JPEG XL data.
-  ///
-  int bqmScale = 2;
+  /// Quantization scale for the opsin B channel.
+    int bQuantizationScale = 2;
 
-  /// Processes passes information in a JPEG XL codestream.
-  ///
-  PassesInfo passes = PassesInfo.defaults();
+  /// Progressive-pass configuration for this frame.
+    ProgressivePasses passes = ProgressivePasses.defaults();
 
-  /// Stores the lf level value used while processing JPEG XL data.
-  ///
-  int lfLevel = 0;
+  /// Progressive low-frequency frame level.
+    int lowFrequencyLevel = 0;
 
-  /// Stores the have crop value used while processing JPEG XL data.
-  ///
-  bool haveCrop = false;
+  /// Whether explicit frame bounds are encoded.
+    bool hasCrop = false;
 
-  /// Frame bounds: origin can be negative; width/height are the decoded
-  /// frame size (after the upsampling/lfLevel adjustments).
+  /// Horizontal origin of the decoded frame bounds.
+    /// The origin can be negative; width and height are the decoded
+  /// frame size (after the upsampling/lowFrequencyLevel adjustments).
   int x0 = 0;
 
-  /// Stores the y0 value used while processing JPEG XL data.
-  ///
-  int y0 = 0;
+  /// Vertical origin of the frame crop.
+    int y0 = 0;
 
-  /// Stores the width value used while processing JPEG XL data.
-  ///
-  int width = 0;
+  /// Width in pixels.
+    int width = 0;
 
-  /// Stores the is subsampled value used while processing JPEG XL data.
-  ///
-  bool isSubsampled = false;
+  /// Whether any JPEG color channel is subsampled.
+    bool isSubsampled = false;
 
-  /// Stores the full frame value used while processing JPEG XL data.
-  ///
-  bool fullFrame = true;
+  /// Whether the decoded bounds cover the complete image canvas.
+    bool coversFullCanvas = true;
 
-  /// Processes blending info information in a JPEG XL codestream.
-  ///
-  BlendingInfo blendingInfo = const BlendingInfo.defaults();
+  /// Blending settings for the color channels.
+    BlendingInfo blendingInfo = const BlendingInfo.defaults();
 
-  /// Stores the ec blending info value used while processing JPEG XL data.
-  ///
-  List<BlendingInfo> ecBlendingInfo = const [];
+  /// Blending settings for each extra channel.
+    List<BlendingInfo> ecBlendingInfo = const [];
 
-  /// Stores the duration value used while processing JPEG XL data.
-  ///
-  int duration = 0;
+  /// Frame duration in animation ticks.
+    int duration = 0;
 
-  /// Stores the timecode value used while processing JPEG XL data.
-  ///
-  int timecode = 0;
+  /// Presentation timecode carried by the frame.
+    int timecode = 0;
 
-  /// Stores the is last value used while processing JPEG XL data.
-  ///
-  bool isLast = true;
+  /// Whether this is the last frame.
+    bool isLast = true;
 
-  /// Stores the save as reference value used while processing JPEG XL data.
-  ///
-  int saveAsReference = 0;
+  /// Reference-frame slot receiving this frame.
+    int referenceSlot = 0;
 
-  /// Stores the save before cT value used while processing JPEG XL data.
-  ///
-  bool saveBeforeCT = false;
+  /// Whether the reference frame is saved before color transforms.
+    bool saveBeforeColorTransform = false;
 
-  /// Stores the name value used while processing JPEG XL data.
-  ///
-  String name = '';
+  /// Name carried by the codestream.
+    String name = '';
 
-  /// Stores the height value used while processing JPEG XL data.
-  ///
-  int height = 0;
+  /// Height in pixels.
+    int height = 0;
 
-  /// Creates Frame header state for JPEG XL processing.
-  ///
-  FrameHeader._();
+  /// Creates a frame header with specification defaults.
+    FrameHeader._();
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
-  factory FrameHeader.read({
+  /// Reads this structure from the bitstream.
+    factory FrameHeader.read({
     required BitReader reader,
     required ImageHeader parent,
   }) {
@@ -162,56 +128,56 @@ final class FrameHeader {
     h.type = allDefault ? FrameFlags.regularFrame : reader.readBits(2);
     h.encoding = allDefault ? FrameFlags.vardct : reader.readBits(1);
     h.flags = allDefault ? 0 : reader.readU64();
-    h.doYCbCr = !allDefault && !parent.xybEncoded && reader.readBool();
-    if (h.doYCbCr && h.flags & FrameFlags.useLfFrame == 0) {
+    h.usesYcbcr = !allDefault && !parent.xybEncoded && reader.readBool();
+    if (h.usesYcbcr && h.flags & FrameFlags.useLfFrame == 0) {
       for (var i = 0; i < 3; i++) {
         final int mode = reader.readBits(2);
         switch (mode) {
           case 1:
-            h.jpegUpsamplingY[i] = 1;
-            h.jpegUpsamplingX[i] = 1;
+            h.jpegVerticalUpsamplingShift[i] = 1;
+            h.jpegHorizontalUpsamplingShift[i] = 1;
           case 2:
-            h.jpegUpsamplingY[i] = 0;
-            h.jpegUpsamplingX[i] = 1;
+            h.jpegVerticalUpsamplingShift[i] = 0;
+            h.jpegHorizontalUpsamplingShift[i] = 1;
           case 3:
-            h.jpegUpsamplingY[i] = 1;
-            h.jpegUpsamplingX[i] = 0;
+            h.jpegVerticalUpsamplingShift[i] = 1;
+            h.jpegHorizontalUpsamplingShift[i] = 0;
         }
       }
     }
-    h.ecUpsampling = List<int>.filled(parent.extraChannels.length, 1);
+    h.extraChannelUpsampling = List<int>.filled(parent.extraChannels.length, 1);
     if (!allDefault && h.flags & FrameFlags.useLfFrame == 0) {
       h.upsampling = 1 << reader.readBits(2);
-      for (var i = 0; i < h.ecUpsampling.length; i++) {
-        h.ecUpsampling[i] = 1 << reader.readBits(2);
+      for (var i = 0; i < h.extraChannelUpsampling.length; i++) {
+        h.extraChannelUpsampling[i] = 1 << reader.readBits(2);
       }
     } else {
       h.upsampling = 1;
     }
     h.groupSizeShift = h.encoding == FrameFlags.modular ? reader.readBits(2) : 1;
-    h.groupDim = 128 << h.groupSizeShift;
-    h.lfGroupDim = h.groupDim << 3;
-    h.logGroupDim = ceilLog2(h.groupDim);
-    h.logLfGroupDim = ceilLog2(h.lfGroupDim);
+    h.groupDimension = 128 << h.groupSizeShift;
+    h.lowFrequencyGroupDimension = h.groupDimension << 3;
+    h.logGroupDimension = ceilLog2(h.groupDimension);
+    h.logLowFrequencyGroupDimension = ceilLog2(h.lowFrequencyGroupDimension);
     if (parent.xybEncoded && h.encoding == FrameFlags.vardct) {
-      h.xqmScale = allDefault ? 3 : reader.readBits(3);
-      h.bqmScale = allDefault ? 2 : reader.readBits(3);
+      h.xQuantizationScale = allDefault ? 3 : reader.readBits(3);
+      h.bQuantizationScale = allDefault ? 2 : reader.readBits(3);
     } else {
-      h.xqmScale = 2;
-      h.bqmScale = 2;
+      h.xQuantizationScale = 2;
+      h.bQuantizationScale = 2;
     }
-    h.passes = !allDefault && h.type != FrameFlags.referenceOnly ? PassesInfo.read(reader: reader) : PassesInfo.defaults();
-    h.lfLevel = h.type == FrameFlags.lfFrame ? 1 + reader.readBits(2) : 0;
-    h.haveCrop = !allDefault && h.type != FrameFlags.lfFrame && reader.readBool();
+    h.passes = !allDefault && h.type != FrameFlags.referenceOnly ? ProgressivePasses.read(reader: reader) : ProgressivePasses.defaults();
+    h.lowFrequencyLevel = h.type == FrameFlags.lowFrequencyFrame ? 1 + reader.readBits(2) : 0;
+    h.hasCrop = !allDefault && h.type != FrameFlags.lowFrequencyFrame && reader.readBool();
     final int imageWidth = parent.size.width;
     final int imageHeight = parent.size.height;
-    if (h.haveCrop && h.type != FrameFlags.referenceOnly) {
+    if (h.hasCrop && h.type != FrameFlags.referenceOnly) {
       final int x0 = reader.readU32(0, 8, 256, 11, 2304, 14, 18688, 30);
       final int y0 = reader.readU32(0, 8, 256, 11, 2304, 14, 18688, 30);
       h.x0 = unpackSigned(x0);
       h.y0 = unpackSigned(y0);
     }
-    if (h.haveCrop) {
+    if (h.hasCrop) {
       h.width = reader.readU32(0, 8, 256, 11, 2304, 14, 18688, 30);
       h.height = reader.readU32(0, 8, 256, 11, 2304, 14, 18688, 30);
     } else {
@@ -219,33 +185,33 @@ final class FrameHeader {
       h.height = imageHeight;
     }
     final bool normalFrame = !allDefault && (h.type == FrameFlags.regularFrame || h.type == FrameFlags.skipProgressive);
-    // Computed before the upsampling/lfLevel divisions, intentionally.
-    final bool fullFrame = h.y0 <= 0 && h.x0 <= 0 && h.height + h.y0 >= imageHeight && h.width + h.x0 >= imageWidth;
-    h.fullFrame = fullFrame;
+    // Computed before the upsampling/lowFrequencyLevel divisions, intentionally.
+    final bool coversFullCanvas = h.y0 <= 0 && h.x0 <= 0 && h.height + h.y0 >= imageHeight && h.width + h.x0 >= imageWidth;
+    h.coversFullCanvas = coversFullCanvas;
     h.height = ceilDiv(h.height, h.upsampling);
     h.width = ceilDiv(h.width, h.upsampling);
-    h.height = ceilDiv(h.height, 1 << (3 * h.lfLevel));
-    h.width = ceilDiv(h.width, 1 << (3 * h.lfLevel));
+    h.height = ceilDiv(h.height, 1 << (3 * h.lowFrequencyLevel));
+    h.width = ceilDiv(h.width, 1 << (3 * h.lowFrequencyLevel));
     h.ecBlendingInfo = List<BlendingInfo>.filled(parent.extraChannels.length, const BlendingInfo.defaults());
     if (normalFrame) {
-      h.blendingInfo = BlendingInfo.read(reader: reader, extra: h.ecBlendingInfo.isNotEmpty, fullFrame: fullFrame);
+      h.blendingInfo = BlendingInfo.read(reader: reader, extra: h.ecBlendingInfo.isNotEmpty, coversFullCanvas: coversFullCanvas);
       for (var i = 0; i < h.ecBlendingInfo.length; i++) {
-        h.ecBlendingInfo[i] = BlendingInfo.read(reader: reader, extra: true, fullFrame: fullFrame);
+        h.ecBlendingInfo[i] = BlendingInfo.read(reader: reader, extra: true, coversFullCanvas: coversFullCanvas);
       }
     } else {
       h.blendingInfo = const BlendingInfo.defaults();
     }
     final animated = parent.animation != null;
     h.duration = normalFrame && animated ? reader.readU32(0, 0, 1, 0, 0, 8, 0, 32) : 0;
-    h.timecode = normalFrame && animated && parent.animation!.haveTimecodes ? reader.readBits(32) : 0;
+    h.timecode = normalFrame && animated && parent.animation!.hasTimecodes ? reader.readBits(32) : 0;
     h.isLast = normalFrame ? reader.readBool() : h.type == FrameFlags.regularFrame;
-    h.saveAsReference = !allDefault && h.type != FrameFlags.lfFrame && !h.isLast ? reader.readBits(2) : 0;
-    h.saveBeforeCT =
+    h.referenceSlot = !allDefault && h.type != FrameFlags.lowFrequencyFrame && !h.isLast ? reader.readBits(2) : 0;
+    h.saveBeforeColorTransform =
         !allDefault &&
         (h.type == FrameFlags.referenceOnly ||
-            fullFrame &&
+            coversFullCanvas &&
                 (h.type == FrameFlags.regularFrame || h.type == FrameFlags.skipProgressive) &&
-                (h.duration == 0 || h.saveAsReference != 0) &&
+                (h.duration == 0 || h.referenceSlot != 0) &&
                 !h.isLast &&
                 h.blendingInfo.mode == FrameFlags.blendReplace) &&
         reader.readBool();
@@ -261,19 +227,19 @@ final class FrameHeader {
     var maxJPY = 0;
     var maxJPX = 0;
     for (var i = 0; i < 3; i++) {
-      if (h.jpegUpsamplingY[i] > maxJPY) {
-        maxJPY = h.jpegUpsamplingY[i];
+      if (h.jpegVerticalUpsamplingShift[i] > maxJPY) {
+        maxJPY = h.jpegVerticalUpsamplingShift[i];
       }
-      if (h.jpegUpsamplingX[i] > maxJPX) {
-        maxJPX = h.jpegUpsamplingX[i];
+      if (h.jpegHorizontalUpsamplingShift[i] > maxJPX) {
+        maxJPX = h.jpegHorizontalUpsamplingShift[i];
       }
     }
     h.isSubsampled = maxJPX > 0 || maxJPY > 0;
     h.height = ceilDiv(h.height, 1 << maxJPY) << maxJPY;
     h.width = ceilDiv(h.width, 1 << maxJPX) << maxJPX;
     for (var i = 0; i < 3; i++) {
-      h.jpegUpsamplingY[i] = maxJPY - h.jpegUpsamplingY[i];
-      h.jpegUpsamplingX[i] = maxJPX - h.jpegUpsamplingX[i];
+      h.jpegVerticalUpsamplingShift[i] = maxJPY - h.jpegVerticalUpsamplingShift[i];
+      h.jpegHorizontalUpsamplingShift[i] = maxJPX - h.jpegHorizontalUpsamplingShift[i];
     }
     return h;
   }

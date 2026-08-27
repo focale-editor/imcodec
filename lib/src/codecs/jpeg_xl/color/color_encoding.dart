@@ -1,125 +1,96 @@
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
 
 /// Color-related enum constants from the JPEG XL spec. Kept as plain ints
-/// (mirroring jxlatte's ColorFlags) so bitstream values map directly.
-abstract final class ColorFlags {
-  /// Stores the ce xyb value used while processing JPEG XL data.
-  ///
-  static const ceXyb = 2;
+/// (mirroring jxlatte's ColorEncodingConstants) so bitstream values map directly.
+abstract final class ColorEncodingConstants {
+  /// Specification constant identifying color space XYB.
+  static const colorSpaceXyb = 2;
 
-  /// Stores the pri custom value used while processing JPEG XL data.
-  ///
-  static const priCustom = 2;
+  /// Specification constant identifying custom primaries.
+  static const customPrimaries = 2;
 
-  /// Stores the pri bt2100 value used while processing JPEG XL data.
-  ///
-  static const priBt2100 = 9;
+  /// Specification constant identifying BT 2100 primaries.
+  static const bt2100Primaries = 9;
 
-  /// Stores the pri p3 value used while processing JPEG XL data.
-  ///
-  static const priP3 = 11;
+  /// Specification constant identifying p 3 primaries.
+  static const p3Primaries = 11;
 
-  /// Stores the wp d50 value used while processing JPEG XL data.
-  ///
-  static const wpD50 = -1;
+  /// Specification constant identifying d 50 white point.
+  static const d50WhitePoint = -1;
 
-  /// Stores the wp d65 value used while processing JPEG XL data.
-  ///
-  static const wpD65 = 1;
+  /// Specification constant identifying d 65 white point.
+  static const d65WhitePoint = 1;
 
-  /// Stores the wp custom value used while processing JPEG XL data.
-  ///
-  static const wpCustom = 2;
+  /// Specification constant identifying custom white point.
+  static const customWhitePoint = 2;
 
-  /// Stores the wp e value used while processing JPEG XL data.
-  ///
-  static const wpE = 10;
+  /// Specification constant identifying e white point.
+  static const eWhitePoint = 10;
 
-  /// Stores the wp dci value used while processing JPEG XL data.
-  ///
-  static const wpDci = 11;
+  /// Specification constant identifying dci white point.
+  static const dciWhitePoint = 11;
 
-  /// Stores the ce rgb value used while processing JPEG XL data.
-  ///
-  static const ceRgb = 0;
+  /// Specification constant identifying color space RGB.
+  static const colorSpaceRgb = 0;
 
-  /// Stores the ce gray value used while processing JPEG XL data.
-  ///
-  static const ceGray = 1;
+  /// Specification constant identifying color space gray.
+  static const colorSpaceGray = 1;
 
-  /// Stores the pri srgb value used while processing JPEG XL data.
-  ///
-  static const priSrgb = 1;
+  /// Specification constant identifying sRGB primaries.
+  static const srgbPrimaries = 1;
 
-  /// Stores the ce unknown value used while processing JPEG XL data.
-  ///
-  static const ceUnknown = 3;
+  /// Specification constant identifying color space unknown.
+  static const colorSpaceUnknown = 3;
 
-  /// Stores the ri perceptual value used while processing JPEG XL data.
-  ///
-  static const riPerceptual = 0;
+  /// Specification constant identifying perceptual rendering intent.
+  static const perceptualRenderingIntent = 0;
 
-  /// Stores the ri relative value used while processing JPEG XL data.
-  ///
-  static const riRelative = 1;
+  /// Specification constant identifying relative rendering intent.
+  static const relativeRenderingIntent = 1;
 
-  /// Stores the ri saturation value used while processing JPEG XL data.
-  ///
-  static const riSaturation = 2;
+  /// Specification constant identifying saturation rendering intent.
+  static const saturationRenderingIntent = 2;
 
-  /// Stores the ri absolute value used while processing JPEG XL data.
-  ///
-  static const riAbsolute = 3;
+  /// Specification constant identifying absolute rendering intent.
+  static const absoluteRenderingIntent = 3;
 
-  /// Processes tf bt709 information in a JPEG XL codestream.
-  ///
-  static const int tfBt709 = 1 + (1 << 24);
+  /// Transfer-function identifier for BT.709.
+  static const int bt709TransferFunction = 1 + (1 << 24);
 
-  /// Processes tf unknown information in a JPEG XL codestream.
-  ///
-  static const int tfUnknown = 2 + (1 << 24);
+  /// Transfer-function identifier for an unspecified function.
+  static const int unknownTransferFunction = 2 + (1 << 24);
 
-  /// Processes tf linear information in a JPEG XL codestream.
-  ///
-  static const int tfLinear = 8 + (1 << 24);
+  /// Transfer-function identifier for linear-light samples.
+  static const int linearTransferFunction = 8 + (1 << 24);
 
-  /// Processes tf srgb information in a JPEG XL codestream.
-  ///
-  static const int tfSrgb = 13 + (1 << 24);
+  /// Transfer-function identifier for sRGB.
+  static const int srgbTransferFunction = 13 + (1 << 24);
 
-  /// Processes tf hlg information in a JPEG XL codestream.
-  ///
-  static const int tfHlg = 18 + (1 << 24);
+  /// Transfer-function identifier for hybrid log-gamma.
+  static const int hlgTransferFunction = 18 + (1 << 24);
 
-  /// Processes tf dci information in a JPEG XL codestream.
-  ///
-  static const int tfDci = 17 + (1 << 24);
+  /// Transfer-function identifier for Digital Cinema Initiatives gamma.
+  static const int dciTransferFunction = 17 + (1 << 24);
 
-  /// Processes tf pq information in a JPEG XL codestream.
-  ///
-  static const int tfPq = 16 + (1 << 24);
+  /// Transfer-function identifier for the perceptual quantizer.
+  static const int pqTransferFunction = 16 + (1 << 24);
 
-  /// Processes validate primaries information in a JPEG XL codestream.
-  ///
-  static bool validatePrimaries(int primaries) => primaries == priSrgb || primaries == priCustom || primaries == priBt2100 || primaries == priP3;
+  /// Whether [primaries] identifies a supported set of color primaries.
+  static bool validatePrimaries(int primaries) => primaries == srgbPrimaries || primaries == customPrimaries || primaries == bt2100Primaries || primaries == p3Primaries;
 
-  /// Processes validate white point information in a JPEG XL codestream.
-  ///
-  static bool validateWhitePoint(int whitePoint) => whitePoint == wpD65 || whitePoint == wpCustom || whitePoint == wpE || whitePoint == wpDci;
+  /// Whether [whitePoint] identifies a supported white point.
+    static bool validateWhitePoint(int whitePoint) => whitePoint == d65WhitePoint || whitePoint == customWhitePoint || whitePoint == eWhitePoint || whitePoint == dciWhitePoint;
 
-  /// Processes validate color encoding information in a JPEG XL codestream.
-  ///
-  static bool validateColorEncoding(int colorEncoding) => colorEncoding >= 0 && colorEncoding <= 3;
+  /// Whether [colorEncoding] identifies a supported color space.
+    static bool validateColorSpace(int colorEncoding) => colorEncoding >= 0 && colorEncoding <= 3;
 
-  /// Processes validate rendering intent information in a JPEG XL codestream.
-  ///
-  static bool validateRenderingIntent(int renderingIntent) => renderingIntent >= 0 && renderingIntent <= 3;
+  /// Whether [renderingIntent] identifies a valid ICC rendering intent.
+    static bool validateRenderingIntent(int renderingIntent) => renderingIntent >= 0 && renderingIntent <= 3;
 
-  /// Processes validate transfer information in a JPEG XL codestream.
-  ///
-  static bool validateTransfer(int transfer) {
+  /// Whether [transfer] identifies a supported transfer function or gamma.
+    static bool validateTransferFunction(int transfer) {
     if (transfer < 0) {
       return false;
     }
@@ -129,85 +100,82 @@ abstract final class ColorFlags {
     if (transfer < 1 << 24) {
       return false;
     }
-    return transfer == tfBt709 || transfer == tfUnknown || transfer == tfLinear || transfer == tfSrgb || transfer == tfPq || transfer == tfDci || transfer == tfHlg;
+    return transfer == bt709TransferFunction ||
+        transfer == unknownTransferFunction ||
+        transfer == linearTransferFunction ||
+        transfer == srgbTransferFunction ||
+        transfer == pqTransferFunction ||
+        transfer == dciTransferFunction ||
+        transfer == hlgTransferFunction;
   }
 
-  /// Processes primaries to string information in a JPEG XL codestream.
-  ///
-  static String primariesToString(int primaries) => switch (primaries) {
-    priSrgb => 'sRGB / BT.709',
-    priBt2100 => 'BT Rec.2100 / BT Rec.2020',
-    priP3 => 'P3',
+  /// Returns a human-readable name for [primaries].
+    static String describePrimaries(int primaries) => switch (primaries) {
+    srgbPrimaries => 'sRGB / BT.709',
+    bt2100Primaries => 'BT Rec.2100 / BT Rec.2020',
+    p3Primaries => 'P3',
     _ => 'Unknown',
   };
 
-  /// Processes white point to string information in a JPEG XL codestream.
-  ///
-  static String whitePointToString(int whitePoint) => switch (whitePoint) {
-    wpD65 => 'D65',
-    wpE => 'Standard Illuminant E',
-    wpDci => 'DCI',
-    wpD50 => 'D50',
+  /// Returns a human-readable name for [whitePoint].
+    static String describeWhitePoint(int whitePoint) => switch (whitePoint) {
+    d65WhitePoint => 'D65',
+    eWhitePoint => 'Standard Illuminant E',
+    dciWhitePoint => 'DCI',
+    d50WhitePoint => 'D50',
     _ => 'Unknown',
   };
 
-  /// Processes transfer to string information in a JPEG XL codestream.
-  ///
-  static String transferToString(int transfer) {
+  /// Returns a human-readable name for [transfer].
+    static String describeTransferFunction(int transfer) {
     if (transfer < 1 << 24) {
       return 'Gamma ${transfer * 1e-7}';
     }
     return switch (transfer) {
-      tfBt709 => 'BT.709',
-      tfLinear => 'Linear',
-      tfSrgb => 'sRGB',
-      tfPq => 'PQ',
-      tfDci => 'DCI',
-      tfHlg => 'HLG',
+      bt709TransferFunction => 'BT.709',
+      linearTransferFunction => 'Linear',
+      srgbTransferFunction => 'sRGB',
+      pqTransferFunction => 'PQ',
+      dciTransferFunction => 'DCI',
+      hlgTransferFunction => 'HLG',
       _ => 'Unknown',
     };
   }
 
-  /// Processes get white point information in a JPEG XL codestream.
-  ///
-  static CieXy? getWhitePoint(int whitePoint) => switch (whitePoint) {
-    wpD65 => const CieXy(x: 0.3127, y: 0.3290),
-    wpE => const CieXy(x: 1 / 3, y: 1 / 3),
-    wpDci => const CieXy(x: 0.314, y: 0.351),
-    wpD50 => const CieXy(x: 0.34567, y: 0.34567),
+  /// Returns the CIE xy coordinates selected by [whitePoint].
+    static CieXy? whitePointCoordinates(int whitePoint) => switch (whitePoint) {
+    d65WhitePoint => const CieXy(x: 0.3127, y: 0.3290),
+    eWhitePoint => const CieXy(x: 1 / 3, y: 1 / 3),
+    dciWhitePoint => const CieXy(x: 0.314, y: 0.351),
+    d50WhitePoint => const CieXy(x: 0.34567, y: 0.34567),
     _ => null,
   };
 
-  /// Processes get primaries information in a JPEG XL codestream.
-  ///
-  static CiePrimaries? getPrimaries(int primaries) => switch (primaries) {
-    priSrgb => const CiePrimaries(red: CieXy(x: 0.639998686, y: 0.330010138), green: CieXy(x: 0.300003784, y: 0.600003357), blue: CieXy(x: 0.150002046, y: 0.059997204)),
-    priBt2100 => const CiePrimaries(red: CieXy(x: 0.708, y: 0.292), green: CieXy(x: 0.170, y: 0.797), blue: CieXy(x: 0.131, y: 0.046)),
-    priP3 => const CiePrimaries(red: CieXy(x: 0.680, y: 0.320), green: CieXy(x: 0.265, y: 0.690), blue: CieXy(x: 0.150, y: 0.060)),
+  /// Returns the CIE xy primaries selected by [primaries].
+    static CiePrimaries? primariesCoordinates(int primaries) => switch (primaries) {
+    srgbPrimaries => const CiePrimaries(red: CieXy(x: 0.639998686, y: 0.330010138), green: CieXy(x: 0.300003784, y: 0.600003357), blue: CieXy(x: 0.150002046, y: 0.059997204)),
+    bt2100Primaries => const CiePrimaries(red: CieXy(x: 0.708, y: 0.292), green: CieXy(x: 0.170, y: 0.797), blue: CieXy(x: 0.131, y: 0.046)),
+    p3Primaries => const CiePrimaries(red: CieXy(x: 0.680, y: 0.320), green: CieXy(x: 0.265, y: 0.690), blue: CieXy(x: 0.150, y: 0.060)),
     _ => null,
   };
 }
 
 /// A CIE xy chromaticity coordinate.
 final class CieXy {
-  /// Stores the x value used while processing JPEG XL data.
-  ///
-  final double x;
+  /// Horizontal coordinate.
+    final double x;
 
-  /// Stores the y value used while processing JPEG XL data.
-  ///
-  final double y;
+  /// Vertical coordinate.
+    final double y;
 
-  /// Creates Cie xy data for JPEG XL processing.
-  ///
-  const CieXy({
+  /// Creates a CIE xy.
+    const CieXy({
     required this.x,
     required this.y,
   });
 
-  /// Processes read custom information in a JPEG XL codestream.
-  ///
-  factory CieXy.readCustom({
+  /// Reads custom.
+    factory CieXy.readCustom({
     required BitReader reader,
   }) {
     final int ux = reader.readU32(0, 19, 524288, 19, 1048576, 20, 2097152, 21);
@@ -215,9 +183,8 @@ final class CieXy {
     return CieXy(x: unpackSigned(ux) * 1e-6, y: unpackSigned(uy) * 1e-6);
   }
 
-  /// Processes matches information in a JPEG XL codestream.
-  ///
-  bool matches(CieXy other) => (x - other.x).abs() + (y - other.y).abs() < 1e-4;
+  /// Whether the supplied value matches this entry.
+    bool matches(CieXy other) => (x - other.x).abs() + (y - other.y).abs() < 1e-4;
 
   @override
   String toString() => 'CieXy($x, $y)';
@@ -225,57 +192,45 @@ final class CieXy {
 
 /// Red/green/blue CIE xy primaries.
 final class CiePrimaries {
-  /// Stores the red value used while processing JPEG XL data.
-  ///
-  final CieXy red;
+  /// CIE xy coordinates of the red primary.
+    final CieXy red;
 
-  /// Stores the green value used while processing JPEG XL data.
-  ///
-  final CieXy green;
+  /// CIE xy coordinates of the green primary.
+    final CieXy green;
 
-  /// Stores the blue value used while processing JPEG XL data.
-  ///
-  final CieXy blue;
+  /// CIE xy coordinates of the blue primary.
+    final CieXy blue;
 
-  /// Creates Cie primaries data for JPEG XL processing.
-  ///
-  const CiePrimaries({
+  /// Creates a CIE primaries.
+    const CiePrimaries({
     required this.red,
     required this.green,
     required this.blue,
   });
 
-  /// Processes matches information in a JPEG XL codestream.
-  ///
-  bool matches(CiePrimaries other) => red.matches(other.red) && green.matches(other.green) && blue.matches(other.blue);
+  /// Whether the supplied value matches this entry.
+    bool matches(CiePrimaries other) => red.matches(other.red) && green.matches(other.green) && blue.matches(other.blue);
 }
 
-/// Represents Tone mapping data used while processing JPEG XL images.
-///
+/// Represents tone mapping.
 final class ToneMapping {
-  /// Stores the intensity target value used while processing JPEG XL data.
-  ///
-  final double intensityTarget;
+  /// Target display luminance in candela per square metre.
+    final double intensityTarget;
 
-  /// Stores the min nits value used while processing JPEG XL data.
-  ///
-  final double minNits;
+  /// Minimum nits.
+    final double minNits;
 
-  /// Stores the relative to max display value used while processing JPEG XL data.
-  ///
-  final bool relativeToMaxDisplay;
+  /// Whether the tone mapping enables relative to max display.
+    final bool relativeToMaxDisplay;
 
-  /// Stores the linear below value used while processing JPEG XL data.
-  ///
-  final double linearBelow;
+  /// Fraction below which tone mapping remains linear.
+    final double linearBelow;
 
-  /// Creates Tone mapping data for JPEG XL processing.
-  ///
-  const ToneMapping() : intensityTarget = 255, minNits = 0, relativeToMaxDisplay = false, linearBelow = 0;
+  /// Creates a tone mapping.
+    const ToneMapping() : intensityTarget = 255, minNits = 0, relativeToMaxDisplay = false, linearBelow = 0;
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
-  factory ToneMapping.read({
+  /// Reads this structure from the bitstream.
+    factory ToneMapping.read({
     required BitReader reader,
   }) {
     if (reader.readBool()) {
@@ -300,9 +255,8 @@ final class ToneMapping {
     return ToneMapping._(intensityTarget: intensityTarget, minNits: minNits, relativeToMaxDisplay: relativeToMaxDisplay, linearBelow: linearBelow);
   }
 
-  /// Creates Tone mapping state for JPEG XL processing.
-  ///
-  const ToneMapping._({
+  /// Creates a tone mapping.
+    const ToneMapping._({
     required this.intensityTarget,
     required this.minNits,
     required this.relativeToMaxDisplay,
@@ -312,99 +266,89 @@ final class ToneMapping {
 
 /// The `ColourEncoding` header bundle.
 final class ColorEncodingBundle {
-  /// Stores the use icc profile value used while processing JPEG XL data.
-  ///
-  final bool useIccProfile;
+  /// Whether the image uses an embedded ICC profile.
+    final bool useIccProfile;
 
-  /// Stores the color encoding value used while processing JPEG XL data.
-  ///
-  final int colorEncoding;
+  /// Color-space identifier declared by the codestream.
+    final int colorEncoding;
 
-  /// Stores the white point value used while processing JPEG XL data.
-  ///
-  final int whitePoint;
+  /// White-point identifier declared by the codestream.
+    final int whitePoint;
 
-  /// Stores the white value used while processing JPEG XL data.
-  ///
-  final CieXy white;
+  /// Decoded CIE xy coordinates of the white point.
+    final CieXy white;
 
-  /// Stores the primaries value used while processing JPEG XL data.
-  ///
-  final int primaries;
+  /// Color-primary identifier declared by the codestream.
+    final int primaries;
 
-  /// Stores the prim value used while processing JPEG XL data.
-  ///
-  final CiePrimaries prim;
+  /// Decoded red, green, and blue primary coordinates.
+    final CiePrimaries prim;
 
-  /// Stores the tf value used while processing JPEG XL data.
-  ///
-  final int tf;
+  /// Transfer function applied to encoded color samples.
+    final int transferFunction;
 
-  /// Stores the rendering intent value used while processing JPEG XL data.
-  ///
-  final int renderingIntent;
+  /// ICC rendering-intent identifier declared by the codestream.
+    final int renderingIntent;
 
-  /// Creates Color encoding bundle data for JPEG XL processing.
-  ///
-  const ColorEncodingBundle()
+  /// Creates a color encoding bundle.
+    const ColorEncodingBundle()
     : useIccProfile = false,
-      colorEncoding = ColorFlags.ceRgb,
-      whitePoint = ColorFlags.wpD65,
+      colorEncoding = ColorEncodingConstants.colorSpaceRgb,
+      whitePoint = ColorEncodingConstants.d65WhitePoint,
       white = const CieXy(x: 0.3127, y: 0.3290),
-      primaries = ColorFlags.priSrgb,
+      primaries = ColorEncodingConstants.srgbPrimaries,
       prim = const CiePrimaries(red: CieXy(x: 0.639998686, y: 0.330010138), green: CieXy(x: 0.300003784, y: 0.600003357), blue: CieXy(x: 0.150002046, y: 0.059997204)),
-      tf = ColorFlags.tfSrgb,
-      renderingIntent = ColorFlags.riRelative;
+      transferFunction = ColorEncodingConstants.srgbTransferFunction,
+      renderingIntent = ColorEncodingConstants.relativeRenderingIntent;
 
-  /// Processes read information in a JPEG XL codestream.
-  ///
-  factory ColorEncodingBundle.read({
+  /// Reads this structure from the bitstream.
+    factory ColorEncodingBundle.read({
     required BitReader reader,
   }) {
     final bool allDefault = reader.readBool();
     final bool useIccProfile = !allDefault && reader.readBool();
-    final int colorEncoding = allDefault ? ColorFlags.ceRgb : reader.readEnum();
-    if (!ColorFlags.validateColorEncoding(colorEncoding)) {
+    final int colorEncoding = allDefault ? ColorEncodingConstants.colorSpaceRgb : reader.readEnum();
+    if (!ColorEncodingConstants.validateColorSpace(colorEncoding)) {
       throw const JpegXlInvalidBitstreamException(message: 'invalid ColorSpace enum');
     }
     final int whitePoint;
-    if (!allDefault && !useIccProfile && colorEncoding != ColorFlags.ceXyb) {
+    if (!allDefault && !useIccProfile && colorEncoding != ColorEncodingConstants.colorSpaceXyb) {
       whitePoint = reader.readEnum();
     } else {
-      whitePoint = ColorFlags.wpD65;
+      whitePoint = ColorEncodingConstants.d65WhitePoint;
     }
-    if (!ColorFlags.validateWhitePoint(whitePoint)) {
+    if (!ColorEncodingConstants.validateWhitePoint(whitePoint)) {
       throw const JpegXlInvalidBitstreamException(message: 'invalid WhitePoint enum');
     }
-    final CieXy white = whitePoint == ColorFlags.wpCustom ? CieXy.readCustom(reader: reader) : ColorFlags.getWhitePoint(whitePoint)!;
+    final CieXy white = whitePoint == ColorEncodingConstants.customWhitePoint ? CieXy.readCustom(reader: reader) : ColorEncodingConstants.whitePointCoordinates(whitePoint)!;
     final int primaries;
-    if (!allDefault && !useIccProfile && colorEncoding != ColorFlags.ceXyb && colorEncoding != ColorFlags.ceGray) {
+    if (!allDefault && !useIccProfile && colorEncoding != ColorEncodingConstants.colorSpaceXyb && colorEncoding != ColorEncodingConstants.colorSpaceGray) {
       primaries = reader.readEnum();
     } else {
-      primaries = ColorFlags.priSrgb;
+      primaries = ColorEncodingConstants.srgbPrimaries;
     }
-    if (!ColorFlags.validatePrimaries(primaries)) {
+    if (!ColorEncodingConstants.validatePrimaries(primaries)) {
       throw const JpegXlInvalidBitstreamException(message: 'invalid Primaries enum');
     }
     final CiePrimaries prim;
-    if (primaries == ColorFlags.priCustom) {
+    if (primaries == ColorEncodingConstants.customPrimaries) {
       final red = CieXy.readCustom(reader: reader);
       final green = CieXy.readCustom(reader: reader);
       final blue = CieXy.readCustom(reader: reader);
       prim = CiePrimaries(red: red, green: green, blue: blue);
     } else {
-      prim = ColorFlags.getPrimaries(primaries)!;
+      prim = ColorEncodingConstants.primariesCoordinates(primaries)!;
     }
-    int tf = ColorFlags.tfSrgb;
-    int renderingIntent = ColorFlags.riRelative;
+    int transferFunction = ColorEncodingConstants.srgbTransferFunction;
+    int renderingIntent = ColorEncodingConstants.relativeRenderingIntent;
     if (!allDefault && !useIccProfile) {
       final bool useGamma = reader.readBool();
-      tf = useGamma ? reader.readBits(24) : (1 << 24) + reader.readEnum();
-      if (!ColorFlags.validateTransfer(tf)) {
+      transferFunction = useGamma ? reader.readBits(24) : (1 << 24) + reader.readEnum();
+      if (!ColorEncodingConstants.validateTransferFunction(transferFunction)) {
         throw const JpegXlInvalidBitstreamException(message: 'illegal transfer function');
       }
       renderingIntent = reader.readEnum();
-      if (!ColorFlags.validateRenderingIntent(renderingIntent)) {
+      if (!ColorEncodingConstants.validateRenderingIntent(renderingIntent)) {
         throw const JpegXlInvalidBitstreamException(message: 'invalid RenderingIntent enum');
       }
     }
@@ -415,21 +359,20 @@ final class ColorEncodingBundle {
       white: white,
       primaries: primaries,
       prim: prim,
-      tf: tf,
+      transferFunction: transferFunction,
       renderingIntent: renderingIntent,
     );
   }
 
-  /// Creates Color encoding bundle state for JPEG XL processing.
-  ///
-  const ColorEncodingBundle._({
+  /// Creates a color encoding bundle.
+    const ColorEncodingBundle._({
     required this.useIccProfile,
     required this.colorEncoding,
     required this.whitePoint,
     required this.white,
     required this.primaries,
     required this.prim,
-    required this.tf,
+    required this.transferFunction,
     required this.renderingIntent,
   });
 }

@@ -1,14 +1,14 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/jpeg_xl/core/image_buffer.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/core/math.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/frame.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/frame_flags.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/frame/lf_group.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/frame/low_frequency_group.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/frame/restoration_filter.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/image_buffer.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/var_dct/hf_metadata.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/var_dct/high_frequency_metadata.dart';
 
 /// Gaborish: a 3x3 smoothing convolution applied to the color channels.
 void performGabConvolution(Frame frame, int colors) {
@@ -86,25 +86,20 @@ void performGabConvolution(Frame frame, int colors) {
 
 // (dy, dx) offsets, as parallel flat arrays (records are too slow in the
 // per-pixel loops).
-/// Stores the epf cross dy state used internally by the JPEG XL codec.
-///
+/// Specification constant used for edge-preserving filter cross dy.
 const _epfCrossDy = [0, -1, 1, 0, 0];
 
-/// Stores the epf cross dx state used internally by the JPEG XL codec.
-///
+/// Specification constant used for edge-preserving filter cross dx.
 const _epfCrossDx = [0, 0, 0, -1, 1];
 
-/// Stores the epf double cross dy state used internally by the JPEG XL codec.
-///
+/// Specification constant used for edge-preserving filter double cross dy.
 const _epfDoubleCrossDy = [0, -1, 1, 0, 0, 1, 1, -1, -1, -2, 2, 0, 0];
 
-/// Stores the epf double cross dx state used internally by the JPEG XL codec.
-///
+/// Specification constant used for edge-preserving filter double cross dx.
 const _epfDoubleCrossDx = [0, 0, 0, -1, 1, -1, 1, 1, -1, 0, 0, 2, -2];
 
 /// Edge-preserving filter: up to three weighted-average passes over the
 /// color channels, guided by per-block sigma.
-///
 /// All three passes run Float32x4 SIMD kernels over the interior (four
 /// pixels at a time) with the fully general mirroring path as the border
 /// fallback: pass 0 (only when epfIterations == 3) is the 12-neighbor
@@ -123,17 +118,17 @@ void performEdgePreservingFilter(Frame frame, int colors) {
   var invModularSigma = 0.0;
   if (frame.header.encoding == FrameFlags.vardct) {
     inverseSigma = floatMatrix(blockHeight, blockWidth);
-    final double globalScale = 65536.0 / frame.lfGlobal.globalScale;
+    final double globalScale = 65536.0 / frame.lowFrequencyGlobal.globalScale;
     for (var y = 0; y < blockHeight; y++) {
       final int lfY = y >> 8;
       final int bY = y - (lfY << 8);
-      final int lfR = lfY * frame.lfGroupRowStride;
+      final int lfR = lfY * frame.lowFrequencyGroupRowStride;
       for (var x = 0; x < blockWidth; x++) {
         final int lfX = x >> 8;
         final int bX = x - (lfX << 8);
-        final LfGroup lfg = frame.lfGroups[lfR + lfX]!;
-        final HfMetadata meta = lfg.hfMetadata!;
-        final int hf = meta.hfMultiplierAt(bY, bX);
+        final LowFrequencyGroup lowFrequencyGroup = frame.lowFrequencyGroups[lfR + lfX]!;
+        final HighFrequencyMetadata meta = lowFrequencyGroup.highFrequencyMetadata!;
+        final int hf = meta.highFrequencyMultiplierAt(bY, bX);
         final int sharpness = meta.sharpnessAt(bY, bX);
         if (sharpness < 0 || sharpness > 7) {
           throw const JpegXlInvalidBitstreamException(message: 'invalid EPF sharpness');
@@ -576,8 +571,7 @@ void _epfPass0GrayVec(
   }
 }
 
-/// Processes the epf pass0 color data used by the JPEG XL codec.
-///
+/// Applies the first edge-preserving filter pass to three color planes.
 void _epfPass0Color(
   List<Float32List> in0,
   List<Float32List> in1,
@@ -1200,8 +1194,7 @@ void _epfPass0ColorVec(
   }
 }
 
-/// Processes the epf pass gray data used by the JPEG XL codec.
-///
+/// Applies a later edge-preserving filter pass to a grayscale plane.
 void _epfPassGray(
   List<Float32List> input,
   List<Float32List> output,
@@ -1462,8 +1455,7 @@ void _epfPassGray(
   }
 }
 
-/// Processes the epf pass color data used by the JPEG XL codec.
-///
+/// Applies a later edge-preserving filter pass to three color planes.
 void _epfPassColor(
   List<Float32List> in0,
   List<Float32List> in1,
@@ -1859,8 +1851,7 @@ void _epfPassColor(
   }
 }
 
-/// Processes the epf distance1 data used by the JPEG XL codec.
-///
+/// Computes the cross-neighborhood distance used by the first filter pass.
 double _epfDistance1(List<List<Float32List>> buffer, int colors, Float32List channelScale, int basePosY, int basePosX, int dCrossY, int dCrossX, int height, int width) {
   var dist = 0.0;
   for (var c = 0; c < 3; c++) {
@@ -1880,8 +1871,7 @@ double _epfDistance1(List<List<Float32List>> buffer, int colors, Float32List cha
   return dist;
 }
 
-/// Processes the epf distance2 data used by the JPEG XL codec.
-///
+/// Computes the point distance used by the second filter pass.
 double _epfDistance2(List<List<Float32List>> buffer, int colors, Float32List channelScale, int basePosY, int basePosX, int crossY, int crossX, int height, int width) {
   var dist = 0.0;
   for (var c = 0; c < 3; c++) {
@@ -1894,8 +1884,7 @@ double _epfDistance2(List<List<Float32List>> buffer, int colors, Float32List cha
   return dist;
 }
 
-/// Processes the epf weight data used by the JPEG XL codec.
-///
+/// Converts a scaled pixel distance into an edge-preserving filter weight.
 double _epfWeight(double borderSadMul, double sigmaScale, double originalDistance, double inverseSigma, int refY, int refX) {
   double distance = originalDistance;
   final int modY = refY & 7;

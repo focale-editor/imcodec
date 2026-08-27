@@ -1,50 +1,43 @@
-import 'dart:typed_data';
+part of '../jpeg_xl.dart';
 
-import 'package:imcodec/src/codecs/jpeg_xl/color/color_encoding.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/color/icc_transform.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/color/opsin_inverse.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/color/transfer_function.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/exceptions.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/frame/blending_info.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/frame/frame.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/frame/frame_flags.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/frame/frame_header.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/frame/patches.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/frame/splines.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/header/animation.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/header/bit_depth.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/header/extra_channel.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/header/image_header.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/icc/icc_codec.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/io/bit_reader.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/io/container.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/jpeg/jpeg_reconstruct.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/jpeg_xl_image.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/jpeg_xl_limits.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/render/blend.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/render/dc_image.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/render/noise.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/render/transpose.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/render/upsample.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/image_buffer.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/math_helper.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/util/resample.dart';
+/// Decodes JPEG XL images to straight-alpha RGBA pixels.
+final class JpegXlDecoder extends RasterDecoder {
+  /// Creates a JPEG XL decoder.
+  const JpegXlDecoder();
+
+  @override
+  Image decode(Uint8List encoded, {required int maxPixels}) {
+    final JpegXlCodestreamInfo information = JpegXlCodestreamInfo.fromBytes(bytes: encoded);
+    final int pixelCount = information.width * information.height;
+    if (information.width < 1 || information.height < 1) {
+      throw const ImageCodecException('Image dimensions must be positive and non-zero');
+    }
+    if (pixelCount > maxPixels) {
+      throw ImageCodecException('Decoded image contains $pixelCount pixels, exceeding the $maxPixels pixel limit');
+    }
+    final JpegXlDecodedImage decoded = _JpegXlCodestreamDecoder.decode(encoded);
+    return Image.fromRgba(
+      width: decoded.width,
+      height: decoded.height,
+      bytes: decoded.toRgba8(),
+      copy: false,
+    );
+  }
+
+  /// Reconstructs the original JPEG bytes from transcoded JPEG XL data.
+  ///
+  /// Returns `null` when [encoded] does not contain JPEG reconstruction data.
+  Uint8List? reconstructJpeg(Uint8List encoded) => _JpegXlCodestreamDecoder.reconstructJpeg(encoded);
+}
 
 /// Decodes JPEG XL images to raw pixels.
-///
 /// Handles lossless (Modular) and lossy (VarDCT) still images, animation,
 /// splines, patches, reference frames and blending. Features that are not
 /// yet implemented throw [JpegXlUnsupportedException] with the feature name;
 /// malformed input throws another [JpegXlException] subtype.
-final class JpegXlCodestreamDecoder {
-  /// Creates Jpeg xl codestream decoder state for JPEG XL processing.
-  ///
-  const JpegXlCodestreamDecoder._();
-
+final class _JpegXlCodestreamDecoder {
   /// Decodes [bytes] (bare codestream or ISOBMFF container).
-  ///
   /// For animated inputs, decodes and returns the first visible frame.
-  ///
   /// [targetWidth]/[targetHeight] request a reduced-resolution result — the
   /// output never exceeds that box (fit-within, aspect-preserving, never
   /// upscaled — the same contract as `ui.ResizeImage`). For a single-frame
@@ -63,14 +56,13 @@ final class JpegXlCodestreamDecoder {
         return dcOnly;
       }
     }
-    final JpegXlDecodedImage full = _DecoderState()._decode(bytes, allFrames: false).frames.first;
+    final JpegXlDecodedImage full = _JpegXlDecoderState()._decode(bytes, allFrames: false).frames.first;
     return _downsampleIfNeeded(full, targetWidth, targetHeight);
   }
 
   /// Decodes all visible frames of [bytes].
-  ///
   /// Still images produce a single frame with duration 0.
-  static JpegXlDecodedAnimation decodeAnimation(Uint8List bytes) => _DecoderState()._decode(bytes, allFrames: true);
+  static JpegXlDecodedAnimation decodeAnimation(Uint8List bytes) => _JpegXlDecoderState()._decode(bytes, allFrames: true);
 
   /// Reconstructs the original JPEG file from a JPEG-transcoded JXL, byte for
   /// byte, using its `jbrd` box. Returns null when [bytes] carry no JPEG
@@ -78,16 +70,17 @@ final class JpegXlCodestreamDecoder {
   /// for transcode variants not yet supported.
   static Uint8List? reconstructJpeg(Uint8List bytes) {
     final DemuxedStream demuxed = demuxContainer(bytes);
-    if (demuxed.jbrd == null) {
+    final Uint8List? reconstructionData = demuxed.jpegReconstructionData;
+    if (reconstructionData == null) {
       return null;
     }
-    final state = _DecoderState()..captureJpeg = true;
+    final state = _JpegXlDecoderState()..captureJpegReconstruction = true;
     state._decode(bytes, allFrames: false);
     final Frame? frame = state.capturedFrame;
     if (frame == null) {
       return null;
     }
-    return buildJpegFromCapture(frame, demuxed.jbrd!);
+    return reconstructJpegFromFrame(frame, reconstructionData);
   }
 
   /// Attempts the DC-only fast path; returns null (never throws) whenever it
@@ -111,7 +104,7 @@ final class JpegXlCodestreamDecoder {
       if (header.previewSize != null) {
         final preview = Frame(globalReader: reader, globalMetadata: header);
         preview.readFrameHeader();
-        preview.readToc();
+        preview.readTableOfContents();
       }
 
       final JpegXlDecodedImage? dcImage = _dcImageFor(reader, header, iccProfile);
@@ -142,8 +135,7 @@ final class JpegXlCodestreamDecoder {
   /// isn't a shape the fast path handles (caller then falls back to a full
   /// decode). Two shapes are handled, both cheap because JXL keeps DC (LF) and
   /// AC (HF) in separate bitstream sections:
-  ///
-  /// - a **plain single VarDCT frame**: decode only its LfGlobal + LF groups
+  /// - a **plain single VarDCT frame**: decode only its LowFrequencyGlobal + LF groups
   ///   ([Frame.decodeLfOnly]) and assemble the DC ([buildDcImage]);
   /// - a **progressive-DC** file, whose DC lives in a separate level-1 LF frame
   ///   ahead of the main frame: decode that (small) LF frame and assemble its
@@ -154,24 +146,24 @@ final class JpegXlCodestreamDecoder {
   static JpegXlDecodedImage? _dcImageFor(BitReader reader, ImageHeader header, Uint8List? iccProfile) {
     final first = Frame(globalReader: reader, globalMetadata: header);
     final FrameHeader firstFh = first.readFrameHeader();
-    if (firstFh.type == FrameFlags.lfFrame) {
-      if (firstFh.lfLevel != 1 || firstFh.encoding != FrameFlags.vardct || firstFh.upsampling != 1) {
+    if (firstFh.type == FrameFlags.lowFrequencyFrame) {
+      if (firstFh.lowFrequencyLevel != 1 || firstFh.encoding != FrameFlags.vardct || firstFh.upsampling != 1) {
         return null; // multi-level or non-VarDCT DC frame: not handled
       }
-      first.readToc(); // Toc.read skips the reader past this frame's data
+      first.readTableOfContents(); // FrameTableOfContents.read skips the reader past this frame's data
       final main = Frame(globalReader: reader, globalMetadata: header);
       final FrameHeader mainFh = main.readFrameHeader();
       if (mainFh.type != FrameFlags.regularFrame || mainFh.flags & FrameFlags.useLfFrame == 0 || !_isPlainVarDctFrame(mainFh, allowLfFrame: true)) {
         return null;
       }
-      // The LF frame kept its own section bytes at readToc, so it decodes
+      // The LF frame kept its own section bytes at readTableOfContents, so it decodes
       // independent of where the reader now sits (past the main header).
       first.decodeFrame();
       return buildDcImageFromRows(
         [for (var c = 0; c < 3; c++) first.buffer[c].floatRows],
         first.paddedFrameSize.height,
         first.paddedFrameSize.width,
-        first.header.doYCbCr,
+        first.header.usesYcbcr,
         header,
         iccProfile,
         isPreview: false,
@@ -183,7 +175,7 @@ final class JpegXlCodestreamDecoder {
     if (!_dcOnlyEligible(firstFh)) {
       return null;
     }
-    first.readToc();
+    first.readTableOfContents();
     first.decodeLfOnly();
     return buildDcImage(first, header, iccProfile, isPreview: false);
   }
@@ -191,7 +183,7 @@ final class JpegXlCodestreamDecoder {
   /// Builds a ~1:8 image for a **Squeeze (responsive) lossless modular** frame
   /// without decoding its large full-resolution residual channels. Modular has
   /// no DC concept, but a responsive frame stores a hierarchical low-frequency
-  /// pyramid (the `vshift/hshift >= 3` Squeeze channels) in the global +
+  /// pyramid (the `verticalShift/horizontalShift >= 3` Squeeze channels) in the global +
   /// LF-group sections, with the high-frequency detail in the pass groups.
   /// Decoding with [Frame.modularLowRes] zero-fills those pass-group channels,
   /// so the inverse Squeeze upsamples the low-frequency pyramid alone — a 1:8-
@@ -205,12 +197,12 @@ final class JpegXlCodestreamDecoder {
     if (!_plainModularFrame(fh)) {
       return null;
     }
-    if (header.xybEncoded || header.bitDepth.usesFloatSamples || fh.doYCbCr) {
+    if (header.xybEncoded || header.bitDepth.usesFloatSamples || fh.usesYcbcr) {
       return null; // plain integer colour only; full decode handles the rest
     }
-    first.readToc();
+    first.readTableOfContents();
     first.decodeFrame(modularLowRes: true);
-    if (!first.lfGlobal.globalModular.usesSqueeze) {
+    if (!first.lowFrequencyGlobal.globalModularStream.usesSqueeze) {
       return null;
     }
 
@@ -249,7 +241,13 @@ final class JpegXlCodestreamDecoder {
   /// upsampling) the low-res Squeeze path doesn't account for.
   static bool _plainModularFrame(FrameHeader fh) {
     const int bad = FrameFlags.noise | FrameFlags.patches | FrameFlags.splines | FrameFlags.useLfFrame;
-    return fh.encoding == FrameFlags.modular && fh.type == FrameFlags.regularFrame && fh.isLast && fh.fullFrame && fh.upsampling == 1 && fh.ecUpsampling.every((u) => u == 1) && fh.flags & bad == 0;
+    return fh.encoding == FrameFlags.modular &&
+        fh.type == FrameFlags.regularFrame &&
+        fh.isLast &&
+        fh.coversFullCanvas &&
+        fh.upsampling == 1 &&
+        fh.extraChannelUpsampling.every((u) => u == 1) &&
+        fh.flags & bad == 0;
   }
 
   /// Whether [fh] is a plain single-frame VarDCT frame with none of the
@@ -265,7 +263,7 @@ final class JpegXlCodestreamDecoder {
   static bool _isPlainVarDctFrame(FrameHeader fh, {required bool allowLfFrame}) {
     const int base = FrameFlags.noise | FrameFlags.patches | FrameFlags.splines;
     final int bad = allowLfFrame ? base : base | FrameFlags.useLfFrame;
-    return fh.encoding == FrameFlags.vardct && fh.isLast && fh.fullFrame && fh.upsampling == 1 && fh.ecUpsampling.every((u) => u == 1) && fh.flags & bad == 0;
+    return fh.encoding == FrameFlags.vardct && fh.isLast && fh.coversFullCanvas && fh.upsampling == 1 && fh.extraChannelUpsampling.every((u) => u == 1) && fh.flags & bad == 0;
   }
 
   /// Downsamples [image] to fit [targetWidth]/[targetHeight] if it doesn't
@@ -281,60 +279,51 @@ final class JpegXlCodestreamDecoder {
   }
 }
 
-/// Creates an internal decoder state.
-///
-final class _DecoderState {
-  /// Stores the image header state used by the JPEG XL codec.
-  ///
+/// Mutable state shared while decoding one JPEG XL codestream.
+final class _JpegXlDecoderState {
+  /// Parsed image header consumed by the JPEG XL decoder.
   late ImageHeader imageHeader;
 
-  /// Processes the reference data used by the JPEG XL codec.
-  ///
-  final List<List<ImageBuffer?>?> _reference = List<List<ImageBuffer?>?>.filled(4, null);
+  /// Four reference-frame slots addressable by patches and blending metadata.
+  final List<List<ImageBuffer?>?> _referenceFrames = List<List<ImageBuffer?>?>.filled(4, null);
 
-  /// Processes the lf buffer data used by the JPEG XL codec.
-  ///
-  final List<List<ImageBuffer>?> _lfBuffer = List.filled(5, null);
+  /// Progressive low-frequency buffers indexed by their resolution level.
+  final List<List<ImageBuffer>?> _lowFrequencyBuffersByLevel = List.filled(5, null);
 
-  /// Stores the canvas state used internally by the JPEG XL codec.
-  ///
+  /// Canvas onto which visible frames are composited.
   List<ImageBuffer?>? _canvas;
 
-  /// Stores the visible frames state used internally by the JPEG XL codec.
-  ///
-  int _visibleFrames = 0;
+  /// Number of consecutive visible frames decoded so far.
+  int _visibleFrameCount = 0;
 
-  /// Stores the invisible frames state used internally by the JPEG XL codec.
-  ///
-  int _invisibleFrames = 0;
+  /// Number of consecutive reference-only frames decoded so far.
+  int _invisibleFrameCount = 0;
 
   /// JPEG reconstruction: when set, the first regular frame captures quantized
   /// coefficients and is retained in [capturedFrame].
-  bool captureJpeg = false;
+  bool captureJpegReconstruction = false;
 
-  /// Stores the captured frame state used by the JPEG XL codec.
-  ///
+  /// First regular frame retained for JPEG bitstream reconstruction.
   Frame? capturedFrame;
 
-  /// Stores the frames state used by the JPEG XL codec.
-  ///
-  final List<JpegXlDecodedImage> frames = [];
+  /// Visible images produced in presentation order.
+  final List<JpegXlDecodedImage> decodedFrames = [];
 
-  /// Stores the durations state used by the JPEG XL codec.
-  ///
-  final List<int> durations = [];
+  /// Presentation duration of every entry in [decodedFrames].
+  final List<int> frameDurations = [];
 
-  /// Stores the timecodes state used by the JPEG XL codec.
-  ///
-  final List<int> timecodes = [];
+  /// Presentation timecode of every entry in [decodedFrames].
+  final List<int> frameTimecodes = [];
 
-  /// Processes the decode data used by the JPEG XL codec.
-  ///
+  /// Creates fresh state for one decode operation.
+  _JpegXlDecoderState();
+
+  /// Decodes the available JPEG XL data.
   JpegXlDecodedAnimation _decode(Uint8List bytes, {required bool allFrames}) {
     final DemuxedStream demuxed = demuxContainer(bytes);
     final reader = BitReader(data: demuxed.codestream);
     imageHeader = ImageHeader.read(reader: reader, level: demuxed.level);
-    _checkImageSize(imageHeader);
+    _validateImageSize(imageHeader);
 
     Uint8List? iccProfile;
     if (imageHeader.iccEncodedSize != null) {
@@ -344,10 +333,10 @@ final class _DecoderState {
     }
 
     if (imageHeader.previewSize != null) {
-      // Skip the preview frame entirely (readToc advances past the data).
+      // Skip the preview frame entirely (readTableOfContents advances past the data).
       final preview = Frame(globalReader: reader, globalMetadata: imageHeader);
       preview.readFrameHeader();
-      preview.readToc();
+      preview.readTableOfContents();
     }
 
     var frameCount = 0;
@@ -357,9 +346,9 @@ final class _DecoderState {
       }
       final frame = Frame(globalReader: reader, globalMetadata: imageHeader);
       final FrameHeader header = frame.readFrameHeader();
-      frame.readToc();
+      frame.readTableOfContents();
 
-      if (header.flags & FrameFlags.useLfFrame != 0 && _lfBuffer[header.lfLevel] == null) {
+      if (header.flags & FrameFlags.useLfFrame != 0 && _lowFrequencyBuffersByLevel[header.lowFrequencyLevel] == null) {
         throw const JpegXlInvalidBitstreamException(message: 'LF level too large');
       }
       if (const bool.fromEnvironment('jxl.framedebug')) {
@@ -367,39 +356,39 @@ final class _DecoderState {
         print(
           'frame: type=${header.type} dur=${header.duration} '
           'x0=${header.x0} y0=${header.y0} ${header.width}x${header.height} '
-          'saveRef=${header.saveAsReference} beforeCT=${header.saveBeforeCT} '
+          'saveRef=${header.referenceSlot} beforeCT=${header.saveBeforeColorTransform} '
           'blend=(mode=${header.blendingInfo.mode} '
           'src=${header.blendingInfo.source} '
           'alpha=${header.blendingInfo.alphaChannel}) isLast=${header.isLast}',
         );
       }
-      if (captureJpeg && capturedFrame == null) {
-        frame.captureJpeg = true;
+      if (captureJpegReconstruction && capturedFrame == null) {
+        frame.captureJpegReconstruction = true;
       }
-      frame.decodeFrame(lfFrame: _lfBuffer[header.lfLevel]);
-      if (captureJpeg && capturedFrame == null && frame.captureJpeg) {
+      frame.decodeFrame(lowFrequencyFrame: _lowFrequencyBuffersByLevel[header.lowFrequencyLevel]);
+      if (captureJpegReconstruction && capturedFrame == null && frame.captureJpegReconstruction) {
         capturedFrame = frame;
       }
-      if (header.lfLevel > 0) {
-        _lfBuffer[header.lfLevel - 1] = frame.buffer;
+      if (header.lowFrequencyLevel > 0) {
+        _lowFrequencyBuffersByLevel[header.lowFrequencyLevel - 1] = frame.buffer;
       }
-      if (header.type == FrameFlags.lfFrame) {
+      if (header.type == FrameFlags.lowFrequencyFrame) {
         continue;
       }
 
-      final bool save = (header.saveAsReference != 0 || header.duration == 0) && !header.isLast && header.type != FrameFlags.lfFrame;
+      final bool save = (header.referenceSlot != 0 || header.duration == 0) && !header.isLast && header.type != FrameFlags.lowFrequencyFrame;
       if (frame.isVisible) {
-        _visibleFrames++;
-        _invisibleFrames = 0;
+        _visibleFrameCount++;
+        _invisibleFrameCount = 0;
       } else {
-        _invisibleFrames++;
+        _invisibleFrameCount++;
       }
       upsampleFrame(frame);
-      final List<List<Float32List>>? noiseBuffer = initializeNoise(frame, _visibleFrames, _invisibleFrames);
-      if (save && header.saveBeforeCT) {
-        _reference[header.saveAsReference] = [for (final b in frame.buffer) ImageBuffer.copy(other: b)];
+      final List<List<Float32List>>? noiseBuffer = initializeNoise(frame, _visibleFrameCount, _invisibleFrameCount);
+      if (save && header.saveBeforeColorTransform) {
+        _referenceFrames[header.referenceSlot] = [for (final b in frame.buffer) ImageBuffer.copy(other: b)];
       }
-      _computePatches(frame);
+      _applyPatches(frame);
       renderSplines(frame);
       synthesizeNoise(frame, noiseBuffer);
       _performColorTransforms(frame);
@@ -418,7 +407,7 @@ final class _DecoderState {
         // detach before blending mutates it.
         var aliased = false;
         for (var i = 0; i < 4; i++) {
-          if (identical(_reference[i], _canvas) && i != header.saveAsReference) {
+          if (identical(_referenceFrames[i], _canvas) && i != header.referenceSlot) {
             aliased = true;
             break;
           }
@@ -428,16 +417,16 @@ final class _DecoderState {
         }
         _blendFrame(_canvas!, frame);
       }
-      if (save && !header.saveBeforeCT) {
-        _reference[header.saveAsReference] = _canvas;
+      if (save && !header.saveBeforeColorTransform) {
+        _referenceFrames[header.referenceSlot] = _canvas;
       }
 
       if (allFrames && frame.isVisible) {
         // Snapshot the canvas: later frames keep blending onto it, so
         // finalize a copy (except for the last frame).
-        frames.add(_finalizeCanvas(iccProfile, copy: !header.isLast));
-        durations.add(header.duration);
-        timecodes.add(header.timecode);
+        decodedFrames.add(_finalizeCanvas(iccProfile, copy: !header.isLast));
+        frameDurations.add(header.duration);
+        frameTimecodes.add(header.timecode);
       }
       if (allFrames ? header.isLast : header.isLast || header.duration != 0) {
         break;
@@ -445,24 +434,23 @@ final class _DecoderState {
     }
 
     if (!allFrames) {
-      frames.add(_finalizeCanvas(iccProfile, copy: false));
-      durations.add(0);
-      timecodes.add(0);
+      decodedFrames.add(_finalizeCanvas(iccProfile, copy: false));
+      frameDurations.add(0);
+      frameTimecodes.add(0);
     }
     final AnimationHeader? animation = imageHeader.animation;
     return JpegXlDecodedAnimation.internal(
-      frames: frames,
-      durations: durations,
-      timecodes: timecodes,
-      tpsNumerator: animation?.tpsNumerator ?? 1,
-      tpsDenominator: animation?.tpsDenominator ?? 1,
-      numLoops: animation?.numLoops ?? 0,
+      frames: decodedFrames,
+      frameDurations: frameDurations,
+      frameTimecodes: frameTimecodes,
+      ticksPerSecondNumerator: animation?.ticksPerSecondNumerator ?? 1,
+      ticksPerSecondDenominator: animation?.ticksPerSecondDenominator ?? 1,
+      loopCount: animation?.loopCount ?? 0,
     );
   }
 
-  /// Checks image size.
-  ///
-  static void _checkImageSize(ImageHeader header) {
+  /// Rejects dimensions whose planes would exceed the decoder allocation limit.
+  static void _validateImageSize(ImageHeader header) {
     final int w = header.size.width;
     final int h = header.size.height;
     if (w <= 0 || h <= 0 || h > JpegXlLimits.maxPlanePixels ~/ w) {
@@ -470,8 +458,7 @@ final class _DecoderState {
     }
   }
 
-  /// Processes the finalize canvas data used by the JPEG XL codec.
-  ///
+  /// Applies output transforms and orientation to the composited canvas.
   JpegXlDecodedImage _finalizeCanvas(Uint8List? iccProfile, {required bool copy}) {
     final List<ImageBuffer?>? canvas = _canvas;
     if (canvas == null || canvas[0] == null) {
@@ -489,13 +476,13 @@ final class _DecoderState {
     for (var c = 0; c < colors; c++) {
       final BitDepthHeader bd = imageHeader.bitDepth;
       if (bd.usesFloatSamples) {
-        planes[c]!.reconstructFloatSamples(bd.bitsPerSample, bd.expBits);
+        planes[c]!.reconstructFloatSamples(bd.bitsPerSample, bd.exponentBits);
       }
     }
     for (var i = 0; i < imageHeader.extraChannels.length; i++) {
       final BitDepthHeader bd = imageHeader.extraChannels[i].bitDepth;
       if (bd.usesFloatSamples) {
-        planes[colors + i]!.reconstructFloatSamples(bd.bitsPerSample, bd.expBits);
+        planes[colors + i]!.reconstructFloatSamples(bd.bitsPerSample, bd.exponentBits);
       }
     }
     // XYB frames come out of the color transform in linear RGB. Convert to the
@@ -508,11 +495,11 @@ final class _DecoderState {
       if (icc != null) {
         icc.apply(planes[0]!.floatRows, planes[1]!.floatRows, planes[2]!.floatRows);
       } else {
-        final TransferFunction tf = TransferFunction.forTransfer(imageHeader.colorEncoding.tf);
+        final TransferFunction transferFunction = TransferFunction.forTransfer(imageHeader.colorEncoding.transferFunction);
         for (var c = 0; c < imageHeader.colorChannelCount && c < 3; c++) {
           for (final Float32List row in planes[c]!.floatRows) {
             for (var i = 0; i < row.length; i++) {
-              row[i] = tf.fromLinear(row[i]);
+              row[i] = transferFunction.fromLinear(row[i]);
             }
           }
         }
@@ -531,7 +518,7 @@ final class _DecoderState {
   /// Modular so this is the signal/device domain the spot colours are defined
   /// in. (For an XYB image this therefore blends in the output-encoded domain,
   /// not linear light; no conformance case exercises XYB + spot colour.)
-  /// Channels stored subsampled (`dimShift > 0`) are skipped — none of the
+  /// Channels stored subsampled (`dimensionShift > 0`) are skipped — none of the
   /// conformance spot channels use it, and blending a size-mismatched plane
   /// would be worse than leaving it un-applied.
   void _compositeSpotColors(List<ImageBuffer?> planes) {
@@ -583,7 +570,7 @@ final class _DecoderState {
   /// Applies the XYB inverse (into linear RGB with the image's primaries)
   /// and/or the YCbCr transform in place on the frame's color channels.
   void _performColorTransforms(Frame frame) {
-    if (!imageHeader.xybEncoded && !frame.header.doYCbCr) {
+    if (!imageHeader.xybEncoded && !frame.header.usesYcbcr) {
       return;
     }
     for (var c = 0; c < 3; c++) {
@@ -595,7 +582,7 @@ final class _DecoderState {
       final OpsinInverseMatrix matrix = imageHeader.opsinInverseMatrix.getMatrix(bundle.prim, bundle.white);
       matrix.invertXyb(frame.buffer[0].floatRows, frame.buffer[1].floatRows, frame.buffer[2].floatRows, imageHeader.toneMapping.intensityTarget);
     }
-    if (frame.header.doYCbCr) {
+    if (frame.header.usesYcbcr) {
       final int height = frame.buffer[0].height;
       final int width = frame.buffer[0].width;
       for (var y = 0; y < height; y++) {
@@ -614,17 +601,16 @@ final class _DecoderState {
     }
   }
 
-  /// Computes patches.
-  ///
-  void _computePatches(Frame frame) {
+  /// Applies every reference-frame patch declared by [frame].
+  void _applyPatches(Frame frame) {
     final FrameHeader header = frame.header;
     final int colorChannels = imageHeader.colorChannelCount;
     final int extraChannels = imageHeader.extraChannels.length;
-    for (final Patch patch in frame.lfGlobal.patches) {
-      if (patch.ref > 3) {
-        throw const JpegXlInvalidBitstreamException(message: 'patch ref out of range');
+    for (final Patch patch in frame.lowFrequencyGlobal.patches) {
+      if (patch.referenceIndex > 3) {
+        throw const JpegXlInvalidBitstreamException(message: 'patch referenceIndex out of range');
       }
-      final List<ImageBuffer?>? refBuffers = _reference[patch.ref];
+      final List<ImageBuffer?>? refBuffers = _referenceFrames[patch.referenceIndex];
       // Referencing a nonexistent frame is legal; the patch is a no-op.
       if (refBuffers == null) {
         continue;
@@ -648,7 +634,7 @@ final class _DecoderState {
           if (info.mode == 0) {
             continue;
           }
-          if (info.mode > 3 && header.upsampling > 1 && c > 0 && header.ecUpsampling[c - 1] << imageHeader.extraChannels[c - 1].dimShift != header.upsampling) {
+          if (info.mode > 3 && header.upsampling > 1 && c > 0 && header.extraChannelUpsampling[c - 1] << imageHeader.extraChannels[c - 1].dimensionShift != header.upsampling) {
             throw const JpegXlInvalidBitstreamException(message: 'alpha upsampling mismatch in patch');
           }
           blendBuffers(
@@ -674,8 +660,7 @@ final class _DecoderState {
     }
   }
 
-  /// Processes the blend frame data used by the JPEG XL codec.
-  ///
+  /// Composites [frame] onto [canvas] using its per-channel blend settings.
   void _blendFrame(List<ImageBuffer?> canvas, Frame frame) {
     final int width = imageHeader.size.width;
     final int height = imageHeader.size.height;
@@ -696,14 +681,14 @@ final class _DecoderState {
       // source reference (zeros when that slot is empty), not by whatever
       // the canvas held before. When the reference aliases the canvas the
       // copy is a no-op.
-      if (!fullCover && !identical(_reference[info.source], canvas)) {
-        _fillFromReference(canvas[c]!, _reference[info.source]?[c]);
+      if (!fullCover && !identical(_referenceFrames[info.source], canvas)) {
+        _fillFromReference(canvas[c]!, _referenceFrames[info.source]?[c]);
       }
       blendBuffers(
         imageHeader: imageHeader,
         canvas: canvas[c]!,
         frameBuffers: frame.buffer,
-        refBuffers: _reference[info.source],
+        refBuffers: _referenceFrames[info.source],
         patchY: patchStartY,
         patchX: patchStartX,
         frameY: frameOffsetY,
@@ -720,35 +705,34 @@ final class _DecoderState {
     }
   }
 
-  /// Processes the fill from reference data used by the JPEG XL codec.
-  ///
-  void _fillFromReference(ImageBuffer dst, ImageBuffer? src) {
-    if (src == null) {
-      if (dst.isInt) {
-        for (final Int32List row in dst.intRows) {
+  /// Replaces [destination] with [source], or clears it when no source exists.
+  void _fillFromReference(ImageBuffer destination, ImageBuffer? source) {
+    if (source == null) {
+      if (destination.isInt) {
+        for (final Int32List row in destination.intRows) {
           row.fillRange(0, row.length, 0);
         }
       } else {
-        for (final Float32List row in dst.floatRows) {
+        for (final Float32List row in destination.floatRows) {
           row.fillRange(0, row.length, 0);
         }
       }
       return;
     }
-    if (dst.isInt != src.isInt) {
+    if (destination.isInt != source.isInt) {
       final int bits = imageHeader.bitDepth.bitsPerSample;
-      dst.castToFloat(bits);
-      src.castToFloat(bits);
+      destination.castToFloat(bits);
+      source.castToFloat(bits);
     }
-    final int h = dst.height < src.height ? dst.height : src.height;
-    final int w = dst.width < src.width ? dst.width : src.width;
-    if (dst.isInt) {
-      for (var y = 0; y < h; y++) {
-        dst.intRows[y].setRange(0, w, src.intRows[y]);
+    final int height = destination.height < source.height ? destination.height : source.height;
+    final int width = destination.width < source.width ? destination.width : source.width;
+    if (destination.isInt) {
+      for (var y = 0; y < height; y++) {
+        destination.intRows[y].setRange(0, width, source.intRows[y]);
       }
     } else {
-      for (var y = 0; y < h; y++) {
-        dst.floatRows[y].setRange(0, w, src.floatRows[y]);
+      for (var y = 0; y < height; y++) {
+        destination.floatRows[y].setRange(0, width, source.floatRows[y]);
       }
     }
   }
