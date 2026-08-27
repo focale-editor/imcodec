@@ -5,9 +5,6 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:imcodec/imcodec.dart';
-import 'package:imcodec/src/codecs/png.dart' show PngDecoder, PngEncoder;
-import 'package:imcodec/src/codecs/tga.dart' show TgaDecoder, TgaEncoder;
-import 'package:imcodec/src/codecs/tiff.dart' show TiffDecoder, TiffEncoder;
 
 /// Exercises the common synchronous codec contract.
 void main() {
@@ -155,7 +152,7 @@ void main() {
         maxPixels: 1000,
         compression: TiffCompression.none,
       ),
-      const WebPCodec(),
+      WebPCodec(),
     ];
 
     for (int index = 0; index < codecs.length; index++) {
@@ -185,7 +182,7 @@ void main() {
         const QoiCodec(),
         TgaCodec(),
         TiffCodec(),
-        const WebPCodec(),
+        WebPCodec(),
       ];
       final List<(ImageFormat?, int, int)> decodedFormats = [];
       for (final Codec<Image, Uint8List> codec in codecs) {

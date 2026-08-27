@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:imcodec/src/codecs/bmp.dart';
 import 'package:imcodec/src/codecs/jpeg.dart';
 import 'package:imcodec/src/codecs/jpeg_xl.dart';
-import 'package:imcodec/src/codecs/jpeg_xl/encoder/effort.dart';
 import 'package:imcodec/src/codecs/png.dart';
 import 'package:imcodec/src/codecs/qoi.dart';
 import 'package:imcodec/src/codecs/tga.dart';
@@ -14,10 +13,20 @@ import 'package:imcodec/src/image_format.dart';
 import 'package:imcodec/src/parallel_runner.dart';
 
 /// Encodes [image] to [format].
-/// [quality] only affects JPEG output. [pngLevel] is the zlib compression
-/// level and ranges from 0 through 9. [jpegXlEffort] trades JPEG XL encoding
-/// speed against output size.
-Uint8List encodeImage(Image image, {required ImageFormat format, int quality = 90, int pngLevel = 6, JpegXlEffort jpegXlEffort = JpegXlEffort.balanced}) => switch (format) {
+///
+/// [quality] only affects JPEG output. [webPQuality] selects lossy WebP when
+/// supplied; omitting it keeps WebP lossless. [pngLevel] is the zlib
+/// compression level and ranges from zero through nine. [jpegXlEffort] and
+/// [webPEffort] control how thoroughly their encoders search.
+Uint8List encodeImage(
+  Image image, {
+  required ImageFormat format,
+  int quality = 90,
+  int pngLevel = 6,
+  JpegXlEffort jpegXlEffort = JpegXlEffort.balanced,
+  int? webPQuality,
+  WebPEffort webPEffort = WebPEffort.balanced,
+}) => switch (format) {
   ImageFormat.bmp => encodeBmp(image),
   ImageFormat.jpeg => encodeJpg(image, quality: quality),
   ImageFormat.jpegXl => encodeJpegXl(image, effort: jpegXlEffort),
@@ -25,7 +34,11 @@ Uint8List encodeImage(Image image, {required ImageFormat format, int quality = 9
   ImageFormat.qoi => encodeQoi(image),
   ImageFormat.tga => encodeTga(image),
   ImageFormat.tiff => encodeTiff(image),
-  ImageFormat.webp => encodeWebP(image),
+  ImageFormat.webp => encodeWebP(
+    image,
+    quality: webPQuality,
+    effort: webPEffort,
+  ),
 };
 
 /// Encodes [image] as a 32-bit BMP with alpha bitfields.
@@ -89,12 +102,27 @@ Future<Uint8List> encodeJpegWith(
   JpegChroma chroma = JpegChroma.yuv444,
 }) => encodeJpgWith(runner, image, quality: quality, chroma: chroma);
 
-/// Encodes [image] as a lossless VP8L WebP image.
-Uint8List encodeWebP(Image image) => const WebPCodec().encode(image);
+/// Encodes [image] as WebP.
+///
+/// Omitting [quality] produces lossless VP8L data. Supplying it produces lossy
+/// VP8 data, with values outside zero through 100 clamped to that range.
+Uint8List encodeWebP(
+  Image image, {
+  int? quality,
+  WebPEffort effort = WebPEffort.balanced,
+}) => WebPCodec(quality: quality, effort: effort).encode(image);
 
-/// Encodes [image] as lossless VP8L WebP, selecting and applying independent
-/// predictor-block bands through [runner] when the image is large enough.
-Future<Uint8List> encodeWebPWith(ParallelRunner runner, Image image) => const WebPCodec().encodeWith(runner, image);
+/// Encodes [image] as WebP through [runner].
+///
+/// Lossless encoding may distribute predictor-block bands when the image is
+/// large enough. Lossy encoding currently runs inline and still returns the
+/// same bytes as [encodeWebP].
+Future<Uint8List> encodeWebPWith(
+  ParallelRunner runner,
+  Image image, {
+  int? quality,
+  WebPEffort effort = WebPEffort.balanced,
+}) => WebPCodec(quality: quality, effort: effort).encodeWith(runner, image);
 
 /// Encodes [image] to [format], offering [runner] the work that can run
 /// independently.
@@ -110,6 +138,8 @@ Future<Uint8List> encodeImageWith(
   int quality = 90,
   int pngLevel = 6,
   JpegXlEffort jpegXlEffort = JpegXlEffort.balanced,
+  int? webPQuality,
+  WebPEffort webPEffort = WebPEffort.balanced,
 }) async => switch (format) {
   ImageFormat.bmp => const BmpCodec().encode(image),
   ImageFormat.jpeg => await JpegCodec(quality: quality).encodeWith(runner, image),
@@ -118,5 +148,10 @@ Future<Uint8List> encodeImageWith(
   ImageFormat.qoi => const QoiCodec().encode(image),
   ImageFormat.tga => TgaCodec().encode(image),
   ImageFormat.tiff => TiffCodec().encode(image),
-  ImageFormat.webp => await const WebPCodec().encodeWith(runner, image),
+  ImageFormat.webp => await encodeWebPWith(
+    runner,
+    image,
+    quality: webPQuality,
+    effort: webPEffort,
+  ),
 };

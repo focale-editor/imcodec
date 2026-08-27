@@ -43,6 +43,7 @@ final Uint8List jpeg = img.encodeJpg(image, quality: 90);
 final Uint8List jpegXl = img.encodeJpegXl(image); // lossless Modular
 final Uint8List quickJxl = img.encodeJpegXl(image, effort: img.JpegXlEffort.fast);
 final Uint8List webp = img.encodeWebP(image); // lossless VP8L
+final Uint8List lossyWebP = img.encodeWebP(image, quality: 82);
 final Uint8List bmp = img.encodeBmp(image);
 final Uint8List tga = img.encodeTga(image); // RLE by default
 final Uint8List qoi = img.encodeQoi(image);
@@ -73,11 +74,11 @@ final Uint8List jpeg = await img.encodeJpgWith(
 ```
 
 JPEG transforms MCU bands independently, JPEG XL spreads its modular groups
-and context work, PNG filters row bands independently, and WebP selects and
-applies predictor-block bands independently. JPEG, PNG, and WebP keep small
-images inline because isolate startup and byte transfer would cost more than
-the work saved. Their parallel output is byte-for-byte identical to synchronous
-output.
+and context work, PNG filters row bands independently, and lossless WebP
+selects and applies predictor-block bands independently. Lossy WebP currently
+encodes inline. JPEG, PNG, and WebP keep small images inline because isolate
+startup and byte transfer would cost more than the work saved. Their parallel
+output is byte-for-byte identical to synchronous output.
 
 BMP, TGA, and TIFF are dominated by inexpensive byte shuffling or run-length
 passes, while QOI carries state from every pixel to the next. Measurements show
@@ -101,39 +102,8 @@ shared `defaultMaxPixels` constant (100 million) is used unless a lower
 
 ## Format behavior
 
-- BMP is encoded as a V4 32-bit bitmap with explicit RGBA bitfields. The
-  decoder supports uncompressed palette, 16-bit, 24-bit, 32-bit, and bitfield
-  images, as well as RLE4 and RLE8 compressed palette images.
-- PNG is encoded as non-interlaced 8-bit RGBA with adaptive row filters. The
-  decoder accepts standard grayscale, true-color, indexed, grayscale-alpha,
-  and RGBA images, including Adam7 interlacing and 1- to 16-bit samples where
-  the color type permits them.
-- JPEG output is baseline JPEG with selectable 4:4:4 or 4:2:0 chroma sampling.
-  The decoder accepts baseline, extended sequential, and progressive Huffman
-  JPEG data at any sampling ratio the format allows, and expands half-resolution
-  chroma with the same triangle filter reference decoders use. Transparency is
-  composited against white during encoding.
-- JPEG XL import supports bare codestreams and ISOBMFF containers, lossless
-  Modular and lossy VarDCT images, alpha, orientation, embedded matrix/TRC ICC
-  profiles, and the first visible animation frame. Output is lossless Modular
-  RGBA and preserves hidden RGB values. `JpegXlEffort` trades encoding speed
-  against output size: `fast` codes the image once, `balanced` (the default)
-  picks the better predictor first, and `maximum` searches every candidate.
-- QOI is encoded and decoded losslessly according to the Quite OK Image
-  specification.
-- TGA supports color-mapped, true-color, and grayscale input, with raw or RLE
-  pixel data. A 32-bit image whose attribute bytes are all zero is read as
-  opaque. Output is 32-bit true-color and uses RLE by default, with packets
-  confined to a single scanline as the format requires.
-- TIFF import supports little- and big-endian baseline files; RGB, RGBA,
-  grayscale, and palette pixels at 1, 2, 4, 8, or 16 bits per sample; strips;
-  all eight orientations; horizontal prediction; and uncompressed, PackBits, or
-  LZW data. Planar, tiled, and JPEG-compressed files are not currently
-  supported. Output is little-endian, chunky, eight-bit RGBA using PackBits by
-  default; pass `TiffCompression.none` for uncompressed output.
-- WebP output is lossless VP8L and preserves alpha. The decoder accepts VP8,
-  VP8 with alpha, VP8L, and the first animation frame. Quality is intentionally
-  not an option until a lossy encoder is added.
+A documentation on the behavior and implementation of formats in available in
+[docs/formats.md](docs/formats.md).
 
 The JPEG and WebP encoder implementations contain code derived from the MIT
 licensed Dart `image` package.

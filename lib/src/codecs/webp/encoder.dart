@@ -104,9 +104,10 @@ final class _WebPTransformResult {
 /// Runs one WebP predictor band without shared mutable state.
 _WebPTransformBand _runWebPTransformJob(_WebPTransformJob job) => const WebPEncoder()._transformBand(job);
 
-/// Encodes images as lossless WebP data.
-/// Uses the VP8L lossless bitstream format wrapped in a RIFF/WebP container.
-/// Applies the subtract-green transform and LZ77 back-references.
+/// Encodes images as lossless VP8L or lossy VP8 WebP data.
+///
+/// The default constructor remains lossless. Supplying [quality], or using
+/// [WebPEncoder.lossy], selects the lossy encoder.
 final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
   /// Maps nearby two-dimensional pixel offsets to VP8L distance plane codes.
   static const List<int> _distancePlaneLookup = <int>[
@@ -128,12 +129,43 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
     119, 116, 111, 106, 97, 88, 84, 74, 72, 75, 85, 89, 98, 107, 112, 117,
   ];
 
-  /// Creates a lossless WebP encoder.
-  const WebPEncoder();
+  /// Lossy quality from zero through 100, or `null` for lossless encoding.
+  final int? quality;
 
-  /// Encodes [image] as a lossless VP8L WebP image.
+  /// How much candidate search the lossy encoder performs.
+  final WebPEffort effort;
+
+  /// Creates a WebP encoder.
+  ///
+  /// Encoding stays lossless when [quality] is omitted. Supplied quality
+  /// values are clamped to the range from zero through 100.
+  const WebPEncoder({
+    this.quality,
+    this.effort = WebPEffort.balanced,
+  });
+
+  /// Creates an encoder that produces lossy VP8 data.
+  const WebPEncoder.lossy({
+    int quality = 75,
+    WebPEffort effort = WebPEffort.balanced,
+  }) : this(
+         quality: quality,
+         effort: effort,
+       );
+
+  /// Whether this encoder produces lossy VP8 data.
+  bool get isLossy => quality != null;
+
+  /// Encodes [image] with the configured WebP representation.
   @override
   Uint8List encode(Image image) {
+    final int? lossyQuality = quality;
+    if (lossyQuality != null) {
+      return _Vp8LossyEncoder(
+        quality: lossyQuality.clamp(0, 100),
+        effort: effort,
+      ).encode(image);
+    }
     _checkInput(image);
     final _WebPTransformResult transformed = _transformImage(image);
     return _wrapVp8l(
@@ -147,6 +179,9 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
 
   @override
   Future<Uint8List> encodeWith(ParallelRunner runner, Image input) async {
+    if (isLossy) {
+      return encode(input);
+    }
     _checkInput(input);
     final int predictorBlockRowCount = (input.height + _webPPredictorBlockSize - 1) ~/ _webPPredictorBlockSize;
     if (input.width * input.height < _minimumWebPParallelPixels || predictorBlockRowCount < 2) {

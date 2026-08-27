@@ -9,7 +9,7 @@ export 'src/codecs/qoi.dart' show QoiCodec, QoiDecoder, QoiEncoder;
 export 'src/codecs/raster_codec.dart' show ParallelRasterCodec, ParallelRasterEncoder, RasterCodec, RasterDecoder, RasterEncoder, defaultMaxPixels;
 export 'src/codecs/tga.dart' show TgaCodec, TgaDecoder, TgaEncoder;
 export 'src/codecs/tiff.dart' show TiffCodec, TiffCompression, TiffDecoder, TiffEncoder;
-export 'src/codecs/webp.dart' show WebPCodec, WebPDecoder, WebPEncoder;
+export 'src/codecs/webp.dart' show WebPCodec, WebPDecoder, WebPEffort, WebPEncoder;
 export 'src/decoder.dart';
 export 'src/encoder.dart';
 export 'src/image.dart';

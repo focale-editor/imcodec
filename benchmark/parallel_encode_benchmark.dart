@@ -32,7 +32,7 @@ Future<void> main(List<String> arguments) async {
     // ('QOI', const QoiCodec()),
     // ('TGA', TgaCodec()),
     // ('TIFF PackBits', TiffCodec()),
-    ('WebP', const WebPCodec()),
+    ('WebP', WebPCodec()),
   ];
 
   stdout.writeln('${image.width}x${image.height}, $iterations measured iteration(s)');

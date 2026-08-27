@@ -50,7 +50,7 @@ void main() {
     ('JPEG 4:4:4', JpegCodec(quality: 91), largeSource),
     ('JPEG 4:2:0', JpegCodec(quality: 91, chroma: JpegChroma.yuv420), largeSource),
     ('PNG', PngCodec(level: 6), mediumSource),
-    ('WebP', const WebPCodec(), mediumSource),
+    ('WebP', WebPCodec(), mediumSource),
   ];
 
   for (final (String label, ParallelRasterCodec codec, Image source) in codecs) {

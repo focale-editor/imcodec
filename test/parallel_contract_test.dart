@@ -21,7 +21,7 @@ void main() {
     ImageFormat.qoi: const QoiCodec(),
     ImageFormat.tga: TgaCodec(),
     ImageFormat.tiff: TiffCodec(),
-    ImageFormat.webp: const WebPCodec(),
+    ImageFormat.webp: WebPCodec(),
   };
 
   test('every format is covered', () {
