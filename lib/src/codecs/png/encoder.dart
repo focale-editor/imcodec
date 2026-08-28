@@ -144,7 +144,7 @@ final class PngEncoder extends RasterEncoder with ParallelRasterEncoder {
       ..writeByte(0);
     _writeChunk(output, _ihdr, header.getBytes());
 
-    final Uint8List compressed = Uint8List.fromList(const ZlibCodec().encode(filtered, level: level));
+    final Uint8List compressed = Uint8List.fromList(ZlibCodec(level: level).encode(filtered));
     _writeChunk(output, _idat, compressed);
     _writeChunk(output, _iend, Uint8List(0));
     return output.takeBytes();

@@ -132,10 +132,7 @@ final class PngDecoder extends RasterDecoder {
       throw const ImageCodecException('PNG is missing required image chunks');
     }
     final int expectedLength = _expectedInflatedLength(header);
-    final Uint8List inflated = const ZlibCodec().decode(
-      compressedData.takeBytes(),
-      maxOutputBytes: expectedLength,
-    );
+    final Uint8List inflated = ZlibCodec(maxOutputBytes: expectedLength).decode(compressedData.takeBytes());
     if (inflated.length != expectedLength) {
       throw ImageCodecException('Expected $expectedLength inflated PNG bytes, received ${inflated.length}');
     }
