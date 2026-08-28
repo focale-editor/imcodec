@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.3.0
+Released on August 28, 2026.
+
+* **BREAKING REFACTOR**: Updated `zcodec`. ([#4d80530](https://github.com/focale-editor/imcodec/commit/4d80530))
+
 ## v0.2.0
 Released on August 27, 2026.
 
