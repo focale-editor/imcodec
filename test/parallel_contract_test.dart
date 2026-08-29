@@ -15,6 +15,7 @@ void main() {
 
   final Map<ImageFormat, RasterCodec> codecs = <ImageFormat, RasterCodec>{
     ImageFormat.bmp: const BmpCodec(),
+    ImageFormat.gif: const GifCodec.customCoders(),
     ImageFormat.jpeg: JpegCodec(),
     ImageFormat.jpegXl: JpegXlCodec(effort: JpegXlEffort.fast),
     ImageFormat.png: PngCodec(),

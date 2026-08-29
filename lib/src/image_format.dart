@@ -5,6 +5,9 @@ enum ImageFormat {
   /// Windows bitmap image.
   bmp,
 
+  /// Graphics Interchange Format image.
+  gif,
+
   /// Joint Photographic Experts Group image.
   jpeg,
 
@@ -30,6 +33,9 @@ enum ImageFormat {
   static ImageFormat? sniff(Uint8List bytes) {
     if (bytes.length >= 2 && bytes[0] == 0x42 && bytes[1] == 0x4d) {
       return ImageFormat.bmp;
+    }
+    if (bytes.length >= 6 && bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x38 && (bytes[4] == 0x37 || bytes[4] == 0x39) && bytes[5] == 0x61) {
+      return ImageFormat.gif;
     }
     if (bytes.length >= 8 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4e && bytes[3] == 0x47 && bytes[4] == 0x0d && bytes[5] == 0x0a && bytes[6] == 0x1a && bytes[7] == 0x0a) {
       return ImageFormat.png;

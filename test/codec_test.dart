@@ -48,6 +48,12 @@ void main() {
 
   test('format encoders and decoders are const and reusable', () {
     const List<RasterEncoder> encoders = [
+      GifEncoder(
+        options: IndexedColorOptions(
+          ditherAmount: 0,
+          transparency: false,
+        ),
+      ),
       JpegEncoder(
         quality: 90,
         chroma: JpegChroma.yuv420,
@@ -58,6 +64,7 @@ void main() {
       TiffEncoder(compression: TiffCompression.none),
     ];
     const List<RasterDecoder> decoders = [
+      GifDecoder(),
       JpegDecoder(),
       JpegXlDecoder(),
       PngDecoder(),
@@ -65,6 +72,12 @@ void main() {
       TiffDecoder(),
     ];
     const List<RasterEncoder> canonicalEncoders = [
+      GifEncoder(
+        options: IndexedColorOptions(
+          ditherAmount: 0,
+          transparency: false,
+        ),
+      ),
       JpegEncoder(
         quality: 90,
         chroma: JpegChroma.yuv420,
@@ -75,6 +88,7 @@ void main() {
       TiffEncoder(compression: TiffCompression.none),
     ];
     const List<RasterDecoder> canonicalDecoders = [
+      GifDecoder(),
       JpegDecoder(),
       JpegXlDecoder(),
       PngDecoder(),
@@ -82,6 +96,7 @@ void main() {
       TiffDecoder(),
     ];
     const List<ImageFormat> formats = [
+      ImageFormat.gif,
       ImageFormat.jpeg,
       ImageFormat.jpegXl,
       ImageFormat.png,
@@ -133,6 +148,7 @@ void main() {
     final Image source = testImage();
     final List<Codec<Image, Uint8List>> codecs = [
       const BmpCodec(),
+      const GifCodec.customCoders(),
       JpegCodec(
         maxPixels: 1000,
         quality: 90,
@@ -176,6 +192,7 @@ void main() {
       final Image image = Image.fromRgba(width: 3, height: 2, bytes: pixels, copy: false);
       final List<Codec<Image, Uint8List>> codecs = [
         const BmpCodec(),
+        const GifCodec.customCoders(),
         JpegCodec(),
         JpegXlCodec(),
         PngCodec(),

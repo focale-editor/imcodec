@@ -1,14 +1,14 @@
 # Imcodec
 
-Imcodec is a focused Flutter image codec for BMP, JPEG, JPEG XL, PNG, QOI,
-TGA, TIFF, and WebP. It keeps a small straight-alpha RGBA image model and
+Imcodec is a focused Flutter image codec for BMP, GIF, JPEG, JPEG XL, PNG,
+QOI, TGA, TIFF, and WebP. It keeps a small straight-alpha RGBA image model and
 exposes synchronous pure-Dart encoders and decoders, which makes expensive
 conversions suitable for `Isolate.run`.
 
 > [!NOTE]
-> Animated JPEG XL, PNG, and WebP inputs currently return their first visible
-> frame. Decoding preserves straight alpha and hidden RGB values where the source
-> format carries them.
+> Animated GIF, JPEG XL, PNG, and WebP inputs currently return their first
+> visible frame. Decoding preserves straight alpha and hidden RGB values where
+> the source format carries them.
 
 ## Usage
 
@@ -39,6 +39,14 @@ The encoder entry points mirror the subset used by almost any image editor:
 
 ```dart
 final Uint8List png = img.encodePng(image);
+final Uint8List png8 = img.encodePng8(
+  image,
+  options: const img.IndexedColorOptions(
+    colorCount: 64,
+    ditherAmount: 75,
+  ),
+);
+final Uint8List gif = img.encodeGif(image); // one palette-indexed frame
 final Uint8List jpeg = img.encodeJpg(image, quality: 90);
 final Uint8List jpegXl = img.encodeJpegXl(image); // lossless Modular
 final Uint8List quickJxl = img.encodeJpegXl(image, effort: img.JpegXlEffort.fast);
@@ -80,10 +88,11 @@ encodes inline. JPEG, PNG, and WebP keep small images inline because isolate
 startup and byte transfer would cost more than the work saved. Their parallel
 output is byte-for-byte identical to synchronous output.
 
-BMP, TGA, and TIFF are dominated by inexpensive byte shuffling or run-length
-passes, while QOI carries state from every pixel to the next. Measurements show
-that moving their buffers between isolates is slower, so these formats accept
-a runner for API consistency but intentionally encode inline.
+BMP, GIF, TGA, and TIFF are dominated by inexpensive byte shuffling,
+quantization, or run-length passes, while QOI carries state from every pixel to
+the next. Measurements show that moving their buffers between isolates is
+slower, so these formats accept a runner for API consistency but intentionally
+encode inline.
 
 `decodeImage` defaults to a 100-million-pixel allocation limit. Supply a lower
 `maxPixels` value when input comes from an untrusted source.

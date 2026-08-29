@@ -6,6 +6,15 @@ BMP is encoded as a V4 32-bit bitmap with explicit RGBA bitfields. The
 decoder supports uncompressed palette, 16-bit, 24-bit, 32-bit, and bitfield
 images, as well as RLE4 and RLE8 compressed palette images.
 
+## GIF
+
+GIF output is one non-interlaced GIF89a frame with a global colour table,
+LZW-compressed indices, and optional binary transparency. Palette reduction is
+shared with PNG-8 and supports two through 256 colours, a configurable matte,
+an alpha threshold, and a proportional Floyd–Steinberg dither. The decoder
+accepts GIF87a and GIF89a, global or local colour tables, interlacing, and
+returns the first visible frame.
+
 ## PNG
 
 PNG is encoded as non-interlaced 8-bit RGBA with adaptive row filters. The

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:imcodec/src/codecs/bmp.dart';
+import 'package:imcodec/src/codecs/gif.dart';
 import 'package:imcodec/src/codecs/jpeg.dart';
 import 'package:imcodec/src/codecs/jpeg_xl.dart';
 import 'package:imcodec/src/codecs/png.dart';
@@ -22,6 +23,7 @@ Image decodeImage(Uint8List bytes, {int maxPixels = defaultMaxPixels}) {
   }
   return switch (format) {
     ImageFormat.bmp => decodeBmp(bytes, maxPixels: maxPixels),
+    ImageFormat.gif => decodeGif(bytes, maxPixels: maxPixels),
     ImageFormat.jpeg => decodeJpg(bytes, maxPixels: maxPixels),
     ImageFormat.jpegXl => decodeJpegXl(bytes, maxPixels: maxPixels),
     ImageFormat.png => decodePng(bytes, maxPixels: maxPixels),
@@ -34,6 +36,9 @@ Image decodeImage(Uint8List bytes, {int maxPixels = defaultMaxPixels}) {
 
 /// Decodes an uncompressed or bitfield BMP image to straight RGBA.
 Image decodeBmp(Uint8List bytes, {int maxPixels = defaultMaxPixels}) => BmpCodec(maxPixels: maxPixels).decode(bytes);
+
+/// Decodes the first visible GIF frame to straight RGBA.
+Image decodeGif(Uint8List bytes, {int maxPixels = defaultMaxPixels}) => GifCodec(maxPixels: maxPixels).decode(bytes);
 
 /// Decodes the first frame of a PNG image to straight RGBA.
 Image decodePng(Uint8List bytes, {int maxPixels = defaultMaxPixels}) => PngCodec(maxPixels: maxPixels).decode(bytes);

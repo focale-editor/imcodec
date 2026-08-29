@@ -22,6 +22,10 @@ void main() {
 
   test('format detection recognizes every supported signature', () {
     expect(ImageFormat.sniff(Uint8List.fromList([0x42, 0x4d])), ImageFormat.bmp);
+    expect(
+      ImageFormat.sniff(Uint8List.fromList('GIF89a'.codeUnits)),
+      ImageFormat.gif,
+    );
     expect(ImageFormat.sniff(Uint8List.fromList([0xff, 0xd8, 0xff])), ImageFormat.jpeg);
     expect(ImageFormat.sniff(Uint8List.fromList([0xff, 0x0a])), ImageFormat.jpegXl);
     expect(ImageFormat.sniff(Uint8List.fromList([0x00, 0x00, 0x00, 0x0c, 0x4a, 0x58, 0x4c, 0x20, 0x0d, 0x0a, 0x87, 0x0a])), ImageFormat.jpegXl);

@@ -2,6 +2,8 @@
 library;
 
 export 'src/codecs/bmp.dart' show BmpCodec, BmpDecoder, BmpEncoder;
+export 'src/codecs/gif.dart' show GifCodec, GifDecoder, GifEncoder;
+export 'src/codecs/gif/indexed_color.dart' show IndexedColorOptions;
 export 'src/codecs/jpeg.dart' show JpegChroma, JpegCodec, JpegDecoder, JpegEncoder;
 export 'src/codecs/jpeg_xl.dart' show JpegXlCodec, JpegXlDecoder, JpegXlEffort, JpegXlEncoder;
 export 'src/codecs/png.dart' show PngCodec, PngDecoder, PngEncoder;
