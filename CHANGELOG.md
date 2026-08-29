@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.3.1
+Released on August 29, 2026.
+
+* **FEAT**: Added static GIF encoding and first-frame GIF decoding. ([#756a7f6](https://github.com/focale-editor/imcodec/commit/756a7f6))
+
 ## v0.3.0
 Released on August 28, 2026.
 
