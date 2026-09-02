@@ -24,6 +24,25 @@ final class TiffDecoder extends RasterDecoder {
   /// Decodes the first image-file directory in [bytes].
   @override
   Image decode(Uint8List bytes, {required int maxPixels}) {
+    final _TiffRaster raster = _decodeRaster(bytes, maxPixels: maxPixels);
+    if (raster.colorModel != DecodedColorModel.rgb || raster.samples.format != DecodedSampleFormat.uint8) {
+      return raster.toDecodedImage().toImage();
+    }
+    // The samples were allocated here and are handed straight to the image,
+    // which skips the defensive copy an immutable raster would require.
+    return Image.fromRgba(
+      width: raster.orientedWidth,
+      height: raster.orientedHeight,
+      bytes: raster.orientedBytes(),
+      copy: false,
+    );
+  }
+
+  /// Decodes TIFF samples without reducing unsigned sixteen-bit or float data.
+  DecodedImage decodeData(Uint8List bytes, {required int maxPixels}) => _decodeRaster(bytes, maxPixels: maxPixels).toDecodedImage();
+
+  /// Decodes the first image-file directory into still unoriented samples.
+  _TiffRaster _decodeRaster(Uint8List bytes, {required int maxPixels}) {
     if (maxPixels < 1) {
       throw RangeError.range(maxPixels, 1, null, 'maxPixels');
     }
@@ -44,50 +63,133 @@ final class TiffDecoder extends RasterDecoder {
     final int compression = _scalar(fields, 259, fallback: 1);
     final int photometric = _requiredScalar(fields, 262);
     final int orientation = _scalar(fields, 274, fallback: 1);
-    final List<int> bitsPerSampleValues = _values(fields[258]) ?? const [1];
+    final _TiffField? bitsPerSampleField = fields[258];
     // Some writers omit SamplesPerPixel; BitsPerSample already implies it.
-    final int samplesPerPixel = _scalar(fields, 277, fallback: bitsPerSampleValues.length);
+    final int samplesPerPixel = _scalar(
+      fields,
+      277,
+      fallback: bitsPerSampleField?.count ?? 1,
+    );
     final int rowsPerStrip = _scalar(fields, 278, fallback: height);
     final int planarConfiguration = _scalar(fields, 284, fallback: 1);
     final int predictor = _scalar(fields, 317, fallback: 1);
-    final List<int> bitsPerSample = bitsPerSampleValues;
-    final List<int> stripOffsets = _requiredValues(fields, 273);
-    final List<int> stripByteCounts = _requiredValues(fields, 279);
-    final List<int> extraSamples = _values(fields[338]) ?? const [];
-
     if (orientation < 1 || orientation > 8) {
       throw ImageCodecException('Unsupported TIFF orientation: $orientation');
     }
     if (rowsPerStrip < 1 || samplesPerPixel < 1) {
-      throw const ImageCodecException('Invalid TIFF sample or strip dimensions');
+      throw const ImageCodecException(
+        'Invalid TIFF sample or strip dimensions',
+      );
+    }
+    if (samplesPerPixel > 5) {
+      throw const ImageCodecException('Invalid TIFF sample count');
     }
     if (planarConfiguration != 1) {
-      throw const ImageCodecException('Planar TIFF images are not supported');
+      throw const ImageCodecException(
+        'Planar TIFF images are not supported',
+      );
     }
     if (predictor != 1 && predictor != 2) {
       throw ImageCodecException('Unsupported TIFF predictor: $predictor');
     }
+    if (bitsPerSampleField != null && bitsPerSampleField.count != 1 && bitsPerSampleField.count != samplesPerPixel) {
+      throw const ImageCodecException(
+        'TIFF BitsPerSample does not match SamplesPerPixel',
+      );
+    }
+    final _TiffField? sampleFormatField = fields[339];
+    if (sampleFormatField != null && sampleFormatField.count != 1 && sampleFormatField.count != samplesPerPixel) {
+      throw const ImageCodecException(
+        'TIFF SampleFormat does not match SamplesPerPixel',
+      );
+    }
+    final _TiffField? extraSamplesField = fields[338];
+    if (extraSamplesField != null && extraSamplesField.count > 1) {
+      throw const ImageCodecException(
+        'Multiple TIFF extra samples are not supported',
+      );
+    }
+    final int expectedStripCount = (height + rowsPerStrip - 1) ~/ rowsPerStrip;
+    final _TiffField? stripOffsetsField = fields[273];
+    final _TiffField? stripByteCountsField = fields[279];
+    if (stripOffsetsField == null || stripByteCountsField == null || stripOffsetsField.count != expectedStripCount || stripByteCountsField.count != expectedStripCount) {
+      throw const ImageCodecException(
+        'TIFF strip tables do not match the declared rows',
+      );
+    }
+
+    final List<int> bitsPerSampleValues = _values(bitsPerSampleField) ?? const [1];
+    final List<int> bitsPerSample = bitsPerSampleValues;
+    final List<int> stripOffsets = _requiredValues(fields, 273);
+    final List<int> stripByteCounts = _requiredValues(fields, 279);
+    final List<int> extraSamples = _values(extraSamplesField) ?? const [];
+    final List<int> sampleFormats = _values(sampleFormatField) ?? const [1];
+
     if (stripOffsets.length != stripByteCounts.length) {
       throw const ImageCodecException('TIFF strip offset and byte-count arrays differ in length');
     }
     if (bitsPerSample.length != 1 && bitsPerSample.length != samplesPerPixel) {
       throw const ImageCodecException('TIFF BitsPerSample does not match SamplesPerPixel');
     }
+    if (sampleFormats.isEmpty || sampleFormats.length != 1 && sampleFormats.length != samplesPerPixel) {
+      throw const ImageCodecException(
+        'TIFF SampleFormat does not match SamplesPerPixel',
+      );
+    }
     final int sampleBits = bitsPerSample.first;
     if (bitsPerSample.any((bits) => bits != sampleBits)) {
       throw const ImageCodecException('TIFF samples of mixed widths are not supported');
     }
-    if (![1, 2, 4, 8, 16].contains(sampleBits)) {
+    final int sampleRepresentation = sampleFormats.first;
+    if (sampleFormats.any(
+      (format) => format != sampleRepresentation,
+    )) {
+      throw const ImageCodecException(
+        'TIFF samples of mixed numeric formats are not supported',
+      );
+    }
+    if (sampleRepresentation != 1 && sampleRepresentation != 3) {
+      throw ImageCodecException(
+        'Unsupported TIFF sample format: $sampleRepresentation',
+      );
+    }
+    if (![1, 2, 4, 8, 16].contains(sampleBits) && !(sampleBits == 32 && sampleRepresentation == 3)) {
       throw ImageCodecException('Unsupported TIFF sample width: $sampleBits bits');
     }
-    if (predictor == 2 && sampleBits != 8 && sampleBits != 16) {
+    if (predictor == 2 && (sampleRepresentation != 1 || sampleBits != 8 && sampleBits != 16)) {
       throw const ImageCodecException('The TIFF horizontal predictor requires eight-bit or sixteen-bit samples');
     }
+    final _TiffField? colorMapField = fields[320];
+    if (photometric == 3 && (colorMapField == null || colorMapField.type != 3 || colorMapField.count != 3 * (1 << sampleBits))) {
+      throw const ImageCodecException(
+        'Invalid palette TIFF color map',
+      );
+    }
+    final List<int>? colorMap = photometric == 3 ? _values(colorMapField) : null;
+    // Reject impossible channel layouts before their declared row size drives
+    // a pixel-buffer allocation.
+    _validateSampleLayout(
+      photometric,
+      samplesPerPixel,
+      colorMap,
+    );
+
+    final DecodedSampleFormat outputFormat = switch ((
+      sampleRepresentation,
+      sampleBits,
+    )) {
+      (3, 32) => DecodedSampleFormat.float32,
+      (_, 16) => DecodedSampleFormat.uint16,
+      _ => DecodedSampleFormat.uint8,
+    };
 
     // Rows are padded to whole bytes, so narrow samples need their own stride.
     final int packedRowBytes = (width * samplesPerPixel * sampleBits + 7) ~/ 8;
     final int rowBytes = width * samplesPerPixel;
-    final Uint8List samples = Uint8List(rowBytes * height);
+    final _TiffSampleBuffer samples = _TiffSampleBuffer(
+      rowBytes * height,
+      outputFormat,
+    );
     int decodedRow = 0;
     for (int strip = 0; strip < stripOffsets.length && decodedRow < height; strip++) {
       final int rowCount = _minimum(rowsPerStrip, height - decodedRow);
@@ -100,24 +202,34 @@ final class TiffDecoder extends RasterDecoder {
       if (predictor == 2) {
         _undoHorizontalPredictor(decoded, packedRowBytes, samplesPerPixel * (sampleBits ~/ 8), sampleBits, endian);
       }
-      _expandSamples(decoded, samples, decodedRow * rowBytes, rowCount, rowBytes, packedRowBytes, sampleBits, endian, photometric == 3);
+      _expandSamples(
+        decoded,
+        samples,
+        decodedRow * rowBytes,
+        rowCount,
+        rowBytes,
+        packedRowBytes,
+        sampleBits,
+        sampleRepresentation,
+        endian,
+        photometric == 3,
+      );
       decodedRow += rowCount;
     }
     if (decodedRow != height) {
       throw const ImageCodecException('TIFF strips do not cover the declared image height');
     }
 
-    final List<int>? colorMap = _values(fields[320]);
-    final Uint8List rgba = _convertToRgba(
+    return _convertToRaster(
       samples,
       width: width,
       height: height,
+      orientation: orientation,
       samplesPerPixel: samplesPerPixel,
       photometric: photometric,
       colorMap: colorMap,
       associatedAlpha: extraSamples.isNotEmpty && extraSamples.first == 1,
     );
-    return _orient(rgba, width, height, orientation);
   }
 
   /// Determines byte order from the two-byte TIFF signature.
@@ -175,10 +287,33 @@ final class TiffDecoder extends RasterDecoder {
   }
 
   /// Returns a required scalar integer field.
-  int _requiredScalar(Map<int, _TiffField> fields, int tag) => _requiredValues(fields, tag).first;
+  int _requiredScalar(Map<int, _TiffField> fields, int tag) {
+    final _TiffField? field = fields[tag];
+    if (field == null || field.count < 1) {
+      throw ImageCodecException('Required TIFF tag $tag is missing');
+    }
+    return _firstValue(field);
+  }
 
   /// Returns a scalar integer field or [fallback] when absent.
-  int _scalar(Map<int, _TiffField> fields, int tag, {required int fallback}) => _values(fields[tag])?.firstOrNull ?? fallback;
+  int _scalar(
+    Map<int, _TiffField> fields,
+    int tag, {
+    required int fallback,
+  }) {
+    final _TiffField? field = fields[tag];
+    return field == null || field.count < 1 ? fallback : _firstValue(field);
+  }
+
+  /// Reads the first scalar without materializing an attacker-sized list.
+  int _firstValue(_TiffField field) {
+    if (field.type != 1 && field.type != 3 && field.type != 4) {
+      throw ImageCodecException(
+        'Unsupported integer TIFF field type: ${field.type}',
+      );
+    }
+    return field.unsignedAt(0);
+  }
 
   /// Rejects dimensions that are invalid or exceed the allocation limit.
   void _checkDimensions(int width, int height, int maxPixels) {
@@ -358,22 +493,37 @@ final class TiffDecoder extends RasterDecoder {
     }
   }
 
-  /// Expands packed samples of any supported width to one byte per sample.
-  /// Palette indices keep their raw value; other samples are scaled to the
-  /// full eight-bit range so that narrow grayscale images stay correct.
+  /// Expands packed samples into the selected native scalar representation.
+  ///
+  /// Palette indices keep their raw value; other narrow samples are scaled to
+  /// the full eight-bit range so grayscale images retain their brightness.
   void _expandSamples(
     Uint8List packed,
-    Uint8List samples,
+    _TiffSampleBuffer samples,
     int destination,
     int rowCount,
     int rowBytes,
     int packedRowBytes,
     int sampleBits,
+    int sampleRepresentation,
     Endian endian,
     bool paletteIndices,
   ) {
+    if (sampleRepresentation == 3) {
+      final ByteData data = ByteData.sublistView(packed);
+      int target = destination;
+      for (int row = 0; row < rowCount; row++) {
+        int source = row * packedRowBytes;
+        for (int sample = 0; sample < rowBytes; sample++) {
+          samples.writeFloat(target++, data.getFloat32(source, endian));
+          source += 4;
+        }
+      }
+      return;
+    }
     if (sampleBits == 8) {
-      samples.setRange(destination, destination + rowCount * rowBytes, packed);
+      assert(samples.format == DecodedSampleFormat.uint8, 'Eight-bit TIFF samples always use byte storage');
+      samples.bytes.setRange(destination, destination + rowCount * rowBytes, packed);
       return;
     }
     if (sampleBits == 16) {
@@ -382,7 +532,7 @@ final class TiffDecoder extends RasterDecoder {
       for (int row = 0; row < rowCount; row++) {
         int source = row * packedRowBytes;
         for (int sample = 0; sample < rowBytes; sample++) {
-          samples[target++] = (data.getUint16(source, endian) * 255 + 32767) ~/ 65535;
+          samples.writeUnsigned(target++, data.getUint16(source, endian));
           source += 2;
         }
       }
@@ -395,108 +545,202 @@ final class TiffDecoder extends RasterDecoder {
       for (int sample = 0; sample < rowBytes; sample++) {
         final int bitOffset = sample * sampleBits;
         final int value = (packed[rowStart + (bitOffset >>> 3)] >>> (8 - sampleBits - (bitOffset & 7))) & maximum;
-        samples[target++] = paletteIndices ? value : (value * 255 + (maximum >> 1)) ~/ maximum;
+        samples.writeUnsigned(
+          target++,
+          paletteIndices ? value : (value * 255 + (maximum >> 1)) ~/ maximum,
+        );
       }
     }
   }
 
-  /// Converts supported TIFF photometric interpretations to straight RGBA.
-  Uint8List _convertToRgba(
-    Uint8List samples, {
+  /// Converts supported TIFF interpretations to native process-plus-alpha.
+  _TiffRaster _convertToRaster(
+    _TiffSampleBuffer samples, {
     required int width,
     required int height,
+    required int orientation,
     required int samplesPerPixel,
     required int photometric,
     required List<int>? colorMap,
     required bool associatedAlpha,
   }) {
     final int pixelCount = width * height;
-    final Uint8List rgba = Uint8List(pixelCount * 4);
+    final DecodedColorModel colorModel = photometric == 5 ? DecodedColorModel.cmyk : DecodedColorModel.rgb;
+    final int processChannels = colorModel.processChannelCount;
+    final int outputChannels = processChannels + 1;
+    // The sample layout is fixed for a whole image, so it is validated once
+    // instead of on every pixel.
+    final bool hasAlphaSample = _validateSampleLayout(photometric, samplesPerPixel, colorMap);
+    final int sourceProcessChannels = switch (photometric) {
+      2 => 3,
+      5 => 4,
+      _ => 1,
+    };
+    final _TiffSampleBuffer output = _TiffSampleBuffer(
+      pixelCount * outputChannels,
+      samples.format,
+    );
+
+    // Grayscale, RGB and CMYK samples already carry their output meaning, so
+    // they move as raw scalars rather than through normalized doubles.
+    if (photometric != 0 && photometric != 3 && !associatedAlpha) {
+      _copyProcessSamples(
+        samples,
+        output,
+        pixelCount: pixelCount,
+        samplesPerPixel: samplesPerPixel,
+        outputChannels: outputChannels,
+        processChannels: processChannels,
+        sourceProcessChannels: sourceProcessChannels,
+        broadcastsGray: photometric == 1,
+        hasAlphaSample: hasAlphaSample,
+      );
+      return _TiffRaster(
+        samples: output,
+        colorModel: colorModel,
+        width: width,
+        height: height,
+        orientation: orientation,
+      );
+    }
+
+    final int paletteLength = photometric == 3 ? colorMap!.length ~/ 3 : 0;
+    // Palette entries are always sixteen bits wide, whatever the index width.
+    final int paletteShift = samples.format == DecodedSampleFormat.uint8 ? 8 : 0;
+    final double paletteMaximum = photometric != 3
+        ? 1
+        : switch (samples.format) {
+            DecodedSampleFormat.uint8 => 255,
+            DecodedSampleFormat.uint16 => 65535,
+            DecodedSampleFormat.float32 => throw const ImageCodecException(
+              'A floating-point TIFF image cannot use a palette',
+            ),
+          };
+    final Float64List process = Float64List(processChannels);
     for (int pixel = 0; pixel < pixelCount; pixel++) {
       final int source = pixel * samplesPerPixel;
-      final int destination = pixel * 4;
-      int red;
-      int green;
-      int blue;
-      int alpha = 255;
-      switch (photometric) {
-        case 0:
-        case 1:
-          if (samplesPerPixel != 1 && samplesPerPixel != 2) {
-            throw const ImageCodecException('Invalid grayscale TIFF sample count');
-          }
-          final int gray = photometric == 0 ? 255 - samples[source] : samples[source];
-          red = gray;
-          green = gray;
-          blue = gray;
-          if (samplesPerPixel == 2) {
-            alpha = samples[source + 1];
-          }
-        case 2:
-          if (samplesPerPixel != 3 && samplesPerPixel != 4) {
-            throw const ImageCodecException('Invalid RGB TIFF sample count');
-          }
-          red = samples[source];
-          green = samples[source + 1];
-          blue = samples[source + 2];
-          if (samplesPerPixel == 4) {
-            alpha = samples[source + 3];
-          }
-        case 3:
-          if (samplesPerPixel != 1 || colorMap == null || colorMap.length % 3 != 0) {
-            throw const ImageCodecException('Invalid palette TIFF data');
-          }
-          final int paletteLength = colorMap.length ~/ 3;
-          final int paletteIndex = samples[source];
-          if (paletteIndex >= paletteLength) {
-            throw const ImageCodecException('A TIFF palette index is out of range');
-          }
-          red = colorMap[paletteIndex] >>> 8;
-          green = colorMap[paletteLength + paletteIndex] >>> 8;
-          blue = colorMap[paletteLength * 2 + paletteIndex] >>> 8;
-        default:
-          throw ImageCodecException('Unsupported TIFF photometric interpretation: $photometric');
+      final int destination = pixel * outputChannels;
+      if (photometric == 3) {
+        final int paletteIndex = samples.unsignedAt(source);
+        if (paletteIndex >= paletteLength) {
+          throw const ImageCodecException('A TIFF palette index is out of range');
+        }
+        process[0] = (colorMap![paletteIndex] >>> paletteShift) / paletteMaximum;
+        process[1] = (colorMap[paletteLength + paletteIndex] >>> paletteShift) / paletteMaximum;
+        process[2] = (colorMap[paletteLength * 2 + paletteIndex] >>> paletteShift) / paletteMaximum;
+      } else if (photometric == 0 || photometric == 1) {
+        final double storedGray = samples.normalizedAt(source);
+        final double gray = photometric == 0 ? 1 - storedGray : storedGray;
+        process[0] = gray;
+        process[1] = gray;
+        process[2] = gray;
+      } else {
+        for (int channel = 0; channel < processChannels; channel++) {
+          process[channel] = samples.normalizedAt(source + channel);
+        }
       }
-      if (associatedAlpha && alpha != 0 && alpha != 255) {
-        red = _minimum(255, (red * 255 + alpha ~/ 2) ~/ alpha);
-        green = _minimum(255, (green * 255 + alpha ~/ 2) ~/ alpha);
-        blue = _minimum(255, (blue * 255 + alpha ~/ 2) ~/ alpha);
+      final double alpha = hasAlphaSample ? samples.normalizedAt(source + sourceProcessChannels) : 1;
+      if (associatedAlpha && alpha != 0 && alpha != 1) {
+        for (int channel = 0; channel < processChannels; channel++) {
+          process[channel] = process[channel] / alpha;
+        }
       }
-      rgba[destination] = red;
-      rgba[destination + 1] = green;
-      rgba[destination + 2] = blue;
-      rgba[destination + 3] = alpha;
+      for (int channel = 0; channel < processChannels; channel++) {
+        output.writeNormalized(destination + channel, process[channel]);
+      }
+      output.writeNormalized(destination + processChannels, alpha);
     }
-    return rgba;
+    return _TiffRaster(
+      samples: output,
+      colorModel: colorModel,
+      width: width,
+      height: height,
+      orientation: orientation,
+    );
   }
 
-  /// Applies a TIFF orientation and returns correctly dimensioned image data.
-  Image _orient(Uint8List source, int width, int height, int orientation) {
-    final bool swapsAxes = orientation >= 5;
-    final int outputWidth = swapsAxes ? height : width;
-    final int outputHeight = swapsAxes ? width : height;
-    if (orientation == 1) {
-      return Image.fromRgba(width: width, height: height, bytes: source, copy: false);
+  /// Moves samples that already carry their output meaning, without rescaling.
+  ///
+  /// Byte samples get their own loop because they are by far the most common
+  /// TIFF layout and gain from skipping the per-scalar representation switch.
+  void _copyProcessSamples(
+    _TiffSampleBuffer samples,
+    _TiffSampleBuffer output, {
+    required int pixelCount,
+    required int samplesPerPixel,
+    required int outputChannels,
+    required int processChannels,
+    required int sourceProcessChannels,
+    required bool broadcastsGray,
+    required bool hasAlphaSample,
+  }) {
+    if (samples.format == DecodedSampleFormat.uint8) {
+      final Uint8List input = samples.bytes;
+      final Uint8List result = output.bytes;
+      for (int pixel = 0; pixel < pixelCount; pixel++) {
+        final int source = pixel * samplesPerPixel;
+        final int destination = pixel * outputChannels;
+        if (broadcastsGray) {
+          final int gray = input[source];
+          result[destination] = gray;
+          result[destination + 1] = gray;
+          result[destination + 2] = gray;
+        } else {
+          for (int channel = 0; channel < processChannels; channel++) {
+            result[destination + channel] = input[source + channel];
+          }
+        }
+        result[destination + processChannels] = hasAlphaSample ? input[source + sourceProcessChannels] : 255;
+      }
+      return;
     }
-    final Uint8List output = Uint8List(source.length);
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        final (int outputX, int outputY) = switch (orientation) {
-          2 => (width - 1 - x, y),
-          3 => (width - 1 - x, height - 1 - y),
-          4 => (x, height - 1 - y),
-          5 => (y, x),
-          6 => (height - 1 - y, x),
-          7 => (height - 1 - y, width - 1 - x),
-          8 => (y, width - 1 - x),
-          _ => (x, y),
-        };
-        final int sourceOffset = (y * width + x) * 4;
-        final int destinationOffset = (outputY * outputWidth + outputX) * 4;
-        output.setRange(destinationOffset, destinationOffset + 4, source, sourceOffset);
+    for (int pixel = 0; pixel < pixelCount; pixel++) {
+      final int source = pixel * samplesPerPixel;
+      final int destination = pixel * outputChannels;
+      if (broadcastsGray) {
+        output.copyScalar(samples, source, destination);
+        output.copyScalar(samples, source, destination + 1);
+        output.copyScalar(samples, source, destination + 2);
+      } else {
+        for (int channel = 0; channel < processChannels; channel++) {
+          output.copyScalar(samples, source + channel, destination + channel);
+        }
+      }
+      if (hasAlphaSample) {
+        output.copyScalar(samples, source + sourceProcessChannels, destination + processChannels);
+      } else {
+        output.writeOpaque(destination + processChannels);
       }
     }
-    return Image.fromRgba(width: outputWidth, height: outputHeight, bytes: output, copy: false);
+  }
+
+  /// Validates the sample layout and reports whether an alpha sample follows.
+  bool _validateSampleLayout(int photometric, int samplesPerPixel, List<int>? colorMap) {
+    switch (photometric) {
+      case 0:
+      case 1:
+        if (samplesPerPixel != 1 && samplesPerPixel != 2) {
+          throw const ImageCodecException('Invalid grayscale TIFF sample count');
+        }
+        return samplesPerPixel == 2;
+      case 2:
+        if (samplesPerPixel != 3 && samplesPerPixel != 4) {
+          throw const ImageCodecException('Invalid RGB TIFF sample count');
+        }
+        return samplesPerPixel == 4;
+      case 3:
+        if (samplesPerPixel != 1 || colorMap == null || colorMap.length % 3 != 0) {
+          throw const ImageCodecException('Invalid palette TIFF data');
+        }
+        return false;
+      case 5:
+        if (samplesPerPixel != 4 && samplesPerPixel != 5) {
+          throw const ImageCodecException('Invalid CMYK TIFF sample count');
+        }
+        return samplesPerPixel == 5;
+      default:
+        throw ImageCodecException('Unsupported TIFF photometric interpretation: $photometric');
+    }
   }
 
   /// Returns the smaller integer.
@@ -545,4 +789,168 @@ final class _TiffField {
       _ => throw ImageCodecException('TIFF field type $type is not an unsigned integer'),
     };
   }
+}
+
+/// Stores decoded TIFF scalars in their output-native byte representation.
+final class _TiffSampleBuffer {
+  /// Scalar representation shared by every sample.
+  final DecodedSampleFormat format;
+
+  /// Mutable little-endian sample storage.
+  final Uint8List bytes;
+
+  /// Typed accessor over [bytes].
+  late final ByteData _data = ByteData.sublistView(bytes);
+
+  /// Allocates [length] scalar values.
+  _TiffSampleBuffer(int length, this.format) : bytes = Uint8List(length * format.bytesPerChannel);
+
+  /// Stores one unsigned sample without rescaling it.
+  void writeUnsigned(int index, int value) {
+    final int offset = index * format.bytesPerChannel;
+    switch (format) {
+      case DecodedSampleFormat.uint8:
+        bytes[offset] = value;
+      case DecodedSampleFormat.uint16:
+        _data.setUint16(offset, value, Endian.little);
+      case DecodedSampleFormat.float32:
+        throw const ImageCodecException(
+          'An integer TIFF sample cannot be written as float implicitly',
+        );
+    }
+  }
+
+  /// Stores one IEEE-754 sample without normalizing it.
+  void writeFloat(int index, double value) {
+    if (format != DecodedSampleFormat.float32) {
+      throw const ImageCodecException(
+        'A floating-point TIFF sample needs float output storage',
+      );
+    }
+    _data.setFloat32(
+      index * format.bytesPerChannel,
+      value.isFinite ? value : 0,
+      Endian.little,
+    );
+  }
+
+  /// Copies one scalar from [source], which must share this representation.
+  void copyScalar(_TiffSampleBuffer source, int sourceIndex, int index) {
+    final int channelBytes = format.bytesPerChannel;
+    final int from = sourceIndex * channelBytes;
+    final int to = index * channelBytes;
+    for (int offset = 0; offset < channelBytes; offset++) {
+      bytes[to + offset] = source.bytes[from + offset];
+    }
+  }
+
+  /// Stores the fully opaque value of this representation.
+  void writeOpaque(int index) {
+    final int offset = index * format.bytesPerChannel;
+    switch (format) {
+      case DecodedSampleFormat.uint8:
+        bytes[offset] = 255;
+      case DecodedSampleFormat.uint16:
+        _data.setUint16(offset, 65535, Endian.little);
+      case DecodedSampleFormat.float32:
+        _data.setFloat32(offset, 1, Endian.little);
+    }
+  }
+
+  /// Reads an integer sample for palette lookup.
+  int unsignedAt(int index) {
+    final int offset = index * format.bytesPerChannel;
+    return switch (format) {
+      DecodedSampleFormat.uint8 => bytes[offset],
+      DecodedSampleFormat.uint16 => _data.getUint16(offset, Endian.little),
+      DecodedSampleFormat.float32 => throw const ImageCodecException(
+        'A floating-point TIFF sample cannot index a palette',
+      ),
+    };
+  }
+
+  /// Reads one unsigned-normalized or floating-point scalar.
+  double normalizedAt(int index) {
+    final int offset = index * format.bytesPerChannel;
+    return switch (format) {
+      DecodedSampleFormat.uint8 => bytes[offset] / 255,
+      DecodedSampleFormat.uint16 => _data.getUint16(offset, Endian.little) / 65535,
+      DecodedSampleFormat.float32 => _data.getFloat32(offset, Endian.little),
+    };
+  }
+
+  /// Stores one normalized value, preserving finite float values outside SDR.
+  void writeNormalized(int index, double value) {
+    final double finite = value.isFinite ? value : 0;
+    final int offset = index * format.bytesPerChannel;
+    switch (format) {
+      case DecodedSampleFormat.uint8:
+        bytes[offset] = (finite.clamp(0, 1) * 255).round();
+      case DecodedSampleFormat.uint16:
+        _data.setUint16(
+          offset,
+          (finite.clamp(0, 1) * 65535).round(),
+          Endian.little,
+        );
+      case DecodedSampleFormat.float32:
+        _data.setFloat32(offset, finite, Endian.little);
+    }
+  }
+}
+
+/// Holds decoded TIFF samples until they reach their final container.
+///
+/// Orientation is deferred so that a caller still owning the buffer can hand
+/// it to an [Image] instead of copying an already immutable [DecodedImage].
+final class _TiffRaster {
+  /// Decoded process-plus-alpha samples in stream order.
+  final _TiffSampleBuffer samples;
+
+  /// Process colour model represented by [samples].
+  final DecodedColorModel colorModel;
+
+  /// Width before applying [orientation].
+  final int width;
+
+  /// Height before applying [orientation].
+  final int height;
+
+  /// Encoded display orientation, from one to eight.
+  final int orientation;
+
+  /// Creates one decoded but still unoriented TIFF raster.
+  const _TiffRaster({
+    required this.samples,
+    required this.colorModel,
+    required this.width,
+    required this.height,
+    required this.orientation,
+  });
+
+  /// Width after applying [orientation].
+  int get orientedWidth => orientation >= 5 ? height : width;
+
+  /// Height after applying [orientation].
+  int get orientedHeight => orientation >= 5 ? width : height;
+
+  /// Returns oriented samples, reusing the buffer when no pixel moves.
+  Uint8List orientedBytes() => orientation == 1
+      ? samples.bytes
+      : DecodedImage.orientPixels(
+          samples.bytes,
+          width: width,
+          height: height,
+          bytesPerPixel: (colorModel.processChannelCount + 1) * samples.format.bytesPerChannel,
+          orientation: orientation,
+        );
+
+  /// Wraps the oriented samples as an immutable decoded raster.
+  DecodedImage toDecodedImage() => DecodedImage(
+    width: orientedWidth,
+    height: orientedHeight,
+    colorModel: colorModel,
+    sampleFormat: samples.format,
+    bytes: orientedBytes(),
+    copy: false,
+  );
 }
