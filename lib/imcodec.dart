@@ -12,9 +12,11 @@ export 'src/codecs/raster_codec.dart' show ParallelRasterCodec, ParallelRasterEn
 export 'src/codecs/tga.dart' show TgaCodec, TgaDecoder, TgaEncoder;
 export 'src/codecs/tiff.dart' show TiffCodec, TiffCompression, TiffDecoder, TiffEncoder;
 export 'src/codecs/webp.dart' show WebPCodec, WebPDecoder, WebPEffort, WebPEncoder;
+export 'src/decoded_image.dart';
 export 'src/decoder.dart';
 export 'src/encoder.dart';
 export 'src/image.dart';
 export 'src/image_codec_exception.dart';
 export 'src/image_format.dart';
+export 'src/image_metadata.dart';
 export 'src/parallel_runner.dart';

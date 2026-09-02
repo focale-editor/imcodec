@@ -205,6 +205,56 @@ Image _renderJpeg(_JpegData jpeg) {
   return image;
 }
 
+/// Retains Adobe CMYK or YCCK JPEG components as straight CMYK plus alpha.
+DecodedImage _renderJpegCmykData(_JpegData jpeg) {
+  final _JpegAdobeMarker? adobeMarker = jpeg.adobeMarker;
+  if (adobeMarker == null) {
+    throw const ImageCodecException(
+      'Four-component JPEG data requires an Adobe marker',
+    );
+  }
+  final int width = jpeg.width;
+  final int height = jpeg.height;
+  final Uint8List first = jpeg.components[0].plane;
+  final Uint8List second = jpeg.components[1].plane;
+  final Uint8List third = jpeg.components[2].plane;
+  final Uint8List fourth = jpeg.components[3].plane;
+  final Uint8List cmyka = Uint8List(width * height * 5);
+  final bool colorTransform = adobeMarker.transformCode != 0;
+  int destination = 0;
+  for (int sample = 0; sample < width * height; sample++) {
+    int cyan;
+    int magenta;
+    int yellow;
+    if (colorTransform) {
+      final int scaledLuminance = first[sample] << 8;
+      final int blueDifference = second[sample] - 128;
+      final int redDifference = third[sample] - 128;
+      cyan = _dctClip[_dctClipOffset + ((scaledLuminance + 359 * redDifference + 128) >> 8)];
+      magenta = _dctClip[_dctClipOffset + ((scaledLuminance - 88 * blueDifference - 183 * redDifference + 128) >> 8)];
+      yellow = _dctClip[_dctClipOffset + ((scaledLuminance + 454 * blueDifference + 128) >> 8)];
+    } else {
+      cyan = 255 - first[sample];
+      magenta = 255 - second[sample];
+      yellow = 255 - third[sample];
+    }
+    cmyka[destination] = cyan;
+    cmyka[destination + 1] = magenta;
+    cmyka[destination + 2] = yellow;
+    cmyka[destination + 3] = 255 - fourth[sample];
+    cmyka[destination + 4] = 255;
+    destination += 5;
+  }
+  return DecodedImage(
+    width: width,
+    height: height,
+    colorModel: DecodedColorModel.cmyk,
+    sampleFormat: DecodedSampleFormat.uint8,
+    bytes: cmyka,
+    copy: false,
+  ).oriented(jpeg.orientation);
+}
+
 /// Converts component samples to opaque RGBA pixels in stream order.
 Uint8List _renderComponents(_JpegData jpeg, int width, int height) {
   final Uint8List rgba = Uint8List(width * height * 4);

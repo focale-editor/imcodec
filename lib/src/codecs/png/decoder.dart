@@ -23,6 +23,33 @@ final class PngDecoder extends RasterDecoder {
   /// Decodes the default PNG image to straight-alpha RGBA pixels.
   @override
   Image decode(Uint8List bytes, {required int maxPixels}) {
+    final (_PngHeader header, DecodedSampleFormat sampleFormat, Uint8List samples) = _decodeSamples(bytes, maxPixels: maxPixels);
+    if (sampleFormat != DecodedSampleFormat.uint8) {
+      return _wrapSamples(header, sampleFormat, samples).toImage();
+    }
+    // The samples were allocated here and are handed straight to the image,
+    // which skips the defensive copy an immutable raster would require.
+    return Image.fromRgba(width: header.width, height: header.height, bytes: samples, copy: false);
+  }
+
+  /// Decodes PNG pixels without reducing sixteen-bit channel samples.
+  DecodedImage decodeData(Uint8List bytes, {required int maxPixels}) {
+    final (_PngHeader header, DecodedSampleFormat sampleFormat, Uint8List samples) = _decodeSamples(bytes, maxPixels: maxPixels);
+    return _wrapSamples(header, sampleFormat, samples);
+  }
+
+  /// Wraps decoded samples as an immutable straight-alpha RGBA raster.
+  DecodedImage _wrapSamples(_PngHeader header, DecodedSampleFormat sampleFormat, Uint8List samples) => DecodedImage(
+    width: header.width,
+    height: header.height,
+    colorModel: DecodedColorModel.rgb,
+    sampleFormat: sampleFormat,
+    bytes: samples,
+    copy: false,
+  );
+
+  /// Inflates and unfilters PNG pixels into a freshly owned sample buffer.
+  (_PngHeader, DecodedSampleFormat, Uint8List) _decodeSamples(Uint8List bytes, {required int maxPixels}) {
     _validateSignature(bytes);
     final ByteData byteData = ByteData.sublistView(bytes);
     final BytesBuilder compressedData = BytesBuilder(copy: false);
@@ -136,7 +163,10 @@ final class PngDecoder extends RasterDecoder {
     if (inflated.length != expectedLength) {
       throw ImageCodecException('Expected $expectedLength inflated PNG bytes, received ${inflated.length}');
     }
-    final Uint8List rgba = Uint8List(header.width * header.height * 4);
+    final DecodedSampleFormat sampleFormat = header.bitDepth == 16 ? DecodedSampleFormat.uint16 : DecodedSampleFormat.uint8;
+    final Uint8List rgba = Uint8List(
+      header.width * header.height * 4 * sampleFormat.bytesPerChannel,
+    );
     _decodePasses(
       inflated,
       rgba,
@@ -146,7 +176,7 @@ final class PngDecoder extends RasterDecoder {
       transparentGray,
       transparentColor,
     );
-    return Image.fromRgba(width: header.width, height: header.height, bytes: rgba, copy: false);
+    return (header, sampleFormat, rgba);
   }
 
   /// Verifies the fixed PNG signature.
@@ -349,6 +379,20 @@ final class PngDecoder extends RasterDecoder {
     int? transparentGray,
     _PngTransparentColor? transparentColor,
   ) {
+    if (header.bitDepth == 16) {
+      _writeSixteenBitRow(
+        row,
+        rgba,
+        header,
+        passWidth,
+        startX,
+        destinationY,
+        stepX,
+        transparentGray,
+        transparentColor,
+      );
+      return;
+    }
     if (header.bitDepth == 8 && stepX == 1 && startX == 0) {
       final int destination = destinationY * header.width * 4;
       if (header.colorType == 6) {
@@ -411,6 +455,62 @@ final class PngDecoder extends RasterDecoder {
         default:
           throw const ImageCodecException('Unsupported PNG color type');
       }
+    }
+  }
+
+  /// Writes one sixteen-bit scanline as little-endian straight RGBA.
+  void _writeSixteenBitRow(
+    Uint8List row,
+    Uint8List rgba,
+    _PngHeader header,
+    int passWidth,
+    int startX,
+    int destinationY,
+    int stepX,
+    int? transparentGray,
+    _PngTransparentColor? transparentColor,
+  ) {
+    final ByteData output = ByteData.sublistView(rgba);
+    int sample = 0;
+    for (int passX = 0; passX < passWidth; passX++) {
+      final int destinationX = startX + passX * stepX;
+      final int destination = (destinationY * header.width + destinationX) * 8;
+      int red;
+      int green;
+      int blue;
+      int alpha;
+      switch (header.colorType) {
+        case 0:
+          final int gray = _readSample(row, sample++, 16);
+          red = gray;
+          green = gray;
+          blue = gray;
+          alpha = gray == transparentGray ? 0 : 65535;
+        case 2:
+          red = _readSample(row, sample++, 16);
+          green = _readSample(row, sample++, 16);
+          blue = _readSample(row, sample++, 16);
+          alpha = transparentColor != null && transparentColor.matches(red, green, blue) ? 0 : 65535;
+        case 4:
+          final int gray = _readSample(row, sample++, 16);
+          red = gray;
+          green = gray;
+          blue = gray;
+          alpha = _readSample(row, sample++, 16);
+        case 6:
+          red = _readSample(row, sample++, 16);
+          green = _readSample(row, sample++, 16);
+          blue = _readSample(row, sample++, 16);
+          alpha = _readSample(row, sample++, 16);
+        default:
+          throw const ImageCodecException(
+            'Unsupported sixteen-bit PNG color type',
+          );
+      }
+      output.setUint16(destination, red, Endian.little);
+      output.setUint16(destination + 2, green, Endian.little);
+      output.setUint16(destination + 4, blue, Endian.little);
+      output.setUint16(destination + 6, alpha, Endian.little);
     }
   }
 

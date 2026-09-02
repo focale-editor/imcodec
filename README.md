@@ -65,6 +65,22 @@ final img.Image decoded = img.decodeImage(encodedBytes);
 final img.Image png = img.decodePng(pngBytes);
 ```
 
+Editors that must retain authored precision or process channels can use the
+metadata-aware API. It keeps PNG/TIFF 16-bit samples, TIFF float32 samples,
+CMYK JPEG/TIFF channels, and embedded ICC payloads without changing the small
+RGBA8 `Image` API used by existing callers:
+
+```dart
+final img.DecodedImageMetadata? metadata = img.inspectImage(encodedBytes);
+if (metadata?.requiresExactDecoding ?? false) {
+  final img.DecodedImage decoded = img.decodeImageData(encodedBytes);
+  // decoded.bytes contains straight RGB+A or CMYK+A samples in native depth.
+}
+```
+
+Unsigned 16-bit and float32 samples in `DecodedImage.bytes` are little-endian.
+`inspectImage` bounds ICC decompression through `maxIccProfileBytes`.
+
 ## Spreading encoding across isolates
 
 `encodeWith` is part of `RasterCodec` and `RasterEncoder`, so every codec
@@ -96,6 +112,12 @@ encode inline.
 
 `decodeImage` defaults to a 100-million-pixel allocation limit. Supply a lower
 `maxPixels` value when input comes from an untrusted source.
+
+`maxPixels` alone no longer bounds memory once samples are kept natively: a
+CMYK float32 pixel needs 20 bytes where an RGBA8 pixel needs 4. The
+metadata-aware functions therefore also take `maxDecodedBytes`, which defaults
+to the 400 MB an RGBA8 image of `defaultMaxPixels` pixels would occupy, and is
+checked from container metadata before any pixel buffer is allocated.
 
 The format classes can also be used through `dart:convert`:
 

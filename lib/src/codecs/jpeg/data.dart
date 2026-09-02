@@ -200,14 +200,14 @@ final class _JpegData {
 
   /// Reads the Adobe marker used by four-component JPEG images.
   void _readAdobeMarker(_JpegInput block) {
-    if (block.length < 13 || block[0] != 0x41 || block[1] != 0x64 || block[2] != 0x6f || block[3] != 0x62 || block[4] != 0x65 || block[5] != 0) {
+    if (block.length < 12 || block[0] != 0x41 || block[1] != 0x64 || block[2] != 0x6f || block[3] != 0x62 || block[4] != 0x65) {
       return;
     }
     adobeMarker = _JpegAdobeMarker(
-      version: (block[6] << 8) | block[7],
-      flags0: (block[8] << 8) | block[9],
-      flags1: (block[10] << 8) | block[11],
-      transformCode: block[12],
+      version: (block[5] << 8) | block[6],
+      flags0: (block[7] << 8) | block[8],
+      flags1: (block[9] << 8) | block[10],
+      transformCode: block[11],
     );
   }
 

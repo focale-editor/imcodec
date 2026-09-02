@@ -20,7 +20,8 @@ returns the first visible frame.
 PNG is encoded as non-interlaced 8-bit RGBA with adaptive row filters. The
 decoder accepts standard grayscale, true-color, indexed, grayscale-alpha,
 and RGBA images, including Adam7 interlacing and 1- to 16-bit samples where
-the color type permits them.
+the color type permits them. `decodeImageData` retains exact unsigned 16-bit
+samples, and `inspectImage` extracts bounded `iCCP` profile data.
 
 ## JPEG
 
@@ -28,7 +29,9 @@ JPEG output is baseline JPEG with selectable 4:4:4 or 4:2:0 chroma sampling.
 The decoder accepts baseline, extended sequential, and progressive Huffman
 JPEG data at any sampling ratio the format allows, and expands half-resolution
 chroma with the same triangle filter reference decoders use. Transparency is
-composited against white during encoding.
+composited against white during encoding. The metadata-aware decoder retains
+Adobe CMYK or YCCK files as CMYK+A instead of flattening them to RGB, and
+reassembles ordered APP2 ICC segments.
 
 ## JPEG XL
 
@@ -53,12 +56,15 @@ confined to a single scanline as the format requires.
 
 ## TIFF
 
-TIFF import supports little- and big-endian baseline files; RGB, RGBA,
-grayscale, and palette pixels at 1, 2, 4, 8, or 16 bits per sample; strips;
-all eight orientations; horizontal prediction; and uncompressed, PackBits, or
-LZW data. Planar, tiled, and JPEG-compressed files are not currently
-supported. Output is little-endian, chunky, eight-bit RGBA using PackBits by
-default; pass `TiffCompression.none` for uncompressed output.
+TIFF import supports little- and big-endian baseline files; RGB, RGBA, CMYK,
+grayscale, and palette pixels at 1, 2, 4, 8, or 16 unsigned bits per sample;
+32-bit floating-point RGB/CMYK data; strips; all eight orientations;
+horizontal prediction for 8- and 16-bit integers; and uncompressed, PackBits,
+or LZW data. `decodeImageData` retains 16-bit and float32 samples, process CMYK
+channels, and a bounded ICC tag. Planar, tiled, signed, double-precision, and
+JPEG-compressed files are not currently supported. Output is little-endian,
+chunky, eight-bit RGBA using PackBits by default; pass `TiffCompression.none`
+for uncompressed output.
 
 ## WebP
 
@@ -67,4 +73,4 @@ WebP output supports lossless VP8L and lossy intra-frame VP8. Call
 through 100 for lossy output. `WebPEffort` trades encoding
 speed against prediction and coefficient search. Alpha remains lossless in a
 separate WebP alpha chunk. The decoder accepts VP8, VP8 with alpha, VP8L, and
-the first animation frame.
+the first animation frame. `inspectImage` also returns a top-level ICCP chunk.
