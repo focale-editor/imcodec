@@ -1,5 +1,11 @@
 # 📰 Imcodec changelog
 
+## v0.3.2
+Released on September 2, 2026.
+
+* **FEAT**: Added metadata-aware decoding that preserves ICC profiles, CMYK process channels, unsigned 16-bit samples, and TIFF float32 samples. ([#2837b73](https://github.com/focale-editor/imcodec/commit/2837b73))
+* **FIX**: Fixed Adobe APP14 marker parsing, which required a padding byte the segment does not carry. ([#6d58878](https://github.com/focale-editor/imcodec/commit/6d58878))
+
 ## v0.3.1
 Released on August 29, 2026.
 
