@@ -5,6 +5,7 @@ import 'package:imcodec/src/codecs/gif.dart';
 import 'package:imcodec/src/codecs/gif/indexed_color.dart';
 import 'package:imcodec/src/codecs/jpeg.dart';
 import 'package:imcodec/src/codecs/jpeg_xl.dart';
+import 'package:imcodec/src/codecs/open_exr.dart';
 import 'package:imcodec/src/codecs/png.dart';
 import 'package:imcodec/src/codecs/qoi.dart';
 import 'package:imcodec/src/codecs/tga.dart';
@@ -33,6 +34,7 @@ Uint8List encodeImage(
   ImageFormat.gif => encodeGif(image),
   ImageFormat.jpeg => encodeJpg(image, quality: quality),
   ImageFormat.jpegXl => encodeJpegXl(image, effort: jpegXlEffort),
+  ImageFormat.openExr => encodeOpenExr(image),
   ImageFormat.png => encodePng(image, level: pngLevel),
   ImageFormat.qoi => encodeQoi(image),
   ImageFormat.tga => encodeTga(image),
@@ -65,6 +67,27 @@ Uint8List encodeJxl(
   Image image, {
   JpegXlEffort effort = JpegXlEffort.balanced,
 }) => encodeJpegXl(image, effort: effort);
+
+/// Encodes [image] as a scene-linear half-float OpenEXR image.
+Uint8List encodeOpenExr(
+  Image image, {
+  OpenExrCompression compression = OpenExrCompression.zip,
+}) => OpenExrCodec(compression: compression).encode(image);
+
+/// Encodes straight extended-sRGB float samples as half-float OpenEXR.
+///
+/// Values outside the display range are preserved when representable as an
+/// IEEE-754 binary16 sample. Alpha is constrained to zero through one.
+Uint8List encodeOpenExrFloat32Rgba({
+  required int width,
+  required int height,
+  required Float32List pixels,
+  OpenExrCompression compression = OpenExrCompression.zip,
+}) => OpenExrEncoder(compression: compression).encodeFloat32Rgba(
+  width: width,
+  height: height,
+  pixels: pixels,
+);
 
 /// Encodes [image] as lossless JPEG XL Modular data, spreading the work with
 /// [runner].
@@ -187,6 +210,7 @@ Future<Uint8List> encodeImageWith(
   ImageFormat.gif => GifCodec().encode(image),
   ImageFormat.jpeg => await JpegCodec(quality: quality).encodeWith(runner, image),
   ImageFormat.jpegXl => await JpegXlCodec(effort: jpegXlEffort).encodeWith(runner, image),
+  ImageFormat.openExr => encodeOpenExr(image),
   ImageFormat.png => await PngCodec(level: pngLevel).encodeWith(runner, image),
   ImageFormat.qoi => const QoiCodec().encode(image),
   ImageFormat.tga => TgaCodec().encode(image),

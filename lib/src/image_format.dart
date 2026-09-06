@@ -14,6 +14,9 @@ enum ImageFormat {
   /// JPEG XL image.
   jpegXl,
 
+  /// OpenEXR high-dynamic-range image.
+  openExr,
+
   /// Portable Network Graphics image.
   png,
 
@@ -58,6 +61,9 @@ enum ImageFormat {
             bytes[10] == 0x87 &&
             bytes[11] == 0x0a)) {
       return ImageFormat.jpegXl;
+    }
+    if (bytes.length >= 4 && bytes[0] == 0x76 && bytes[1] == 0x2f && bytes[2] == 0x31 && bytes[3] == 0x01) {
+      return ImageFormat.openExr;
     }
     if (bytes.length >= 12 && bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 && bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50) {
       return ImageFormat.webp;

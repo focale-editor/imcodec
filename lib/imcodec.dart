@@ -6,6 +6,7 @@ export 'src/codecs/gif.dart' show GifCodec, GifDecoder, GifEncoder;
 export 'src/codecs/gif/indexed_color.dart' show IndexedColorOptions;
 export 'src/codecs/jpeg.dart' show JpegChroma, JpegCodec, JpegDecoder, JpegEncoder;
 export 'src/codecs/jpeg_xl.dart' show JpegXlCodec, JpegXlDecoder, JpegXlEffort, JpegXlEncoder;
+export 'src/codecs/open_exr.dart' show OpenExrCodec, OpenExrCompression, OpenExrDecoder, OpenExrEncoder, inspectOpenExr;
 export 'src/codecs/png.dart' show PngCodec, PngDecoder, PngEncoder;
 export 'src/codecs/qoi.dart' show QoiCodec, QoiDecoder, QoiEncoder;
 export 'src/codecs/raster_codec.dart' show ParallelRasterCodec, ParallelRasterEncoder, RasterCodec, RasterDecoder, RasterEncoder, defaultMaxPixels;

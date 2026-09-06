@@ -4,6 +4,7 @@ import 'package:imcodec/src/codecs/bmp.dart';
 import 'package:imcodec/src/codecs/gif.dart';
 import 'package:imcodec/src/codecs/jpeg.dart';
 import 'package:imcodec/src/codecs/jpeg_xl.dart';
+import 'package:imcodec/src/codecs/open_exr.dart';
 import 'package:imcodec/src/codecs/png.dart';
 import 'package:imcodec/src/codecs/qoi.dart';
 import 'package:imcodec/src/codecs/raster_codec.dart';
@@ -28,6 +29,7 @@ Image decodeImage(Uint8List bytes, {int maxPixels = defaultMaxPixels}) {
     ImageFormat.gif => decodeGif(bytes, maxPixels: maxPixels),
     ImageFormat.jpeg => decodeJpg(bytes, maxPixels: maxPixels),
     ImageFormat.jpegXl => decodeJpegXl(bytes, maxPixels: maxPixels),
+    ImageFormat.openExr => decodeOpenExr(bytes, maxPixels: maxPixels),
     ImageFormat.png => decodePng(bytes, maxPixels: maxPixels),
     ImageFormat.qoi => decodeQoi(bytes, maxPixels: maxPixels),
     ImageFormat.tga => decodeTga(bytes, maxPixels: maxPixels),
@@ -79,6 +81,19 @@ DecodedImage decodeTiffData(
   int maxIccProfileBytes = defaultMaxIccProfileBytes,
 }) => _decodeData(bytes, ImageFormat.tiff, maxPixels, maxDecodedBytes, maxIccProfileBytes);
 
+/// Decodes OpenEXR data while preserving floating-point HDR samples.
+DecodedImage decodeOpenExrData(
+  Uint8List bytes, {
+  int maxPixels = defaultMaxPixels,
+  int maxDecodedBytes = defaultMaxDecodedBytes,
+}) => _decodeData(
+  bytes,
+  ImageFormat.openExr,
+  maxPixels,
+  maxDecodedBytes,
+  defaultMaxIccProfileBytes,
+);
+
 /// Decodes native samples, rejecting anything but [expected] when it is given.
 DecodedImage _decodeData(
   Uint8List bytes,
@@ -120,6 +135,11 @@ DecodedImage _decodeData(
     ImageFormat.tiff => const TiffDecoder().decodeData(
       bytes,
       maxPixels: maxPixels,
+    ),
+    ImageFormat.openExr => const OpenExrDecoder().decodeData(
+      bytes,
+      maxPixels: maxPixels,
+      maxDecodedBytes: maxDecodedBytes,
     ),
     _ => DecodedImage.fromImage(
       decodeImage(bytes, maxPixels: maxPixels),
@@ -173,6 +193,9 @@ Image decodeJpegXl(Uint8List bytes, {int maxPixels = defaultMaxPixels}) => JpegX
 
 /// Decodes the first visible frame of a JPEG XL image to straight RGBA.
 Image decodeJxl(Uint8List bytes, {int maxPixels = defaultMaxPixels}) => decodeJpegXl(bytes, maxPixels: maxPixels);
+
+/// Decodes one single-part OpenEXR scan-line image to straight RGBA8.
+Image decodeOpenExr(Uint8List bytes, {int maxPixels = defaultMaxPixels}) => OpenExrCodec(maxPixels: maxPixels).decode(bytes);
 
 /// Decodes a Quite OK Image to straight RGBA.
 Image decodeQoi(Uint8List bytes, {int maxPixels = defaultMaxPixels}) => QoiCodec(maxPixels: maxPixels).decode(bytes);

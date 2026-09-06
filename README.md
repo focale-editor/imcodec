@@ -1,7 +1,7 @@
 # Imcodec
 
-Imcodec is a focused Flutter image codec for BMP, GIF, JPEG, JPEG XL, PNG,
-QOI, TGA, TIFF, and WebP. It keeps a small straight-alpha RGBA image model and
+Imcodec is a focused Flutter image codec for BMP, GIF, JPEG, JPEG XL, OpenEXR,
+PNG, QOI, TGA, TIFF, and WebP. It keeps a small straight-alpha RGBA image model and
 exposes synchronous pure-Dart encoders and decoders, which makes expensive
 conversions suitable for `Isolate.run`.
 
@@ -50,6 +50,7 @@ final Uint8List gif = img.encodeGif(image); // one palette-indexed frame
 final Uint8List jpeg = img.encodeJpg(image, quality: 90);
 final Uint8List jpegXl = img.encodeJpegXl(image); // lossless Modular
 final Uint8List quickJxl = img.encodeJpegXl(image, effort: img.JpegXlEffort.fast);
+final Uint8List openExr = img.encodeOpenExr(image); // scene-linear half float
 final Uint8List webp = img.encodeWebP(image); // lossless VP8L
 final Uint8List lossyWebP = img.encodeWebP(image, quality: 82);
 final Uint8List bmp = img.encodeBmp(image);
@@ -66,8 +67,8 @@ final img.Image png = img.decodePng(pngBytes);
 ```
 
 Editors that must retain authored precision or process channels can use the
-metadata-aware API. It keeps PNG/TIFF 16-bit samples, TIFF float32 samples,
-CMYK JPEG/TIFF channels, and embedded ICC payloads without changing the small
+metadata-aware API. It keeps PNG/TIFF 16-bit samples, TIFF/OpenEXR float32
+samples, CMYK JPEG/TIFF channels, and embedded ICC payloads without changing the small
 RGBA8 `Image` API used by existing callers:
 
 ```dart
@@ -80,6 +81,10 @@ if (metadata?.requiresExactDecoding ?? false) {
 
 Unsigned 16-bit and float32 samples in `DecodedImage.bytes` are little-endian.
 `inspectImage` bounds ICC decompression through `maxIccProfileBytes`.
+OpenEXR decoding additionally bounds its floating-point output and expanded
+scan-line working blocks through `maxDecodedBytes`. Applications with an
+existing extended-sRGB float buffer can call `encodeOpenExrFloat32Rgba` to
+retain values above display white.
 
 ## Spreading encoding across isolates
 

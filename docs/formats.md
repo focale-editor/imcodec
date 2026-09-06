@@ -42,6 +42,30 @@ RGBA and preserves hidden RGB values. `JpegXlEffort` trades encoding speed
 against output size: `fast` codes the image once, `balanced` (the default)
 picks the better predictor first, and `maximum` searches every candidate.
 
+## OpenEXR
+
+OpenEXR import reads one scan-line image part with RGB, RGBA, or luminance
+channels. Half, float, and unsigned-integer channel samples are returned as
+straight float32 RGBA by `decodeOpenExrData`; extra channels are skipped without
+allocating planes for them. Authored chromaticities are adapted to sRGB
+primaries, then encoded with the extended sRGB transfer function so highlights
+above one remain representable in the shared `DecodedImage` contract.
+
+The decoder supports uncompressed, RLE, ZIPS, and ZIP scan-line blocks in
+increasing-Y order. It rejects decreasing/random line order, tiled, deep,
+multipart, subsampled-channel, PIZ, PXR24, B44/B44A, and DWAA/DWAB inputs
+explicitly. Pixel count and decoded-byte limits are checked before the float
+output is allocated. Finite negative colour values and highlights above one
+remain representable. Expanded scan-line blocks, including arbitrary extra
+channels, share the same byte budget so hostile headers cannot request an
+unbounded temporary buffer.
+
+Output is a single-part scan-line file with half-float A, B, G, and R channels,
+sRGB chromaticities, and ZIP compression by default. `OpenExrCompression`
+also exposes uncompressed and ZIPS output. `encodeOpenExrFloat32Rgba` accepts
+straight extended-sRGB values and converts colour channels to scene-linear
+light without clipping highlights; alpha is limited to zero through one.
+
 ## QOI
 
 QOI is encoded and decoded losslessly according to the Quite OK Image

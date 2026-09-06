@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/open_exr.dart';
 import 'package:imcodec/src/decoded_image.dart';
 import 'package:imcodec/src/image_codec_exception.dart';
 import 'package:imcodec/src/image_format.dart';
@@ -28,6 +29,7 @@ DecodedImageMetadata? inspectImage(
   return switch (ImageFormat.sniff(bytes)) {
     ImageFormat.png => _inspectPng(bytes, maxIccProfileBytes),
     ImageFormat.jpeg => _inspectJpeg(bytes, maxIccProfileBytes),
+    ImageFormat.openExr => inspectOpenExr(bytes),
     ImageFormat.tiff => _inspectTiff(bytes, maxIccProfileBytes),
     ImageFormat.webp => _inspectWebP(bytes, maxIccProfileBytes),
     _ => null,

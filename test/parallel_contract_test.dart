@@ -18,6 +18,7 @@ void main() {
     ImageFormat.gif: const GifCodec.customCoders(),
     ImageFormat.jpeg: JpegCodec(),
     ImageFormat.jpegXl: JpegXlCodec(effort: JpegXlEffort.fast),
+    ImageFormat.openExr: OpenExrCodec(),
     ImageFormat.png: PngCodec(),
     ImageFormat.qoi: const QoiCodec(),
     ImageFormat.tga: TgaCodec(),
