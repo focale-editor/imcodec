@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.3.3
+Released on September 6, 2026.
+
+* **FEAT**: Added bounded pure-Dart OpenEXR scan-line import for uncompressed, RLE, ZIPS, and ZIP blocks, plus half-float uncompressed/ZIPS/ZIP export. ([#06d1983](https://github.com/focale-editor/imcodec/commit/06d1983))
+
 ## v0.3.2
 Released on September 2, 2026.
 
