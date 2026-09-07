@@ -152,6 +152,91 @@ void main() {
       );
     });
 
+    test('inspect bounded descriptive metadata in PNG containers', () {
+      final Uint8List exif = Uint8List.fromList(<int>[0x49, 0x49, 0x2a, 0]);
+      final Uint8List xmp = Uint8List.fromList(utf8.encode('<x:xmpmeta />'));
+      final Uint8List encoded = _buildRgba16Png(
+        red: 1,
+        green: 2,
+        blue: 3,
+        alpha: 0xffff,
+        iccProfile: Uint8List.fromList(<int>[1, 2, 3]),
+        exifMetadata: exif,
+        xmpMetadata: xmp,
+      );
+
+      final DecodedImageMetadata metadata = inspectImage(encoded)!;
+
+      expect(metadata.exifMetadata, orderedEquals(exif));
+      expect(metadata.xmpMetadata, orderedEquals(xmp));
+      expect(
+        () => inspectImage(encoded, maxDescriptiveMetadataBytes: 3),
+        throwsA(isA<ImageCodecException>()),
+      );
+    });
+
+    test('inspect EXIF, XMP, and IPTC resources in JPEG containers', () {
+      final Uint8List exif = Uint8List.fromList(<int>[
+        ...'Exif\u0000\u0000'.codeUnits,
+        0x49,
+        0x49,
+      ]);
+      final Uint8List xmp = Uint8List.fromList(utf8.encode('<rdf:RDF />'));
+      final Uint8List iptc = Uint8List.fromList(<int>[0x1c, 2, 5, 0, 1, 65]);
+      final Uint8List encoded = _buildJpegMetadata(
+        width: 7,
+        height: 5,
+        componentCount: 3,
+        iccProfile: Uint8List.fromList(<int>[1, 2]),
+        exifMetadata: exif,
+        xmpMetadata: xmp,
+        iptcMetadata: iptc,
+      );
+
+      final DecodedImageMetadata metadata = inspectImage(encoded)!;
+
+      expect(metadata.exifMetadata, orderedEquals(exif));
+      expect(metadata.xmpMetadata, orderedEquals(xmp));
+      expect(metadata.iptcMetadata, orderedEquals(iptc));
+    });
+
+    test('inspect EXIF and XMP chunks in WebP containers', () {
+      final Uint8List exif = Uint8List.fromList(<int>[1, 3, 5]);
+      final Uint8List xmp = Uint8List.fromList(utf8.encode('<x:xmpmeta />'));
+      final Uint8List encoded = _buildWebPMetadata(
+        width: 13,
+        height: 9,
+        iccProfile: Uint8List.fromList(<int>[2, 4, 6]),
+        exifMetadata: exif,
+        xmpMetadata: xmp,
+      );
+
+      final DecodedImageMetadata metadata = inspectImage(encoded)!;
+
+      expect(metadata.exifMetadata, orderedEquals(exif));
+      expect(metadata.xmpMetadata, orderedEquals(xmp));
+      expect(
+        () => metadata.xmpMetadata![0] = 0,
+        throwsUnsupportedError,
+      );
+    });
+
+    test('inspect IPTC and XMP tags in TIFF containers', () {
+      final Uint8List iptc = Uint8List.fromList(<int>[1, 2, 3, 4, 5]);
+      final Uint8List xmp = Uint8List.fromList(utf8.encode('<rdf:RDF />'));
+      final Uint8List encoded = _buildMetadataTiff(
+        iptcMetadata: iptc,
+        xmpMetadata: xmp,
+      );
+
+      final DecodedImageMetadata metadata = inspectImage(encoded)!;
+
+      expect(metadata.width, 2);
+      expect(metadata.height, 3);
+      expect(metadata.iptcMetadata, orderedEquals(iptc));
+      expect(metadata.xmpMetadata, orderedEquals(xmp));
+    });
+
     test('unpremultiply TIFF samples that declare associated alpha', () {
       final Uint8List encoded = _buildEightBitTiff(
         photometric: 2,
@@ -284,6 +369,8 @@ Uint8List _buildRgba16Png({
   required int blue,
   required int alpha,
   required Uint8List iccProfile,
+  Uint8List? exifMetadata,
+  Uint8List? xmpMetadata,
 }) {
   final Uint8List header = Uint8List(13);
   ByteData.sublistView(header)
@@ -310,7 +397,27 @@ Uint8List _buildRgba16Png({
   final BytesBuilder output = BytesBuilder(copy: false)
     ..add(const <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
     ..add(_pngChunk('IHDR', header))
-    ..add(_pngChunk('iCCP', profileChunk))
+    ..add(_pngChunk('iCCP', profileChunk));
+  if (exifMetadata != null) {
+    output.add(_pngChunk('eXIf', exifMetadata));
+  }
+  if (xmpMetadata != null) {
+    output.add(
+      _pngChunk(
+        'iTXt',
+        Uint8List.fromList(<int>[
+          ...'XML:com.adobe.xmp'.codeUnits,
+          0,
+          0,
+          0,
+          0,
+          0,
+          ...xmpMetadata,
+        ]),
+      ),
+    );
+  }
+  output
     ..add(
       _pngChunk(
         'IDAT',
@@ -424,6 +531,9 @@ Uint8List _buildJpegMetadata({
   required int height,
   required int componentCount,
   required Uint8List iccProfile,
+  Uint8List? exifMetadata,
+  Uint8List? xmpMetadata,
+  Uint8List? iptcMetadata,
 }) {
   final int split = iccProfile.lengthInBytes ~/ 2;
   final Uint8List first = Uint8List.sublistView(iccProfile, 0, split);
@@ -445,13 +555,49 @@ Uint8List _buildJpegMetadata({
       ..[offset + 1] = 0x11
       ..[offset + 2] = 0;
   }
-  return (BytesBuilder(copy: false)
-        ..add(const <int>[0xff, 0xd8])
-        ..add(_jpegSegment(0xe2, _jpegIccPayload(second, 2, 2)))
-        ..add(_jpegSegment(0xe2, _jpegIccPayload(first, 1, 2)))
-        ..add(_jpegSegment(0xc0, frameData.buffer.asUint8List()))
-        ..add(const <int>[0xff, 0xd9]))
-      .takeBytes();
+  final BytesBuilder output = BytesBuilder(copy: false)..add(const <int>[0xff, 0xd8]);
+  if (exifMetadata != null) {
+    output.add(_jpegSegment(0xe1, exifMetadata));
+  }
+  if (xmpMetadata != null) {
+    output.add(
+      _jpegSegment(
+        0xe1,
+        Uint8List.fromList(<int>[
+          ...'http://ns.adobe.com/xap/1.0/\u0000'.codeUnits,
+          ...xmpMetadata,
+        ]),
+      ),
+    );
+  }
+  if (iptcMetadata != null) {
+    output.add(_jpegSegment(0xed, _photoshopIptcResource(iptcMetadata)));
+  }
+  output
+    ..add(_jpegSegment(0xe2, _jpegIccPayload(second, 2, 2)))
+    ..add(_jpegSegment(0xe2, _jpegIccPayload(first, 1, 2)))
+    ..add(_jpegSegment(0xc0, frameData.buffer.asUint8List()))
+    ..add(const <int>[0xff, 0xd9]);
+  return output.takeBytes();
+}
+
+/// Wraps IPTC bytes in a Photoshop image-resource block.
+Uint8List _photoshopIptcResource(Uint8List metadata) {
+  final BytesBuilder output = BytesBuilder(copy: false)
+    ..add('Photoshop 3.0\u0000'.codeUnits)
+    ..add('8BIM'.codeUnits)
+    ..add(const <int>[0x04, 0x04, 0, 0]);
+  final Uint8List length = Uint8List(4);
+  ByteData.sublistView(
+    length,
+  ).setUint32(0, metadata.lengthInBytes, Endian.big);
+  output
+    ..add(length)
+    ..add(metadata);
+  if (metadata.lengthInBytes.isOdd) {
+    output.addByte(0);
+  }
+  return output.takeBytes();
 }
 
 /// Creates one JPEG APP2 ICC payload.
@@ -482,15 +628,22 @@ Uint8List _buildWebPMetadata({
   required int width,
   required int height,
   required Uint8List iccProfile,
+  Uint8List? exifMetadata,
+  Uint8List? xmpMetadata,
 }) {
   final Uint8List extendedHeader = Uint8List(10)..[0] = 0x20;
   _writeUint24(extendedHeader, 4, width - 1);
   _writeUint24(extendedHeader, 7, height - 1);
-  final Uint8List chunks =
-      (BytesBuilder(copy: false)
-            ..add(_webPChunk('VP8X', extendedHeader))
-            ..add(_webPChunk('ICCP', iccProfile)))
-          .takeBytes();
+  final BytesBuilder chunkBuilder = BytesBuilder(copy: false)
+    ..add(_webPChunk('VP8X', extendedHeader))
+    ..add(_webPChunk('ICCP', iccProfile));
+  if (exifMetadata != null) {
+    chunkBuilder.add(_webPChunk('EXIF', exifMetadata));
+  }
+  if (xmpMetadata != null) {
+    chunkBuilder.add(_webPChunk('XMP ', xmpMetadata));
+  }
+  final Uint8List chunks = chunkBuilder.takeBytes();
   final Uint8List result = Uint8List(12 + chunks.lengthInBytes)
     ..setAll(0, 'RIFF'.codeUnits)
     ..setAll(8, 'WEBP'.codeUnits)
@@ -510,6 +663,50 @@ Uint8List _webPChunk(String type, Uint8List payload) {
   ByteData.sublistView(
     result,
   ).setUint32(4, payload.lengthInBytes, Endian.little);
+  return result;
+}
+
+/// Creates a minimal TIFF directory with descriptive metadata tags.
+Uint8List _buildMetadataTiff({
+  required Uint8List iptcMetadata,
+  required Uint8List xmpMetadata,
+}) {
+  const int directoryOffset = 8;
+  const int entryCount = 6;
+  const int payloadOffset = directoryOffset + 2 + entryCount * 12 + 4;
+  final int xmpOffset = payloadOffset + iptcMetadata.lengthInBytes;
+  final Uint8List result = Uint8List(xmpOffset + xmpMetadata.lengthInBytes)
+    ..setAll(payloadOffset, iptcMetadata)
+    ..setAll(xmpOffset, xmpMetadata);
+  final ByteData data = ByteData.sublistView(result)
+    ..setUint8(0, 0x49)
+    ..setUint8(1, 0x49)
+    ..setUint16(2, 42, Endian.little)
+    ..setUint32(4, directoryOffset, Endian.little)
+    ..setUint16(directoryOffset, entryCount, Endian.little);
+  int entry = directoryOffset + 2;
+
+  /// Appends one little-endian TIFF directory entry.
+  void writeEntry(int tag, int type, int count, int value) {
+    data
+      ..setUint16(entry, tag, Endian.little)
+      ..setUint16(entry + 2, type, Endian.little)
+      ..setUint32(entry + 4, count, Endian.little);
+    if (type == 3 && count == 1) {
+      data.setUint16(entry + 8, value, Endian.little);
+    } else {
+      data.setUint32(entry + 8, value, Endian.little);
+    }
+    entry += 12;
+  }
+
+  writeEntry(256, 4, 1, 2);
+  writeEntry(257, 4, 1, 3);
+  writeEntry(258, 3, 1, 8);
+  writeEntry(262, 3, 1, 2);
+  writeEntry(33723, 1, iptcMetadata.lengthInBytes, payloadOffset);
+  writeEntry(700, 1, xmpMetadata.lengthInBytes, xmpOffset);
+  data.setUint32(entry, 0, Endian.little);
   return result;
 }
 

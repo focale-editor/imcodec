@@ -80,7 +80,12 @@ if (metadata?.requiresExactDecoding ?? false) {
 ```
 
 Unsigned 16-bit and float32 samples in `DecodedImage.bytes` are little-endian.
-`inspectImage` bounds ICC decompression through `maxIccProfileBytes`.
+`inspectImage` bounds ICC decompression through `maxIccProfileBytes`. It also
+retains opaque EXIF, IPTC-IIM, and XMP packets where their container has a
+standard representation: EXIF and XMP in PNG and WebP, EXIF/IPTC/XMP in JPEG,
+and IPTC/XMP in TIFF. Each descriptive packet is copied into immutable bytes
+and bounded independently through `maxDescriptiveMetadataBytes`; Imcodec does
+not reinterpret or rewrite the packet contents.
 OpenEXR decoding additionally bounds its floating-point output and expanded
 scan-line working blocks through `maxDecodedBytes`. Applications with an
 existing extended-sRGB float buffer can call `encodeOpenExrFloat32Rgba` to

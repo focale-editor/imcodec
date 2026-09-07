@@ -21,7 +21,8 @@ PNG is encoded as non-interlaced 8-bit RGBA with adaptive row filters. The
 decoder accepts standard grayscale, true-color, indexed, grayscale-alpha,
 and RGBA images, including Adam7 interlacing and 1- to 16-bit samples where
 the color type permits them. `decodeImageData` retains exact unsigned 16-bit
-samples, and `inspectImage` extracts bounded `iCCP` profile data.
+samples, and `inspectImage` extracts bounded `iCCP`, `eXIf`, and standardized
+XMP `iTXt` data.
 
 ## JPEG
 
@@ -31,7 +32,8 @@ JPEG data at any sampling ratio the format allows, and expands half-resolution
 chroma with the same triangle filter reference decoders use. Transparency is
 composited against white during encoding. The metadata-aware decoder retains
 Adobe CMYK or YCCK files as CMYK+A instead of flattening them to RGB, and
-reassembles ordered APP2 ICC segments.
+reassembles ordered APP2 ICC segments. Inspection also retains standard APP1
+EXIF and XMP payloads plus the IPTC-IIM resource of a Photoshop APP13 segment.
 
 ## JPEG XL
 
@@ -86,9 +88,10 @@ grayscale, and palette pixels at 1, 2, 4, 8, or 16 unsigned bits per sample;
 horizontal prediction for 8- and 16-bit integers; and uncompressed, PackBits,
 or LZW data. `decodeImageData` retains 16-bit and float32 samples, process CMYK
 channels, and a bounded ICC tag. Planar, tiled, signed, double-precision, and
-JPEG-compressed files are not currently supported. Output is little-endian,
-chunky, eight-bit RGBA using PackBits by default; pass `TiffCompression.none`
-for uncompressed output.
+JPEG-compressed files are not currently supported. Inspection also retains
+bounded IPTC and XMP tags without parsing them. Output is little-endian, chunky,
+eight-bit RGBA using PackBits by default; pass `TiffCompression.none` for
+uncompressed output.
 
 ## WebP
 
@@ -97,4 +100,5 @@ WebP output supports lossless VP8L and lossy intra-frame VP8. Call
 through 100 for lossy output. `WebPEffort` trades encoding
 speed against prediction and coefficient search. Alpha remains lossless in a
 separate WebP alpha chunk. The decoder accepts VP8, VP8 with alpha, VP8L, and
-the first animation frame. `inspectImage` also returns a top-level ICCP chunk.
+the first animation frame. `inspectImage` also returns top-level ICCP, EXIF, and
+XMP chunks.

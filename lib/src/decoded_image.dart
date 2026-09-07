@@ -59,6 +59,15 @@ final class DecodedImageMetadata {
   /// Embedded ICC payload, when present.
   final Uint8List? iccProfile;
 
+  /// Original EXIF application payload, when present.
+  final Uint8List? exifMetadata;
+
+  /// Original IPTC-IIM payload, when present.
+  final Uint8List? iptcMetadata;
+
+  /// Original XMP packet, when present.
+  final Uint8List? xmpMetadata;
+
   /// Creates immutable decoded-image metadata.
   DecodedImageMetadata({
     required this.width,
@@ -66,11 +75,20 @@ final class DecodedImageMetadata {
     required this.bitsPerChannel,
     required this.colorModel,
     Uint8List? iccProfile,
-  }) : iccProfile = iccProfile == null ? null : Uint8List.fromList(iccProfile).asUnmodifiableView();
+    Uint8List? exifMetadata,
+    Uint8List? iptcMetadata,
+    Uint8List? xmpMetadata,
+  }) : iccProfile = _immutableBytes(iccProfile),
+       exifMetadata = _immutableBytes(exifMetadata),
+       iptcMetadata = _immutableBytes(iptcMetadata),
+       xmpMetadata = _immutableBytes(xmpMetadata);
 
   /// Whether generic RGBA8 platform decoding would discard authored data.
   bool get requiresExactDecoding => bitsPerChannel > 8 || colorModel == DecodedColorModel.cmyk || iccProfile != null;
 }
+
+/// Returns a defensive immutable copy of optional metadata bytes.
+Uint8List? _immutableBytes(Uint8List? bytes) => bytes == null ? null : Uint8List.fromList(bytes).asUnmodifiableView();
 
 /// Stores straight-alpha process samples without reducing their precision.
 ///

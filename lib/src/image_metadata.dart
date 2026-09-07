@@ -9,6 +9,9 @@ import 'package:zcodec/zcodec.dart';
 /// Default maximum number of decompressed ICC bytes retained from a container.
 const int defaultMaxIccProfileBytes = 16 * 1024 * 1024;
 
+/// Default maximum size of each retained EXIF, IPTC, or XMP packet.
+const int defaultMaxDescriptiveMetadataBytes = 4 * 1024 * 1024;
+
 /// Reads metadata needed to preserve authored samples and colour meaning.
 ///
 /// `null` means the format has no metadata-aware reader yet. Pixel decoding is
@@ -17,6 +20,7 @@ const int defaultMaxIccProfileBytes = 16 * 1024 * 1024;
 DecodedImageMetadata? inspectImage(
   Uint8List bytes, {
   int maxIccProfileBytes = defaultMaxIccProfileBytes,
+  int maxDescriptiveMetadataBytes = defaultMaxDescriptiveMetadataBytes,
 }) {
   if (maxIccProfileBytes < 1) {
     throw RangeError.range(
@@ -26,18 +30,46 @@ DecodedImageMetadata? inspectImage(
       'maxIccProfileBytes',
     );
   }
+  if (maxDescriptiveMetadataBytes < 1) {
+    throw RangeError.range(
+      maxDescriptiveMetadataBytes,
+      1,
+      null,
+      'maxDescriptiveMetadataBytes',
+    );
+  }
   return switch (ImageFormat.sniff(bytes)) {
-    ImageFormat.png => _inspectPng(bytes, maxIccProfileBytes),
-    ImageFormat.jpeg => _inspectJpeg(bytes, maxIccProfileBytes),
+    ImageFormat.png => _inspectPng(
+      bytes,
+      maxIccProfileBytes,
+      maxDescriptiveMetadataBytes,
+    ),
+    ImageFormat.jpeg => _inspectJpeg(
+      bytes,
+      maxIccProfileBytes,
+      maxDescriptiveMetadataBytes,
+    ),
     ImageFormat.openExr => inspectOpenExr(bytes),
-    ImageFormat.tiff => _inspectTiff(bytes, maxIccProfileBytes),
-    ImageFormat.webp => _inspectWebP(bytes, maxIccProfileBytes),
+    ImageFormat.tiff => _inspectTiff(
+      bytes,
+      maxIccProfileBytes,
+      maxDescriptiveMetadataBytes,
+    ),
+    ImageFormat.webp => _inspectWebP(
+      bytes,
+      maxIccProfileBytes,
+      maxDescriptiveMetadataBytes,
+    ),
     _ => null,
   };
 }
 
 /// Reads PNG header depth and decompresses one bounded `iCCP` chunk.
-DecodedImageMetadata _inspectPng(Uint8List bytes, int maxIccProfileBytes) {
+DecodedImageMetadata _inspectPng(
+  Uint8List bytes,
+  int maxIccProfileBytes,
+  int maxDescriptiveMetadataBytes,
+) {
   if (bytes.lengthInBytes < 33) {
     throw const ImageCodecException('The PNG header is truncated');
   }
@@ -46,6 +78,8 @@ DecodedImageMetadata _inspectPng(Uint8List bytes, int maxIccProfileBytes) {
   int? height;
   int? bitsPerChannel;
   Uint8List? iccProfile;
+  Uint8List? exifMetadata;
+  Uint8List? xmpMetadata;
   int position = 8;
   while (position < bytes.lengthInBytes) {
     if (position > bytes.lengthInBytes - 12) {
@@ -97,6 +131,22 @@ DecodedImageMetadata _inspectPng(Uint8List bytes, int maxIccProfileBytes) {
           cause: error,
         );
       }
+    } else if (type == 'eXIf') {
+      exifMetadata = _boundedPacket(
+        bytes,
+        payloadOffset,
+        length,
+        maximumBytes: maxDescriptiveMetadataBytes,
+        label: 'PNG EXIF',
+      );
+    } else if (type == 'iTXt') {
+      final Uint8List? packet = _pngXmpPacket(
+        bytes,
+        payloadOffset,
+        length,
+        maxDescriptiveMetadataBytes,
+      );
+      xmpMetadata = packet ?? xmpMetadata;
     }
     position = payloadOffset + length + 4;
     if (type == 'IEND') {
@@ -112,6 +162,8 @@ DecodedImageMetadata _inspectPng(Uint8List bytes, int maxIccProfileBytes) {
     bitsPerChannel: bitsPerChannel,
     colorModel: DecodedColorModel.rgb,
     iccProfile: iccProfile,
+    exifMetadata: exifMetadata,
+    xmpMetadata: xmpMetadata,
   );
 }
 
@@ -119,6 +171,7 @@ DecodedImageMetadata _inspectPng(Uint8List bytes, int maxIccProfileBytes) {
 DecodedImageMetadata _inspectJpeg(
   Uint8List bytes,
   int maxIccProfileBytes,
+  int maxDescriptiveMetadataBytes,
 ) {
   if (bytes.lengthInBytes < 4 || bytes[0] != 0xff || bytes[1] != 0xd8) {
     throw const ImageCodecException('Invalid JPEG signature');
@@ -130,6 +183,9 @@ DecodedImageMetadata _inspectJpeg(
   int? height;
   int? bitsPerChannel;
   int? componentCount;
+  Uint8List? exifMetadata;
+  Uint8List? iptcMetadata;
+  Uint8List? xmpMetadata;
   int offset = 2;
   while (offset < bytes.lengthInBytes) {
     while (offset < bytes.lengthInBytes && bytes[offset] != 0xff) {
@@ -182,6 +238,30 @@ DecodedImageMetadata _inspectJpeg(
         );
       }
       chunks[sequence] = chunk;
+    } else if (marker == 0xe1 && payloadLength >= 6 && _matchesAscii(bytes, payload, 'Exif\u0000\u0000')) {
+      exifMetadata = _boundedPacket(
+        bytes,
+        payload,
+        payloadLength,
+        maximumBytes: maxDescriptiveMetadataBytes,
+        label: 'JPEG EXIF',
+      );
+    } else if (marker == 0xe1 && payloadLength >= _jpegXmpHeader.length && _matchesBytes(bytes, payload, _jpegXmpHeader)) {
+      xmpMetadata = _boundedPacket(
+        bytes,
+        payload + _jpegXmpHeader.length,
+        payloadLength - _jpegXmpHeader.length,
+        maximumBytes: maxDescriptiveMetadataBytes,
+        label: 'JPEG XMP',
+      );
+    } else if (marker == 0xed) {
+      final Uint8List? packet = _jpegIptcPacket(
+        bytes,
+        payload,
+        payloadLength,
+        maxDescriptiveMetadataBytes,
+      );
+      iptcMetadata = packet ?? iptcMetadata;
     }
     offset += segmentLength;
   }
@@ -199,6 +279,9 @@ DecodedImageMetadata _inspectJpeg(
     bitsPerChannel: bitsPerChannel,
     colorModel: componentCount == 4 ? DecodedColorModel.cmyk : DecodedColorModel.rgb,
     iccProfile: iccProfile,
+    exifMetadata: exifMetadata,
+    iptcMetadata: iptcMetadata,
+    xmpMetadata: xmpMetadata,
   );
 }
 
@@ -206,6 +289,7 @@ DecodedImageMetadata _inspectJpeg(
 DecodedImageMetadata _inspectTiff(
   Uint8List bytes,
   int maxIccProfileBytes,
+  int maxDescriptiveMetadataBytes,
 ) {
   if (bytes.lengthInBytes < 8) {
     throw const ImageCodecException('The TIFF header is truncated');
@@ -275,12 +359,32 @@ DecodedImageMetadata _inspectTiff(
       ),
     );
   }
+  final _MetadataTiffField? iptcField = fields[33723];
+  final _MetadataTiffField? xmpField = fields[700];
   return DecodedImageMetadata(
     width: width,
     height: height,
     bitsPerChannel: depths.first,
     colorModel: photometric == 5 ? DecodedColorModel.cmyk : DecodedColorModel.rgb,
     iccProfile: iccProfile,
+    iptcMetadata: iptcField == null
+        ? null
+        : _boundedPacket(
+            bytes,
+            iptcField.offset,
+            iptcField.byteLength,
+            maximumBytes: maxDescriptiveMetadataBytes,
+            label: 'TIFF IPTC',
+          ),
+    xmpMetadata: xmpField == null
+        ? null
+        : _boundedPacket(
+            bytes,
+            xmpField.offset,
+            xmpField.byteLength,
+            maximumBytes: maxDescriptiveMetadataBytes,
+            label: 'TIFF XMP',
+          ),
   );
 }
 
@@ -288,6 +392,7 @@ DecodedImageMetadata _inspectTiff(
 DecodedImageMetadata _inspectWebP(
   Uint8List bytes,
   int maxIccProfileBytes,
+  int maxDescriptiveMetadataBytes,
 ) {
   if (bytes.lengthInBytes < 20 || !_matchesAscii(bytes, 0, 'RIFF') || !_matchesAscii(bytes, 8, 'WEBP')) {
     throw const ImageCodecException('Invalid WebP RIFF header');
@@ -299,6 +404,8 @@ DecodedImageMetadata _inspectWebP(
   int? width;
   int? height;
   Uint8List? iccProfile;
+  Uint8List? exifMetadata;
+  Uint8List? xmpMetadata;
   int position = 12;
   while (position < declaredLength) {
     if (position > declaredLength - 8) {
@@ -324,6 +431,22 @@ DecodedImageMetadata _inspectWebP(
       iccProfile = Uint8List.fromList(
         Uint8List.sublistView(bytes, payload, payload + length),
       );
+    } else if (type == 'EXIF') {
+      exifMetadata = _boundedPacket(
+        bytes,
+        payload,
+        length,
+        maximumBytes: maxDescriptiveMetadataBytes,
+        label: 'WebP EXIF',
+      );
+    } else if (type == 'XMP ') {
+      xmpMetadata = _boundedPacket(
+        bytes,
+        payload,
+        length,
+        maximumBytes: maxDescriptiveMetadataBytes,
+        label: 'WebP XMP',
+      );
     } else if (width == null && type == 'VP8L' && length >= 5) {
       width = 1 + (bytes[payload + 1] | ((bytes[payload + 2] & 0x3f) << 8));
       height = 1 + (((bytes[payload + 2] >>> 6) | (bytes[payload + 3] << 2) | ((bytes[payload + 4] & 0x0f) << 10)) & 0x3fff);
@@ -342,7 +465,143 @@ DecodedImageMetadata _inspectWebP(
     bitsPerChannel: 8,
     colorModel: DecodedColorModel.rgb,
     iccProfile: iccProfile,
+    exifMetadata: exifMetadata,
+    xmpMetadata: xmpMetadata,
   );
+}
+
+/// Standard JPEG APP1 prefix preceding an XMP packet.
+final Uint8List _jpegXmpHeader = Uint8List.fromList(
+  'http://ns.adobe.com/xap/1.0/\u0000'.codeUnits,
+);
+
+/// Copies one container packet after enforcing its allocation limit.
+Uint8List _boundedPacket(
+  Uint8List source,
+  int offset,
+  int length, {
+  required int maximumBytes,
+  required String label,
+}) {
+  if (length > maximumBytes) {
+    throw ImageCodecException('$label metadata exceeds the configured limit');
+  }
+  return Uint8List.fromList(
+    Uint8List.sublistView(source, offset, offset + length),
+  );
+}
+
+/// Decodes the standardized PNG international-text XMP payload.
+Uint8List? _pngXmpPacket(
+  Uint8List bytes,
+  int offset,
+  int length,
+  int maximumBytes,
+) {
+  final int end = offset + length;
+  final int keywordEnd = _zeroByte(bytes, offset, end);
+  if (keywordEnd < 0 || String.fromCharCodes(bytes, offset, keywordEnd) != 'XML:com.adobe.xmp' || keywordEnd + 3 > end) {
+    return null;
+  }
+  final int compressionFlag = bytes[keywordEnd + 1];
+  final int compressionMethod = bytes[keywordEnd + 2];
+  int cursor = keywordEnd + 3;
+  final int languageEnd = _zeroByte(bytes, cursor, end);
+  if (languageEnd < 0) {
+    return null;
+  }
+  cursor = languageEnd + 1;
+  final int translatedEnd = _zeroByte(bytes, cursor, end);
+  if (translatedEnd < 0) {
+    return null;
+  }
+  cursor = translatedEnd + 1;
+  if (compressionFlag == 0) {
+    return _boundedPacket(
+      bytes,
+      cursor,
+      end - cursor,
+      maximumBytes: maximumBytes,
+      label: 'PNG XMP',
+    );
+  }
+  if (compressionFlag != 1 || compressionMethod != 0) {
+    throw const ImageCodecException('PNG XMP uses unsupported compression');
+  }
+  try {
+    return ZlibCodec(maxOutputBytes: maximumBytes).decode(
+      Uint8List.sublistView(bytes, cursor, end),
+    );
+  } on Object catch (error) {
+    throw ImageCodecException('Could not decompress PNG XMP', cause: error);
+  }
+}
+
+/// Finds a null terminator inside one bounded byte range.
+int _zeroByte(Uint8List bytes, int start, int end) {
+  for (int index = start; index < end; index++) {
+    if (bytes[index] == 0) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+/// Extracts IPTC resource `0x0404` from a Photoshop APP13 payload.
+Uint8List? _jpegIptcPacket(
+  Uint8List bytes,
+  int offset,
+  int length,
+  int maximumBytes,
+) {
+  const String header = 'Photoshop 3.0\u0000';
+  if (length < header.length || !_matchesAscii(bytes, offset, header)) {
+    return null;
+  }
+  final ByteData data = ByteData.sublistView(bytes);
+  final int end = offset + length;
+  int cursor = offset + header.length;
+  while (cursor <= end - 12) {
+    if (!_matchesAscii(bytes, cursor, '8BIM')) {
+      return null;
+    }
+    final int resourceId = data.getUint16(cursor + 4, Endian.big);
+    final int nameLength = bytes[cursor + 6];
+    final int nameBytes = nameLength + 1;
+    cursor += 6 + nameBytes + (nameBytes.isOdd ? 1 : 0);
+    if (cursor > end - 4) {
+      return null;
+    }
+    final int resourceLength = data.getUint32(cursor, Endian.big);
+    cursor += 4;
+    if (resourceLength > end - cursor) {
+      return null;
+    }
+    if (resourceId == 0x0404) {
+      return _boundedPacket(
+        bytes,
+        cursor,
+        resourceLength,
+        maximumBytes: maximumBytes,
+        label: 'JPEG IPTC',
+      );
+    }
+    cursor += resourceLength + (resourceLength.isOdd ? 1 : 0);
+  }
+  return null;
+}
+
+/// Tests a byte range against an exact byte sequence.
+bool _matchesBytes(Uint8List bytes, int offset, Uint8List expected) {
+  if (offset < 0 || offset > bytes.lengthInBytes - expected.lengthInBytes) {
+    return false;
+  }
+  for (int index = 0; index < expected.lengthInBytes; index++) {
+    if (bytes[offset + index] != expected[index]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /// Whether [marker] starts a JPEG frame carrying precision and dimensions.
