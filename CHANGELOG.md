@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.3.4
+Released on September 7, 2026.
+
+* **FEAT**: `inspectImage` now retains bounded immutable EXIF, IPTC-IIM, and XMP packets from PNG, JPEG, TIFF, and WebP containers. ([#0ce9633](https://github.com/focale-editor/imcodec/commit/0ce9633))
+
 ## v0.3.3
 Released on September 6, 2026.
 
