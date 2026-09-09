@@ -64,7 +64,7 @@ void main() {
   });
 
   test('encoder-only overrides replace generic decoding but leave direct codecs intact', () async {
-    final _TestExtension extension = _TestExtension(format: ImageFormat.webp, supportsDecoding: false);
+    final _TestExtension extension = _TestExtension(format: ImageFormat.webp);
     final Uint8List dartBytes = const WebPCodec().encode(image);
     ImageCodecRegistry.register(extension);
 
@@ -107,7 +107,7 @@ void main() {
   });
 
   test('JPEG XL aliases and runner helpers honor a registered encoder', () async {
-    final _TestExtension extension = _TestExtension(format: ImageFormat.jpegXl, supportsDecoding: false);
+    final _TestExtension extension = _TestExtension(format: ImageFormat.jpegXl);
     ImageCodecRegistry.register(extension);
     expect(
       encodeJxl(
@@ -150,14 +150,13 @@ final class _TestExtension extends ImageCodecExtension<RasterEncodeOptions, Rast
   @override
   final ImageFormat format;
 
-  @override
-  final bool supportsDecoding;
-
   /// Most recently supplied options.
   RasterEncodeOptions? options;
 
   /// Creates a format or encoder override.
-  _TestExtension({required this.format, this.supportsDecoding = true});
+  _TestExtension({
+    required this.format,
+  });
 
   @override
   Uint8List encode(

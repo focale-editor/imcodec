@@ -12,19 +12,11 @@ abstract base class ImageCodecExtension<EncodeOptions extends RasterEncodeOption
   /// Format implemented by this extension.
   ImageFormat get format;
 
-  /// Whether this extension supplies decoding.
-  ///
-  /// A registered extension is authoritative for its complete generic codec.
-  /// Consequently, an encoder-only extension makes generic decoding for its
-  /// format unavailable until that extension is unregistered.
-  bool get supportsDecoding => false;
-
   /// Decodes straight RGBA8 using format-specific [decodeOptions].
   ///
-  /// Implementations must reject non-positive or exceeded pixel limits before
-  /// allocating their output. [decodeOptions] and [maxPixels] are mutually
-  /// exclusive; the latter supports callers that discover the format at run
-  /// time and therefore cannot construct format-specific options.
+  /// Implementations must reject a non-positive or exceeded pixel limit from
+  /// [decodeOptions] before allocating their output, and use their default
+  /// options when it is omitted.
   Image decode(
     Uint8List bytes, {
     DecodeOptions? decodeOptions,
@@ -93,9 +85,6 @@ final class RasterCodecExtension<
 
   @override
   ImageFormat get format => _codec.format;
-
-  @override
-  bool get supportsDecoding => true;
 
   @override
   Image decode(

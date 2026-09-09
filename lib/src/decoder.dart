@@ -150,9 +150,6 @@ DecodedImage _decodeData<Options extends RasterDecodeOptions>(
   }
 
   final ImageCodecExtension registry = ImageCodecRegistry.require(format);
-  if (!registry.supportsDecoding) {
-    throw ImageCodecException('The registered ${format.name} extension does not decode images');
-  }
   final DecodedImage decoded = registry.decodeData(
     bytes,
     decodeOptions: options,
@@ -310,11 +307,7 @@ Image decodeImage<Options extends RasterDecodeOptions>(
   if (format == null) {
     throw const ImageCodecException('The encoded image format is not supported');
   }
-  final ImageCodecExtension registry = ImageCodecRegistry.require(format);
-  if (!registry.supportsDecoding) {
-    throw ImageCodecException('The registered ${format.name} extension does not decode images');
-  }
-  return registry.decode(
+  return ImageCodecRegistry.require(format).decode(
     bytes,
     decodeOptions: options,
   );

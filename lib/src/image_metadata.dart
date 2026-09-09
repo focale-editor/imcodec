@@ -45,11 +45,9 @@ DecodedImageMetadata? inspectImage(
     );
   }
   final ImageCodecExtension? extension = format == null ? null : ImageCodecRegistry.lookup(format);
-  return extension?.supportsDecoding == true
-      ? extension!.inspect(
-          bytes,
-          maxIccProfileBytes: maxIccProfileBytes,
-          maxDescriptiveMetadataBytes: maxDescriptiveMetadataBytes,
-        )
-      : null;
+  return extension?.inspect(
+    bytes,
+    maxIccProfileBytes: maxIccProfileBytes,
+    maxDescriptiveMetadataBytes: maxDescriptiveMetadataBytes,
+  );
 }
