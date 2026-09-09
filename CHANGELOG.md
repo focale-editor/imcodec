@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.4.1
+Released on September 10, 2026.
+
+* **REFACTOR**: Removed `supportsDecoding` which was not meaningful anymore. ([#781f1c4](https://github.com/focale-editor/imcodec/commit/781f1c4))
+
 ## v0.4.0
 Released on September 10, 2026.
 
