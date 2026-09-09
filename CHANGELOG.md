@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.4.0
+Released on September 10, 2026.
+
+* **BREAKING REFACTOR**: Made `ImageFormat` an extensible immutable class whose instances provide their signature matcher. Existing format constants remain available; `ImageFormat.values` moves to the dynamic `ImageFormatRegistry.formats`, while enum-specific `index` and exhaustive switches must migrate. External packages define and register their own formats. ([#1b2ffab](https://github.com/focale-editor/imcodec/commit/1b2ffab))
+
 ## v0.3.4
 Released on September 7, 2026.
 
