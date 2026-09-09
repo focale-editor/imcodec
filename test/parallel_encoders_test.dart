@@ -46,22 +46,27 @@ void main() {
   final Image mediumSource = _createSource(520, 520);
   final Image largeSource = _createSource(1032, 1032);
 
-  final List<(String, ParallelRasterCodec, Image)> codecs = <(String, ParallelRasterCodec, Image)>[
-    ('JPEG 4:4:4', JpegCodec(quality: 91), largeSource),
-    ('JPEG 4:2:0', JpegCodec(quality: 91, chroma: JpegChroma.yuv420), largeSource),
-    ('PNG', PngCodec(level: 6), mediumSource),
-    ('WebP', WebPCodec(), mediumSource),
+  final List<(String, ParallelRasterCodec, RasterEncodeOptions, Image)> codecs = <(String, ParallelRasterCodec, RasterEncodeOptions, Image)>[
+    ('JPEG 4:4:4', const JpegCodec(), const JpegEncodeOptions(quality: 91), largeSource),
+    ('JPEG 4:2:0', const JpegCodec(), const JpegEncodeOptions(quality: 91, chroma: JpegChroma.yuv420), largeSource),
+    ('PNG', const PngCodec(), const PngEncodeOptions(), mediumSource),
+    ('WebP', const WebPCodec(), const WebPEncodeOptions(), mediumSource),
   ];
 
-  for (final (String label, ParallelRasterCodec codec, Image source) in codecs) {
+  for (final (String label, ParallelRasterCodec codec, RasterEncodeOptions options, Image source) in codecs) {
     test('$label spreads real work and stays byte-identical', () async {
-      final Uint8List sequential = codec.encode(source);
+      final Uint8List sequential = codec.encode(source, encodeOptions: options);
       final _RecordingRunner recording = _RecordingRunner();
 
-      final Uint8List inline = await codec.encodeWith(recording.call, source);
+      final Uint8List inline = await codec.encodeWith(
+        recording.call,
+        source,
+        encodeOptions: options,
+      );
       final Uint8List isolated = await codec.encodeWith(
         _runOnTwoIsolates,
         source,
+        encodeOptions: options,
       );
 
       expect(recording.batchSizes, isNotEmpty);

@@ -1,7 +1,7 @@
 part of '../tiff.dart';
 
 /// Decodes baseline TIFF images to straight RGBA pixels.
-final class TiffDecoder extends RasterDecoder {
+final class TiffDecoder extends RasterDecoder<TiffDecodeOptions> {
   /// Byte sizes indexed by TIFF field type.
   static const Map<int, int> _typeSizes = {
     1: 1,
@@ -23,8 +23,8 @@ final class TiffDecoder extends RasterDecoder {
 
   /// Decodes the first image-file directory in [bytes].
   @override
-  Image decode(Uint8List bytes, {required int maxPixels}) {
-    final _TiffRaster raster = _decodeRaster(bytes, maxPixels: maxPixels);
+  Image decodeImage(Uint8List bytes, TiffDecodeOptions options) {
+    final _TiffRaster raster = _decodeRaster(bytes, maxPixels: options.maxPixels);
     if (raster.colorModel != DecodedColorModel.rgb || raster.samples.format != DecodedSampleFormat.uint8) {
       return raster.toDecodedImage().toImage();
     }
@@ -745,6 +745,17 @@ final class TiffDecoder extends RasterDecoder {
 
   /// Returns the smaller integer.
   int _minimum(int first, int second) => first < second ? first : second;
+
+  @override
+  TiffDecodeOptions createDecodeOptions({
+    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
+  }) => TiffDecodeOptions(maxPixels: maxPixels);
+}
+
+/// Options for the TIFF decoder.
+final class TiffDecodeOptions extends RasterDecodeOptions {
+  /// Creates one TIFF decoder options.
+  const TiffDecodeOptions({super.maxPixels});
 }
 
 /// Holds one TIFF directory field and its typed value location.

@@ -50,7 +50,10 @@ void main() {
         }
       }
 
-      final Uint8List encoded = encodeJpg(source, quality: 80);
+      final Uint8List encoded = encodeJpg(
+        source,
+        options: const JpegEncodeOptions(quality: 80),
+      );
 
       expect(encoded[encoded.length - 2], 0xff);
       expect(encoded[encoded.length - 1], 0xd9);
@@ -142,11 +145,31 @@ void main() {
 
       expect(decodeBmp(encodeBmp(source)).bytes, source.bytes, reason: 'BMP $label');
       expect(decodeTga(encodeTga(source)).bytes, source.bytes, reason: 'TGA RLE $label');
-      expect(decodeTga(encodeTga(source, runLengthEncoding: false)).bytes, source.bytes, reason: 'TGA raw $label');
+      expect(
+        decodeTga(
+          encodeTga(
+            source,
+            options: const TgaEncodeOptions(runLengthEncoding: false),
+          ),
+        ).bytes,
+        source.bytes,
+        reason: 'TGA raw $label',
+      );
       expect(decodeQoi(encodeQoi(source)).bytes, source.bytes, reason: 'QOI $label');
       expect(decodePng(encodePng(source)).bytes, source.bytes, reason: 'PNG $label');
       expect(decodeTiff(encodeTiff(source)).bytes, source.bytes, reason: 'TIFF PackBits $label');
-      expect(decodeTiff(encodeTiff(source, compression: TiffCompression.none)).bytes, source.bytes, reason: 'TIFF raw $label');
+      expect(
+        decodeTiff(
+          encodeTiff(
+            source,
+            options: const TiffEncodeOptions(
+              compression: TiffCompression.none,
+            ),
+          ),
+        ).bytes,
+        source.bytes,
+        reason: 'TIFF raw $label',
+      );
       expect(decodeWebP(encodeWebP(source)).bytes, source.bytes, reason: 'WebP $label');
     }
   });

@@ -18,26 +18,21 @@ enum TiffCompression {
 }
 
 /// Encodes straight RGBA pixels as baseline TIFF data.
-final class TiffEncoder extends RasterEncoder {
+final class TiffEncoder extends RasterEncoder<TiffEncodeOptions> {
   /// Number of directory entries emitted by this encoder.
   static const int _entryCount = 15;
 
   /// Largest number of literal or repeated bytes in one PackBits packet.
   static const int _packBitsPacketLimit = 128;
 
-  /// Compression used when encoding pixel strips.
-  final TiffCompression compression;
-
   /// Creates a baseline TIFF encoder.
-  const TiffEncoder({
-    this.compression = TiffCompression.packBits,
-  });
+  const TiffEncoder();
 
   /// Encodes [image] as a little-endian, chunky, eight-bit RGBA TIFF image.
   @override
-  Uint8List encode(Image image) {
+  Uint8List encodeImage(Image image, TiffEncodeOptions options) {
     final int rowBytes = image.width * 4;
-    final Uint8List encodedPixels = switch (compression) {
+    final Uint8List encodedPixels = switch (options.compression) {
       TiffCompression.none => image.bytes,
       TiffCompression.packBits => _encodePackBits(image.bytes, rowBytes),
     };
@@ -62,7 +57,7 @@ final class TiffEncoder extends RasterEncoder {
     entryOffset = _writeEntry(data, entryOffset, tag: 256, type: 4, count: 1, value: image.width);
     entryOffset = _writeEntry(data, entryOffset, tag: 257, type: 4, count: 1, value: image.height);
     entryOffset = _writeEntry(data, entryOffset, tag: 258, type: 3, count: 4, value: bitsPerSampleOffset);
-    entryOffset = _writeEntry(data, entryOffset, tag: 259, type: 3, count: 1, value: compression.value);
+    entryOffset = _writeEntry(data, entryOffset, tag: 259, type: 3, count: 1, value: options.compression.value);
     entryOffset = _writeEntry(data, entryOffset, tag: 262, type: 3, count: 1, value: 2);
     entryOffset = _writeEntry(data, entryOffset, tag: 273, type: 4, count: 1, value: pixelOffset);
     entryOffset = _writeEntry(data, entryOffset, tag: 274, type: 3, count: 1, value: 1);
@@ -160,4 +155,18 @@ final class TiffEncoder extends RasterEncoder {
     }
     return next - position;
   }
+
+  @override
+  TiffEncodeOptions createDefaultEncodeOptions() => const TiffEncodeOptions();
+}
+
+/// Options for the TIFF encoder.
+final class TiffEncodeOptions extends RasterEncodeOptions {
+  /// Compression used when encoding pixel strips.
+  final TiffCompression compression;
+
+  /// Creates a TIFF encode with the default options.
+  const TiffEncodeOptions({
+    this.compression = TiffCompression.packBits,
+  });
 }

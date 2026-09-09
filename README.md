@@ -39,20 +39,28 @@ The encoder entry points mirror the subset used by almost any image editor:
 
 ```dart
 final Uint8List png = img.encodePng(image);
-final Uint8List png8 = img.encodePng8(
+final Uint8List gif = img.encodeGif(
   image,
-  options: const img.IndexedColorOptions(
+  options: const img.GifEncodeOptions(
     colorCount: 64,
     ditherAmount: 75,
   ),
+); // one palette-indexed frame
+final Uint8List jpeg = img.encodeJpg(
+  image,
+  options: const img.JpegEncodeOptions(quality: 90),
 );
-final Uint8List gif = img.encodeGif(image); // one palette-indexed frame
-final Uint8List jpeg = img.encodeJpg(image, quality: 90);
 final Uint8List jpegXl = img.encodeJpegXl(image); // lossless Modular
-final Uint8List quickJxl = img.encodeJpegXl(image, effort: img.JpegXlEffort.fast);
+final Uint8List quickJxl = img.encodeJpegXl(
+  image,
+  options: const img.JpegXlEncodeOptions(effort: img.JpegXlEffort.fast),
+);
 final Uint8List openExr = img.encodeOpenExr(image); // scene-linear half float
 final Uint8List webp = img.encodeWebP(image); // lossless VP8L
-final Uint8List lossyWebP = img.encodeWebP(image, quality: 82);
+final Uint8List lossyWebP = img.encodeWebP(
+  image,
+  options: const img.WebPEncodeOptions(quality: 82),
+);
 final Uint8List bmp = img.encodeBmp(image);
 final Uint8List tga = img.encodeTga(image); // RLE by default
 final Uint8List qoi = img.encodeQoi(image);
@@ -63,7 +71,10 @@ Decode supported data with format detection or a format-specific function:
 
 ```dart
 final img.Image decoded = img.decodeImage(encodedBytes);
-final img.Image png = img.decodePng(pngBytes);
+final img.Image png = img.decodePng(
+  pngBytes,
+  options: const img.PngDecodeOptions(maxPixels: 25_000_000),
+);
 ```
 
 Editors that must retain authored precision or process channels can use the
@@ -103,7 +114,7 @@ number of concurrent isolates:
 final Uint8List jpeg = await img.encodeJpgWith(
   img.onBoundedIsolates,
   image,
-  quality: 90,
+  options: const img.JpegEncodeOptions(quality: 90),
 );
 ```
 
@@ -120,26 +131,34 @@ the next. Measurements show that moving their buffers between isolates is
 slower, so these formats accept a runner for API consistency but intentionally
 encode inline.
 
-`decodeImage` defaults to a 100-million-pixel allocation limit. Supply a lower
-`maxPixels` value when input comes from an untrusted source.
+`decodeImage` defaults to a 100-million-pixel allocation limit. Supply a typed
+decode-options object to a format-specific helper when a lower limit is needed.
 
 `maxPixels` alone no longer bounds memory once samples are kept natively: a
 CMYK float32 pixel needs 20 bytes where an RGBA8 pixel needs 4. The
 metadata-aware functions therefore also take `maxDecodedBytes`, which defaults
-to the 400 MB an RGBA8 image of `defaultMaxPixels` pixels would occupy, and is
-checked from container metadata before any pixel buffer is allocated.
+to the 400 MB an RGBA8 image at
+`RasterDecodeOptions.defaultMaxPixels` would occupy, and is checked from
+container metadata before any pixel buffer is allocated.
 
 The format classes can also be used through `dart:convert`:
 
 ```dart
-final img.PngCodec codec = img.PngCodec(level: 7);
-final Uint8List encoded = codec.encoder.convert(image);
-final img.Image decoded = codec.decoder.convert(encoded);
+const img.PngCodec codec = img.PngCodec();
+final Uint8List encoded = codec.encoder.convert(
+  image,
+  encodeOptions: const img.PngEncodeOptions(level: 7),
+);
+final img.Image decoded = codec.decode(
+  encoded,
+  decodeOptions: const img.PngDecodeOptions(maxPixels: 25_000_000),
+);
 ```
 
-Each `RasterCodec` composes a `RasterEncoder` and a `RasterDecoder`. The
-shared `defaultMaxPixels` constant (100 million) is used unless a lower
-`maxPixels` limit is supplied to a codec or decoding helper.
+Each `RasterCodec` composes an immutable `RasterEncoder` and `RasterDecoder`.
+Compression and allocation choices are immutable per-operation options. The
+shared `RasterDecodeOptions.defaultMaxPixels` value (100 million) is used
+unless a lower limit is supplied to a decoding helper.
 
 ## Format behavior
 

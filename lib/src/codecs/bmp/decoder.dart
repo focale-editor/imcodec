@@ -1,13 +1,12 @@
 part of '../bmp.dart';
 
 /// Decodes uncompressed, bitfield, and run-length encoded BMP images.
-final class BmpDecoder extends RasterDecoder {
+final class BmpDecoder extends RasterDecoder<BmpDecodeOptions> {
   /// Creates a BMP decoder.
   const BmpDecoder();
 
-  /// Decodes palette, 16-bit, 24-bit, or 32-bit BMP data.
   @override
-  Image decode(Uint8List bytes, {required int maxPixels}) {
+  Image decodeImage(Uint8List bytes, BmpDecodeOptions decodeOptions) {
     final InputBuffer input = InputBuffer(bytes);
     if (input.readUint8() != 0x42 || input.readUint8() != 0x4d) {
       throw const ImageCodecException('Invalid BMP signature');
@@ -29,7 +28,7 @@ final class BmpDecoder extends RasterDecoder {
     }
     final bool topDown = encodedHeight < 0;
     final int height = encodedHeight.abs();
-    _checkPixelLimit(width, height, maxPixels);
+    _checkPixelLimit(width, height, decodeOptions.maxPixels);
     if (input.readUint16() != 1) {
       throw const ImageCodecException('BMP must contain exactly one color plane');
     }
@@ -323,6 +322,11 @@ final class BmpDecoder extends RasterDecoder {
       throw ImageCodecException('Decoded image contains $pixelCount pixels, exceeding the $maxPixels pixel limit');
     }
   }
+
+  @override
+  BmpDecodeOptions createDecodeOptions({
+    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
+  }) => BmpDecodeOptions(maxPixels: maxPixels);
 }
 
 /// Scales one packed BMP bitfield channel to eight bits.
@@ -359,4 +363,12 @@ final class _BmpChannel {
 
   /// Extracts and scales this channel from a packed pixel [value].
   int scale(int value) => maximum == 0 ? 0 : (((value & mask) >>> shift) * 255 + (maximum >> 1)) ~/ maximum;
+}
+
+/// Allows to pass options to a [BmpDecoder].
+final class BmpDecodeOptions extends RasterDecodeOptions {
+  /// Creates a BMP decode options.
+  const BmpDecodeOptions({
+    super.maxPixels,
+  });
 }

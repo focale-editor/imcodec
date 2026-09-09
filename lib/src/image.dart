@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:imcodec/src/image_codec_exception.dart';
+import 'package:imcodec/src/codecs/exception.dart';
 
 /// Describes the channel layout of source pixel bytes.
 enum ChannelOrder {

@@ -1,18 +1,18 @@
 part of '../gif.dart';
 
 /// Decodes the first visible GIF frame to straight RGBA pixels.
-final class GifDecoder extends RasterDecoder {
+final class GifDecoder extends RasterDecoder<GifDecodeOptions> {
   /// Creates a GIF decoder.
   const GifDecoder();
 
   /// Decodes the first image descriptor in [bytes].
   @override
-  Image decode(Uint8List bytes, {required int maxPixels}) {
+  Image decodeImage(Uint8List bytes, GifDecodeOptions options) {
     final InputBuffer input = InputBuffer(bytes);
     _readSignature(input);
     final int canvasWidth = input.readUint16();
     final int canvasHeight = input.readUint16();
-    _checkDimensions(canvasWidth, canvasHeight, maxPixels);
+    _checkDimensions(canvasWidth, canvasHeight, options.maxPixels);
     final int screenFlags = input.readUint8();
     input
       ..readUint8()
@@ -47,6 +47,11 @@ final class GifDecoder extends RasterDecoder {
     }
     throw const ImageCodecException('GIF trailer is missing');
   }
+
+  @override
+  GifDecodeOptions createDecodeOptions({
+    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
+  }) => GifDecodeOptions(maxPixels: maxPixels);
 
   /// Validates and consumes the GIF87a or GIF89a header.
   static void _readSignature(InputBuffer input) {
@@ -221,5 +226,13 @@ final class _GifColor {
     required this.red,
     required this.green,
     required this.blue,
+  });
+}
+
+/// Options for GIF decoding.
+final class GifDecodeOptions extends RasterDecodeOptions {
+  /// Creates GIF decoding settings.
+  const GifDecodeOptions({
+    super.maxPixels,
   });
 }

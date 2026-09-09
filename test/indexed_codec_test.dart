@@ -18,7 +18,7 @@ void main() {
 
     final Uint8List encoded = encodeGif(
       source,
-      options: const IndexedColorOptions(
+      options: const GifEncodeOptions(
         colorCount: 4,
         ditherAmount: 0,
       ),
@@ -51,7 +51,7 @@ void main() {
 
     final Uint8List encoded = encodeGif(
       source,
-      options: const IndexedColorOptions(
+      options: const GifEncodeOptions(
         colorCount: 64,
         ditherAmount: 0,
         transparency: false,

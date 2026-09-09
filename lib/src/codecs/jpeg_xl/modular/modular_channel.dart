@@ -9,6 +9,12 @@ import 'package:imcodec/src/codecs/jpeg_xl/limits.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/modular/meta_adaptive_tree.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/modular/weighted_predictor_parameters.dart';
 
+/// Keeps wide prediction values without constructing unsupported Web typed lists.
+///
+/// Native runtimes retain compact Int64 storage. JavaScript uses ordinary Dart
+/// integers, which preserve the fixed-point values used for RGBA8 prediction.
+List<int> _widePredictionBuffer(int length) => const bool.fromEnvironment('dart.library.js_interop') ? List<int>.filled(length, 0) : Int64List(length);
+
 /// Clamps [value] to the range spanned by two neighboring samples.
 @pragma('vm:prefer-inline')
 int _clampBetween(int value, int first, int second) {
@@ -110,10 +116,10 @@ final class ModularChannel {
   Int32List? _weightedPredictionError;
 
   /// Wide intermediate value produced by weighted prediction.
-  Int64List? _weightedPrediction;
+  List<int>? _weightedPrediction;
 
   /// Candidate predictor values used by the weighted predictor.
-  final Int64List _predictorCandidates = Int64List(4);
+  final List<int> _predictorCandidates = _widePredictionBuffer(4);
 
   /// Creates a modular channel.
   ModularChannel({
@@ -584,7 +590,7 @@ final class ModularChannel {
       _predictionError2 = Int32List(n);
       _predictionError3 = Int32List(n);
       _weightedPredictionError = Int32List(n);
-      _weightedPrediction = Int64List(n);
+      _weightedPrediction = _widePredictionBuffer(n);
     }
     final WeightedPredictorParameters? wp = useWp ? weightedPredictorParameters : null;
     final Int32List b = buffer!;

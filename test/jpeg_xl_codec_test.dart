@@ -17,6 +17,9 @@ void main() {
       expect(decoded.width, source.width);
       expect(decoded.height, source.height);
       expect(decoded.bytes, source.bytes);
+      final DecodedImageMetadata metadata = inspectImage(encoded)!;
+      expect((metadata.width, metadata.height), (source.width, source.height));
+      expect(metadata.bitsPerChannel, 8);
     });
 
     test('decodes an independently encoded lossy VarDCT fixture', () {
@@ -41,7 +44,13 @@ void main() {
     test('enforces pixel limits and rejects truncation', () {
       final Uint8List encoded = encodeJxl(_testImage());
 
-      expect(() => decodeJxl(encoded, maxPixels: 1), throwsA(isA<ImageCodecException>()));
+      expect(
+        () => decodeJxl(
+          encoded,
+          options: const JpegXlDecodeOptions(maxPixels: 1),
+        ),
+        throwsA(isA<ImageCodecException>()),
+      );
       expect(
         () => decodeJxl(Uint8List.sublistView(encoded, 0, 3)),
         throwsA(isA<ImageCodecException>()),

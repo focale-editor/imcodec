@@ -1,7 +1,7 @@
 part of '../qoi.dart';
 
 /// Encodes RGBA pixels using the Quite OK Image specification.
-final class QoiEncoder extends RasterEncoder {
+final class QoiEncoder extends RasterEncoder<QoiEncodeOptions> {
   /// Four-byte QOI file signature.
   static const List<int> _magic = [0x71, 0x6f, 0x69, 0x66];
 
@@ -13,7 +13,7 @@ final class QoiEncoder extends RasterEncoder {
 
   /// Encodes [image] losslessly in the sRGB color space.
   @override
-  Uint8List encode(Image image) {
+  Uint8List encodeImage(Image image, QoiEncodeOptions options) {
     if (image.width > 0xffffffff || image.height > 0xffffffff) {
       throw const ImageCodecException('QOI dimensions may not exceed 4294967295 pixels');
     }
@@ -109,4 +109,13 @@ final class QoiEncoder extends RasterEncoder {
     }
     return false;
   }
+
+  @override
+  QoiEncodeOptions createDefaultEncodeOptions() => const QoiEncodeOptions();
+}
+
+/// Options for the QOI encoder.
+final class QoiEncodeOptions extends RasterEncodeOptions {
+  /// Creates a QOI encode with the default options.
+  const QoiEncodeOptions();
 }

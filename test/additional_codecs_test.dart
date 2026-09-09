@@ -45,7 +45,10 @@ void main() {
     test('round-trips raw and run-length encoded RGBA', () {
       final Image source = _testImage();
 
-      final Uint8List raw = encodeTga(source, runLengthEncoding: false);
+      final Uint8List raw = encodeTga(
+        source,
+        options: const TgaEncodeOptions(runLengthEncoding: false),
+      );
       final Uint8List compressed = encodeTga(source);
 
       expect((decodeTga(raw)).bytes, source.bytes);
@@ -134,7 +137,13 @@ void main() {
   test('pure-Dart decoders enforce pixel limits and reject truncation', () {
     final Image source = _testImage();
 
-    expect(() => decodeBmp(encodeBmp(source), maxPixels: 1), throwsA(isA<ImageCodecException>()));
+    expect(
+      () => decodeBmp(
+        encodeBmp(source),
+        options: const BmpDecodeOptions(maxPixels: 1),
+      ),
+      throwsA(isA<ImageCodecException>()),
+    );
     expect(() => decodeTga(Uint8List.sublistView(encodeTga(source), 0, 19)), throwsA(isA<ImageCodecException>()));
     expect(() => decodeQoi(Uint8List.sublistView(encodeQoi(source), 0, 15)), throwsA(isA<ImageCodecException>()));
   });

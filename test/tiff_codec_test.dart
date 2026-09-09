@@ -10,7 +10,12 @@ void main() {
     test('round-trips uncompressed and PackBits RGBA exactly', () {
       final Image source = _testImage();
 
-      final Uint8List uncompressed = encodeTiff(source, compression: TiffCompression.none);
+      final Uint8List uncompressed = encodeTiff(
+        source,
+        options: const TiffEncodeOptions(
+          compression: TiffCompression.none,
+        ),
+      );
       final Uint8List packBits = encodeTiff(source);
 
       expect(ImageFormat.sniff(uncompressed), ImageFormat.tiff);
@@ -28,7 +33,12 @@ void main() {
     });
 
     test('applies orientation while decoding', () {
-      final Uint8List encoded = encodeTiff(_testImage(), compression: TiffCompression.none);
+      final Uint8List encoded = encodeTiff(
+        _testImage(),
+        options: const TiffEncodeOptions(
+          compression: TiffCompression.none,
+        ),
+      );
       final ByteData data = ByteData.sublistView(encoded);
       const int orientationEntryValue = 8 + 2 + 6 * 12 + 8;
       data.setUint16(orientationEntryValue, 6, Endian.little);
@@ -51,7 +61,13 @@ void main() {
     test('enforces pixel limits and rejects truncation', () {
       final Uint8List encoded = encodeTiff(_testImage());
 
-      expect(() => decodeTiff(encoded, maxPixels: 1), throwsA(isA<ImageCodecException>()));
+      expect(
+        () => decodeTiff(
+          encoded,
+          options: const TiffDecodeOptions(maxPixels: 1),
+        ),
+        throwsA(isA<ImageCodecException>()),
+      );
       expect(() => decodeTiff(Uint8List.sublistView(encoded, 0, 20)), throwsA(isA<ImageCodecException>()));
     });
   });

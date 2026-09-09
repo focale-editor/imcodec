@@ -15,19 +15,19 @@ void main() {
 
   final Map<ImageFormat, RasterCodec> codecs = <ImageFormat, RasterCodec>{
     ImageFormat.bmp: const BmpCodec(),
-    ImageFormat.gif: const GifCodec.customCoders(),
-    ImageFormat.jpeg: JpegCodec(),
-    ImageFormat.jpegXl: JpegXlCodec(effort: JpegXlEffort.fast),
-    ImageFormat.openExr: OpenExrCodec(),
-    ImageFormat.png: PngCodec(),
+    ImageFormat.gif: const GifCodec(),
+    ImageFormat.jpeg: const JpegCodec(),
+    ImageFormat.jpegXl: const JpegXlCodec(),
+    ImageFormat.openExr: const OpenExrCodec(),
+    ImageFormat.png: const PngCodec(),
     ImageFormat.qoi: const QoiCodec(),
-    ImageFormat.tga: TgaCodec(),
-    ImageFormat.tiff: TiffCodec(),
-    ImageFormat.webp: WebPCodec(),
+    ImageFormat.tga: const TgaCodec(),
+    ImageFormat.tiff: const TiffCodec(),
+    ImageFormat.webp: const WebPCodec(),
   };
 
   test('every format is covered', () {
-    expect(codecs.keys.toSet(), ImageFormat.values.toSet());
+    expect(codecs.keys.toSet(), ImageFormatRegistry.formats.toSet());
   });
 
   for (final MapEntry<ImageFormat, RasterCodec> entry in codecs.entries) {
@@ -44,12 +44,29 @@ void main() {
   }
 
   test('the format-dispatching helper matches its synchronous twin', () async {
-    for (final ImageFormat format in ImageFormat.values) {
+    for (final ImageFormat format in ImageFormatRegistry.formats) {
+      final RasterEncodeOptions? options = identical(format, ImageFormat.jpegXl) ? const JpegXlEncodeOptions(effort: JpegXlEffort.fast) : null;
       expect(
-        await encodeImageWith(onIsolates, source, format: format, jpegXlEffort: JpegXlEffort.fast),
-        encodeImage(source, format: format, jpegXlEffort: JpegXlEffort.fast),
+        await encodeImageWith(
+          onIsolates,
+          source,
+          format: format,
+          options: options,
+        ),
+        encodeImage(source, format: format, options: options),
         reason: format.name,
       );
     }
+  });
+
+  test('the small PNG fallback retains per-operation options', () async {
+    const PngEncodeOptions options = PngEncodeOptions(level: 0);
+    final Uint8List sequential = encodePng(source, options: options);
+
+    expect(sequential, isNot(encodePng(source)));
+    expect(
+      await encodePngWith(runSequentially, source, options: options),
+      sequential,
+    );
   });
 }

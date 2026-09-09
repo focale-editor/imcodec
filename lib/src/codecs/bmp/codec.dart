@@ -1,25 +1,11 @@
 part of '../bmp.dart';
 
 /// Encodes and decodes Bitmap images.
-final class BmpCodec extends RasterCodec<BmpEncoder, BmpDecoder> {
-  @override
-  final BmpEncoder rasterEncoder;
-
-  @override
-  final BmpDecoder rasterDecoder;
-
+final class BmpCodec extends RasterCodec<BmpEncodeOptions, BmpEncoder, BmpDecodeOptions, BmpDecoder> {
   /// Creates a Bitmap codec with a bounded decoding allocation.
   const BmpCodec({
-    int maxPixels = defaultMaxPixels,
-  }) : this.customCoders(
-         maxPixels: maxPixels,
-       );
-
-  /// Creates a codec using a [rasterEncoder] to encode and a custom [rasterDecoder] to decode.
-  const BmpCodec.customCoders({
-    super.maxPixels = defaultMaxPixels,
-    this.rasterEncoder = const BmpEncoder(),
-    this.rasterDecoder = const BmpDecoder(),
+    super.rasterEncoder = const BmpEncoder(),
+    super.rasterDecoder = const BmpDecoder(),
   }) : super(
          format: ImageFormat.bmp,
        );

@@ -1,13 +1,13 @@
 part of '../tga.dart';
 
 /// Decodes color-mapped, true-color, and grayscale TGA images.
-final class TgaDecoder extends RasterDecoder {
+final class TgaDecoder extends RasterDecoder<TgaDecodeOptions> {
   /// Creates a TGA decoder.
   const TgaDecoder();
 
   /// Decodes uncompressed or run-length encoded TGA data.
   @override
-  Image decode(Uint8List bytes, {required int maxPixels}) {
+  Image decodeImage(Uint8List bytes, TgaDecodeOptions options) {
     final InputBuffer input = InputBuffer(bytes);
     input.ensure(18);
     final int identifierLength = input.readUint8();
@@ -35,7 +35,7 @@ final class TgaDecoder extends RasterDecoder {
     if (width == 0 || height == 0) {
       throw const ImageCodecException('TGA dimensions must be non-zero');
     }
-    _checkPixelLimit(width, height, maxPixels);
+    _checkPixelLimit(width, height, options.maxPixels);
     if ((descriptor & 0xc0) != 0) {
       throw const ImageCodecException('Interleaved TGA images are not supported');
     }
@@ -169,6 +169,19 @@ final class TgaDecoder extends RasterDecoder {
       throw ImageCodecException('Decoded image contains $pixelCount pixels, exceeding the $maxPixels pixel limit');
     }
   }
+
+  @override
+  TgaDecodeOptions createDecodeOptions({
+    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
+  }) => TgaDecodeOptions(maxPixels: maxPixels);
+}
+
+/// Options for the TGA decoder.
+final class TgaDecodeOptions extends RasterDecodeOptions {
+  /// Creates a TGA decode with the default options.
+  const TgaDecodeOptions({
+    super.maxPixels,
+  });
 }
 
 /// Shared empty color map for images without a palette.

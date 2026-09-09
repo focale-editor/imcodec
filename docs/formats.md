@@ -102,3 +102,64 @@ speed against prediction and coefficient search. Alpha remains lossless in a
 separate WebP alpha chunk. The decoder accepts VP8, VP8 with alpha, VP8L, and
 the first animation frame. `inspectImage` also returns top-level ICCP, EXIF, and
 XMP chunks.
+
+
+# Optional formats and encoder replacements
+
+Imcodec stays pure Dart. Add-on packages can extend `ImageFormat` and register
+an `ImageCodecExtension`, without adding a dependency to Imcodec itself:
+
+```dart
+final class CustomFormat extends ImageFormat with InspectableFormat {
+  const CustomFormat() : super(name: 'custom');
+
+  @override
+  bool matches(Uint8List bytes) =>
+      bytes.length >= 4 &&
+      bytes[0] == 0x43 &&
+      bytes[1] == 0x55 &&
+      bytes[2] == 0x53 &&
+      bytes[3] == 0x54;
+
+  @override
+  DecodedImageMetadata inspect(
+    Uint8List bytes,
+    int maxIccProfileBytes,
+    int maxDescriptiveMetadataBytes,
+  ) => DecodedImageMetadata(
+    width: 1,
+    height: 1,
+    bitsPerChannel: 8,
+    colorModel: DecodedColorModel.rgb,
+  );
+}
+
+const ImageFormat custom = CustomFormat();
+// ImageFormatRegistry.register(custom);
+// ImageCodecRegistry.register(MyCodecExtension(format: custom));
+// ImageFormat.sniff(bytes), decodeImage and encodeImage then use the extension.
+```
+
+Every format supplies its own signature matcher and may implement
+`InspectableFormat` to expose bounded container metadata independently from
+its codec. `ImageFormat.sniff` iterates
+the ordered `ImageFormatRegistry.formats` collection, which initially contains
+all pure-Dart formats. Add-ons register their formats explicitly and may use a
+higher or lower sniff priority when signatures overlap. Codec implementations
+are registered separately and may supply an encoder and decoder. Both
+registries are explicit and local to each isolate. A registered extension is
+authoritative for the complete generic codec entry: an encoder-only extension
+also makes generic decoding unavailable until it is unregistered. Direct codec
+instances stay unchanged, and unregistering restores the built-in entry.
+
+`imcodec_native` uses this API for AVIF/HEIF and native JPEG XL/WebP encoders,
+with the same engines compiled to WebAssembly for browsers. Applications that
+do not add and initialize that package retain their pure-Dart behavior.
+
+Since 0.4.0, `ImageFormat` is an extensible class, not an enum. Its existing
+constants, `name` and `sniff` remain available. Use
+`ImageFormatRegistry.formats` instead of `ImageFormat.values`, and
+`ImageFormatRegistry.lookup(name)` instead of `values.byName`. The registry is
+dynamic and includes installed add-on formats. Enum `index` and exhaustive
+switches are no longer available; use `name` for application-owned
+serialization and add a fallback to switches.

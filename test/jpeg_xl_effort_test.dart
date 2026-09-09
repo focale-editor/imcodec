@@ -16,7 +16,10 @@ void main() {
   for (final (String label, Image source) in sources) {
     test('every effort level round-trips $label losslessly', () {
       for (final JpegXlEffort effort in JpegXlEffort.values) {
-        final Uint8List encoded = encodeJpegXl(source, effort: effort);
+        final Uint8List encoded = encodeJpegXl(
+          source,
+          options: JpegXlEncodeOptions(effort: effort),
+        );
 
         expect(ImageFormat.sniff(encoded), ImageFormat.jpegXl, reason: '$label ${effort.name}');
         expect(decodeJpegXl(encoded).bytes, source.bytes, reason: '$label ${effort.name}');
@@ -26,9 +29,18 @@ void main() {
 
   test('higher effort never produces a larger file', () {
     for (final (String label, Image source) in sources) {
-      final int fast = encodeJpegXl(source, effort: JpegXlEffort.fast).length;
-      final int balanced = encodeJpegXl(source, effort: JpegXlEffort.balanced).length;
-      final int maximum = encodeJpegXl(source, effort: JpegXlEffort.maximum).length;
+      final int fast = encodeJpegXl(
+        source,
+        options: const JpegXlEncodeOptions(effort: JpegXlEffort.fast),
+      ).length;
+      final int balanced = encodeJpegXl(
+        source,
+        options: const JpegXlEncodeOptions(),
+      ).length;
+      final int maximum = encodeJpegXl(
+        source,
+        options: const JpegXlEncodeOptions(effort: JpegXlEffort.maximum),
+      ).length;
 
       expect(balanced, lessThanOrEqualTo(fast), reason: '$label balanced');
       expect(maximum, lessThanOrEqualTo(balanced), reason: '$label maximum');
@@ -38,8 +50,17 @@ void main() {
   test('the codec and the encoder both accept an effort level', () {
     final Image source = sources.first.$2;
 
-    final Uint8List viaCodec = JpegXlCodec(effort: JpegXlEffort.fast).encode(source);
-    final Uint8List viaEncoder = const JpegXlEncoder(effort: JpegXlEffort.fast).encode(source);
+    const JpegXlEncodeOptions options = JpegXlEncodeOptions(
+      effort: JpegXlEffort.fast,
+    );
+    final Uint8List viaCodec = const JpegXlCodec().encode(
+      source,
+      encodeOptions: options,
+    );
+    final Uint8List viaEncoder = const JpegXlEncoder().encode(
+      source,
+      encodeOptions: options,
+    );
 
     expect(viaCodec, viaEncoder);
     expect(decodeJpegXl(viaCodec).bytes, source.bytes);

@@ -25,7 +25,10 @@ void main() {
       ..setPixelRgba(0, 0, 255, 0, 0, 255)
       ..setPixelRgba(1, 0, 0, 0, 0, 0);
 
-    final Uint8List encoded = encodeJpg(source, quality: 100);
+    final Uint8List encoded = encodeJpg(
+      source,
+      options: const JpegEncodeOptions(quality: 100),
+    );
     final Image decoded = decodeJpg(encoded);
 
     expect(ImageFormat.sniff(encoded), ImageFormat.jpeg);
@@ -33,36 +36,29 @@ void main() {
     expect(decoded.bytes.sublist(4, 7), everyElement(greaterThan(220)));
   });
 
-  test('JPEG codec configuration is const and reusable', () {
-    final JpegCodec codec = JpegCodec(
+  test('JPEG codec and per-call configuration are reusable', () {
+    const JpegCodec codec = JpegCodec();
+    const JpegEncodeOptions options = JpegEncodeOptions(
       quality: 90,
       chroma: JpegChroma.yuv420,
     );
     final Image source = testImage();
 
-    final Uint8List first = codec.encode(source);
-    final Uint8List second = codec.encode(source);
+    final Uint8List first = codec.encode(source, encodeOptions: options);
+    final Uint8List second = codec.encode(source, encodeOptions: options);
 
     expect(second, first);
   });
 
   test('format encoders and decoders are const and reusable', () {
     const List<RasterEncoder> encoders = [
-      GifEncoder(
-        options: IndexedColorOptions(
-          ditherAmount: 0,
-          transparency: false,
-        ),
-      ),
-      JpegEncoder(
-        quality: 90,
-        chroma: JpegChroma.yuv420,
-      ),
+      GifEncoder(),
+      JpegEncoder(),
       JpegXlEncoder(),
       OpenExrEncoder(),
-      PngEncoder(level: 9),
-      TgaEncoder(runLengthEncoding: false),
-      TiffEncoder(compression: TiffCompression.none),
+      PngEncoder(),
+      TgaEncoder(),
+      TiffEncoder(),
     ];
     const List<RasterDecoder> decoders = [
       GifDecoder(),
@@ -74,21 +70,13 @@ void main() {
       TiffDecoder(),
     ];
     const List<RasterEncoder> canonicalEncoders = [
-      GifEncoder(
-        options: IndexedColorOptions(
-          ditherAmount: 0,
-          transparency: false,
-        ),
-      ),
-      JpegEncoder(
-        quality: 90,
-        chroma: JpegChroma.yuv420,
-      ),
+      GifEncoder(),
+      JpegEncoder(),
       JpegXlEncoder(),
       OpenExrEncoder(),
-      PngEncoder(level: 9),
-      TgaEncoder(runLengthEncoding: false),
-      TiffEncoder(compression: TiffCompression.none),
+      PngEncoder(),
+      TgaEncoder(),
+      TiffEncoder(),
     ];
     const List<RasterDecoder> canonicalDecoders = [
       GifDecoder(),
@@ -153,28 +141,15 @@ void main() {
     final Image source = testImage();
     final List<Codec<Image, Uint8List>> codecs = [
       const BmpCodec(),
-      const GifCodec.customCoders(),
-      JpegCodec(
-        maxPixels: 1000,
-        quality: 90,
-        chroma: JpegChroma.yuv420,
-      ),
-      JpegXlCodec(maxPixels: 1000),
-      OpenExrCodec(maxPixels: 1000),
-      PngCodec(
-        maxPixels: 1000,
-        level: 9,
-      ),
+      const GifCodec(),
+      const JpegCodec(),
+      const JpegXlCodec(),
+      const OpenExrCodec(),
+      const PngCodec(),
       const QoiCodec(),
-      TgaCodec(
-        maxPixels: 1000,
-        runLengthEncoding: false,
-      ),
-      TiffCodec(
-        maxPixels: 1000,
-        compression: TiffCompression.none,
-      ),
-      WebPCodec(),
+      const TgaCodec(),
+      const TiffCodec(),
+      const WebPCodec(),
     ];
 
     for (int index = 0; index < codecs.length; index++) {
@@ -185,7 +160,7 @@ void main() {
 
       expect(rasterCodec.rasterDecoder, isA<RasterDecoder>());
       expect(rasterCodec.rasterEncoder, isA<RasterEncoder>());
-      expect(ImageFormat.sniff(encoded), ImageFormat.values[index]);
+      expect(ImageFormat.sniff(encoded), same(rasterCodec.format));
       expect(decoded.width, source.width);
       expect(decoded.height, source.height);
     }
@@ -194,30 +169,31 @@ void main() {
   test('synchronous codecs run in a worker isolate', () async {
     final Uint8List pixels = Uint8List.fromList(testImage().bytes);
 
-    final List<(ImageFormat?, int, int)> results = await Isolate.run(() {
+    final List<(bool, int, int)> results = await Isolate.run(() {
       final Image image = Image.fromRgba(width: 3, height: 2, bytes: pixels, copy: false);
       final List<Codec<Image, Uint8List>> codecs = [
         const BmpCodec(),
-        const GifCodec.customCoders(),
-        JpegCodec(),
-        JpegXlCodec(),
-        OpenExrCodec(),
-        PngCodec(),
+        const GifCodec(),
+        const JpegCodec(),
+        const JpegXlCodec(),
+        const OpenExrCodec(),
+        const PngCodec(),
         const QoiCodec(),
-        TgaCodec(),
-        TiffCodec(),
-        WebPCodec(),
+        const TgaCodec(),
+        const TiffCodec(),
+        const WebPCodec(),
       ];
-      final List<(ImageFormat?, int, int)> decodedFormats = [];
+      final List<(bool, int, int)> decodedFormats = [];
       for (final Codec<Image, Uint8List> codec in codecs) {
         final Uint8List encoded = codec.encode(image);
         final Image decoded = codec.decode(encoded);
-        decodedFormats.add((ImageFormat.sniff(encoded), decoded.width, decoded.height));
+        final RasterCodec rasterCodec = codec as RasterCodec;
+        decodedFormats.add((identical(ImageFormat.sniff(encoded), rasterCodec.format), decoded.width, decoded.height));
       }
       return decodedFormats;
     });
 
-    expect(results, [for (final ImageFormat format in ImageFormat.values) (format, 3, 2)]);
+    expect(results, List.filled(10, (true, 3, 2)));
   });
 }
 

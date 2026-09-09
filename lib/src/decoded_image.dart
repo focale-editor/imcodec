@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/exception.dart';
 import 'package:imcodec/src/image.dart';
-import 'package:imcodec/src/image_codec_exception.dart';
 
 /// Identifies the process channels retained by a decoded raster.
 enum DecodedColorModel {

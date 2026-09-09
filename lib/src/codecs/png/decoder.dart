@@ -1,7 +1,7 @@
 part of '../png.dart';
 
 /// Decodes standard and Adam7-interlaced PNG pixels synchronously.
-final class PngDecoder extends RasterDecoder {
+final class PngDecoder extends RasterDecoder<PngDecodeOptions> {
   /// Eight-byte PNG file signature.
   static const List<int> _signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -22,8 +22,8 @@ final class PngDecoder extends RasterDecoder {
 
   /// Decodes the default PNG image to straight-alpha RGBA pixels.
   @override
-  Image decode(Uint8List bytes, {required int maxPixels}) {
-    final (_PngHeader header, DecodedSampleFormat sampleFormat, Uint8List samples) = _decodeSamples(bytes, maxPixels: maxPixels);
+  Image decodeImage(Uint8List bytes, PngDecodeOptions options) {
+    final (_PngHeader header, DecodedSampleFormat sampleFormat, Uint8List samples) = _decodeSamples(bytes, maxPixels: options.maxPixels);
     if (sampleFormat != DecodedSampleFormat.uint8) {
       return _wrapSamples(header, sampleFormat, samples).toImage();
     }
@@ -551,6 +551,19 @@ final class PngDecoder extends RasterDecoder {
     }
     return aboveDistance <= upperLeftDistance ? above : upperLeft;
   }
+
+  @override
+  PngDecodeOptions createDecodeOptions({
+    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
+  }) => PngDecodeOptions(maxPixels: maxPixels);
+}
+
+/// Options for the PNG decoder.
+final class PngDecodeOptions extends RasterDecodeOptions {
+  /// Creates a PNG decode with the default options.
+  const PngDecodeOptions({
+    super.maxPixels,
+  });
 }
 
 /// Stores the structural fields needed to decode PNG pixels.

@@ -47,7 +47,10 @@ void main() {
 
   for (final (String label, Image photo, _) in additionalPhotos) {
     test('JPEG XL fast round-trips the additional $label fixture', () {
-      final Uint8List encoded = encodeJpegXl(photo, effort: JpegXlEffort.fast);
+      final Uint8List encoded = encodeJpegXl(
+        photo,
+        options: const JpegXlEncodeOptions(effort: JpegXlEffort.fast),
+      );
 
       expect(decodeJpegXl(encoded).bytes, photo.bytes);
     });
@@ -61,11 +64,25 @@ void main() {
       expect(decodeTga(encodeTga(photo)).bytes, photo.bytes, reason: 'TGA');
       expect(decodeTiff(encodeTiff(photo)).bytes, photo.bytes, reason: 'TIFF');
       expect(decodeWebP(encodeWebP(photo)).bytes, photo.bytes, reason: 'WebP');
-      expect(decodeJpegXl(encodeJpegXl(photo, effort: JpegXlEffort.fast)).bytes, photo.bytes, reason: 'JPEG XL');
+      expect(
+        decodeJpegXl(
+          encodeJpegXl(
+            photo,
+            options: const JpegXlEncodeOptions(effort: JpegXlEffort.fast),
+          ),
+        ).bytes,
+        photo.bytes,
+        reason: 'JPEG XL',
+      );
     });
 
     test('JPEG survives a round-trip of $label with a small error', () {
-      final Image decoded = decodeJpg(encodeJpg(photo, quality: 95));
+      final Image decoded = decodeJpg(
+        encodeJpg(
+          photo,
+          options: const JpegEncodeOptions(quality: 95),
+        ),
+      );
 
       expect(decoded.width, photo.width);
       expect(decoded.height, photo.height);

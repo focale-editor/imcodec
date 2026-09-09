@@ -6,22 +6,22 @@ part of '../open_exr.dart';
 /// RGBA. Scene-linear colour is converted from the authored chromaticities to
 /// encoded sRGB so the result has an explicit interpretation in consumers that
 /// use [DecodedImage]. Extra arbitrary channels are skipped without allocation.
-final class OpenExrDecoder extends RasterDecoder {
+final class OpenExrDecoder extends RasterDecoder<OpenExrDecodeOptions> {
   /// Creates an OpenEXR decoder.
   const OpenExrDecoder();
 
   @override
-  Image decode(Uint8List bytes, {required int maxPixels}) => decodeData(
+  Image decodeImage(Uint8List bytes, OpenExrDecodeOptions options) => decodeData(
     bytes,
-    maxPixels: maxPixels,
-    maxDecodedBytes: maxPixels * 16,
+    maxPixels: options.maxPixels,
+    maxDecodedBytes: options.maxPixels * 16,
   ).toImage();
 
   /// Decodes authored colour channels without reducing HDR precision.
   DecodedImage decodeData(
     Uint8List bytes, {
     required int maxPixels,
-    int maxDecodedBytes = defaultMaxPixels * 16,
+    required int maxDecodedBytes,
   }) {
     if (maxPixels < 1) {
       throw RangeError.range(maxPixels, 1, null, 'maxPixels');
@@ -266,6 +266,19 @@ final class OpenExrDecoder extends RasterDecoder {
     final double encoded = magnitude <= 0.0031308 ? 12.92 * magnitude : 1.055 * math.pow(magnitude, 1 / 2.4) - 0.055;
     return sign * encoded;
   }
+
+  @override
+  OpenExrDecodeOptions createDecodeOptions({
+    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
+  }) => OpenExrDecodeOptions(maxPixels: maxPixels);
+}
+
+/// The OpenEXT decoder options.
+final class OpenExrDecodeOptions extends RasterDecodeOptions {
+  /// Creates OpenEXR decoder options.
+  const OpenExrDecodeOptions({
+    super.maxPixels,
+  });
 }
 
 /// Reads enough OpenEXR metadata to select the exact decoder path.

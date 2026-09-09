@@ -59,7 +59,10 @@ void main() {
   test('encodes a VP8 key frame accepted by Flutter and preserves alpha', () async {
     final Image source = _createLossySource();
 
-    final Uint8List encoded = encodeWebP(source, quality: 75);
+    final Uint8List encoded = encodeWebP(
+      source,
+      options: const WebPEncodeOptions(quality: 75),
+    );
     final Image decoded = decodeWebP(encoded);
     final ui.Codec flutterCodec = await ui.instantiateImageCodec(encoded);
     addTearDown(flutterCodec.dispose);
@@ -83,9 +86,20 @@ void main() {
   test('higher quality reduces reconstruction error', () {
     final Image source = _createLossySource(width: 47, height: 35);
 
-    final Image lowQuality = decodeWebP(encodeWebP(source, quality: 10));
+    final Image lowQuality = decodeWebP(
+      encodeWebP(
+        source,
+        options: const WebPEncodeOptions(quality: 10),
+      ),
+    );
     final Image highQuality = decodeWebP(
-      encodeWebP(source, quality: 95, effort: WebPEffort.maximum),
+      encodeWebP(
+        source,
+        options: const WebPEncodeOptions(
+          quality: 95,
+          effort: WebPEffort.maximum,
+        ),
+      ),
     );
     final double highQualityError = _meanRgbError(source, highQuality);
 
@@ -100,13 +114,14 @@ void main() {
     final Image source = _createLossySource(width: 47, height: 35);
     final Uint8List balancedBytes = encodeWebP(
       source,
-      quality: 75,
-      effort: WebPEffort.balanced,
+      options: const WebPEncodeOptions(quality: 75),
     );
     final Uint8List maximumBytes = encodeWebP(
       source,
-      quality: 75,
-      effort: WebPEffort.maximum,
+      options: const WebPEncodeOptions(
+        quality: 75,
+        effort: WebPEffort.maximum,
+      ),
     );
     final Image balanced = decodeWebP(balancedBytes);
     final Image maximum = decodeWebP(maximumBytes);
@@ -122,13 +137,16 @@ void main() {
     test('${effort.name} effort produces a decodable image', () {
       final Image source = _createLossySource(width: 17, height: 9);
 
-      final Uint8List encoded = WebPEncoder.lossy(
-        quality: 70,
-        effort: effort,
-      ).encode(source);
+      final Uint8List encoded = const WebPEncoder().encode(
+        source,
+        encodeOptions: WebPEncodeOptions(
+          quality: 70,
+          effort: effort,
+        ),
+      );
       final Image decoded = const WebPDecoder().decode(
         encoded,
-        maxPixels: 1000,
+        decodeOptions: const WebPDecodeOptions(maxPixels: 1000),
       );
 
       expect((decoded.width, decoded.height), (17, 9));
@@ -137,40 +155,74 @@ void main() {
 
   test('quality is clamped and public entry points agree', () async {
     final Image source = _createLossySource(width: 13, height: 11);
-    final Uint8List minimum = encodeWebP(source, quality: 0);
-    final Uint8List maximum = encodeWebP(source, quality: 100);
+    final Uint8List minimum = encodeWebP(
+      source,
+      options: const WebPEncodeOptions(quality: 0),
+    );
+    final Uint8List maximum = encodeWebP(
+      source,
+      options: const WebPEncodeOptions(quality: 100),
+    );
     final Uint8List expected = encodeWebP(
       source,
-      quality: 64,
-      effort: WebPEffort.fast,
+      options: const WebPEncodeOptions(
+        quality: 64,
+        effort: WebPEffort.fast,
+      ),
     );
 
-    expect(encodeWebP(source, quality: -20), minimum);
-    expect(encodeWebP(source, quality: 140), maximum);
     expect(
-      encodeWebP(source, quality: 64, effort: WebPEffort.fast),
+      encodeWebP(
+        source,
+        options: const WebPEncodeOptions(quality: -20),
+      ),
+      minimum,
+    );
+    expect(
+      encodeWebP(
+        source,
+        options: const WebPEncodeOptions(quality: 140),
+      ),
+      maximum,
+    );
+    expect(
+      encodeWebP(
+        source,
+        options: const WebPEncodeOptions(
+          quality: 64,
+          effort: WebPEffort.fast,
+        ),
+      ),
       expected,
     );
     expect(
-      WebPCodec(
-        quality: 64,
-        effort: WebPEffort.fast,
-      ).encode(source),
+      const WebPCodec().encode(
+        source,
+        encodeOptions: const WebPEncodeOptions(
+          quality: 64,
+          effort: WebPEffort.fast,
+        ),
+      ),
       expected,
     );
     expect(
-      const WebPEncoder(
-        quality: 64,
-        effort: WebPEffort.fast,
-      ).encode(source),
+      const WebPEncoder().encode(
+        source,
+        encodeOptions: const WebPEncodeOptions(
+          quality: 64,
+          effort: WebPEffort.fast,
+        ),
+      ),
       expected,
     );
     expect(
       encodeImage(
         source,
         format: ImageFormat.webp,
-        webPQuality: 64,
-        webPEffort: WebPEffort.fast,
+        options: const WebPEncodeOptions(
+          quality: 64,
+          effort: WebPEffort.fast,
+        ),
       ),
       expected,
     );
@@ -178,8 +230,10 @@ void main() {
       await encodeWebPWith(
         runSequentially,
         source,
-        quality: 64,
-        effort: WebPEffort.fast,
+        options: const WebPEncodeOptions(
+          quality: 64,
+          effort: WebPEffort.fast,
+        ),
       ),
       expected,
     );
@@ -188,8 +242,10 @@ void main() {
         runSequentially,
         source,
         format: ImageFormat.webp,
-        webPQuality: 64,
-        webPEffort: WebPEffort.fast,
+        options: const WebPEncodeOptions(
+          quality: 64,
+          effort: WebPEffort.fast,
+        ),
       ),
       expected,
     );

@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:imcodec/src/image_codec_exception.dart';
+import 'package:imcodec/src/codecs/exception.dart';
 
 /// Reads bounded integer values from an encoded image buffer.
 final class InputBuffer {

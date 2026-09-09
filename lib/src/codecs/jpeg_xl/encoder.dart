@@ -1,32 +1,27 @@
 part of '../jpeg_xl.dart';
 
 /// Encodes straight-alpha RGBA images as lossless JPEG XL Modular data.
-final class JpegXlEncoder extends RasterEncoder with ParallelRasterEncoder {
-  /// How much candidate search the encoder performs.
-  final JpegXlEffort effort;
-
+final class JpegXlEncoder extends RasterEncoder<JpegXlEncodeOptions> with ParallelRasterEncoder<JpegXlEncodeOptions> {
   /// Creates a lossless JPEG XL encoder.
-  const JpegXlEncoder({
-    this.effort = JpegXlEffort.balanced,
-  });
+  const JpegXlEncoder();
 
   @override
-  Uint8List encode(Image image) => encodeLossless(
+  Uint8List encodeImage(Image image, JpegXlEncodeOptions options) => encodeLossless(
     image.bytes,
     width: image.width,
     height: image.height,
     hasAlpha: true,
-    effort: effort,
+    effort: options.effort,
   );
 
   @override
-  Future<Uint8List> encodeWith(ParallelRunner runner, Image input) => encodeLosslessWith(
+  Future<Uint8List> encodeImageWith(ParallelRunner runner, Image input, JpegXlEncodeOptions options) => encodeLosslessWith(
     runner,
     input.bytes,
     width: input.width,
     height: input.height,
     hasAlpha: true,
-    effort: effort,
+    effort: options.effort,
   );
 
   /// Losslessly encodes interleaved 8-bit pixels.
@@ -122,7 +117,7 @@ final class JpegXlEncoder extends RasterEncoder with ParallelRasterEncoder {
   }
 
   /// Losslessly re-encodes a decoded [JpegXlDecodedImage] (integer samples only).
-  Uint8List encodeImage(JpegXlDecodedImage image, {JpegXlEffort effort = JpegXlEffort.balanced}) {
+  Uint8List encodeImageLossless(JpegXlDecodedImage image, {JpegXlEffort effort = JpegXlEffort.balanced}) {
     final ImageHeader header = image.header;
     if (header.bitDepth.usesFloatSamples || image.channels[0].isFloat) {
       throw ArgumentError('only integer images can be re-encoded losslessly');
@@ -164,6 +159,20 @@ final class JpegXlEncoder extends RasterEncoder with ParallelRasterEncoder {
     height: height,
     config: config ?? VarDctConfiguration.fromDistance(distance: distance),
   );
+
+  @override
+  JpegXlEncodeOptions createDefaultEncodeOptions() => const JpegXlEncodeOptions();
+}
+
+/// Lossy JPEG XL encoder options.
+final class JpegXlEncodeOptions extends RasterEncodeOptions {
+  /// How much candidate search the encoder performs.
+  final JpegXlEffort effort;
+
+  /// Creates lossy JPEG XL encoder options.
+  const JpegXlEncodeOptions({
+    this.effort = JpegXlEffort.balanced,
+  });
 }
 
 /// The default hybrid-uint tokenization config, also used to train the

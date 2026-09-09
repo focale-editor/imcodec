@@ -10,12 +10,15 @@ void main(List<String> arguments) {
   final Uint8List encodedSource = File(imagePath).readAsBytesSync();
   final Image image = _decodeSource(imagePath, encodedSource);
 
-  const JpegXlEncoder encoder = JpegXlEncoder(effort: JpegXlEffort.fast);
-  final Uint8List warmup = encoder.convert(image);
+  const JpegXlEncoder encoder = JpegXlEncoder();
+  const JpegXlEncodeOptions options = JpegXlEncodeOptions(
+    effort: JpegXlEffort.fast,
+  );
+  final Uint8List warmup = encoder.convert(image, encodeOptions: options);
   final List<double> throughputs = <double>[];
   for (int iteration = 0; iteration < iterations; iteration++) {
     final Stopwatch stopwatch = Stopwatch()..start();
-    final Uint8List result = encoder.convert(image);
+    final Uint8List result = encoder.convert(image, encodeOptions: options);
     stopwatch.stop();
     if (result.length != warmup.length) {
       throw StateError('The encoder produced inconsistent output sizes.');

@@ -50,9 +50,10 @@ void main() {
       );
 
       // Act.
-      final Uint8List encoded = OpenExrCodec(
-        compression: compression,
-      ).encode(source);
+      final Uint8List encoded = const OpenExrCodec().encode(
+        source,
+        encodeOptions: OpenExrEncodeOptions(compression: compression),
+      );
       final DecodedImage decoded = decodeOpenExrData(encoded);
       final Image display = decoded.toImage();
 
@@ -146,7 +147,9 @@ void main() {
     final Uint8List encoded = _addHalfChannels(
       encodeOpenExr(
         Image(width: 1, height: 1),
-        compression: OpenExrCompression.none,
+        options: const OpenExrEncodeOptions(
+          compression: OpenExrCompression.none,
+        ),
       ),
       5,
     );

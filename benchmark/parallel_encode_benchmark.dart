@@ -23,23 +23,23 @@ Future<void> main(List<String> arguments) async {
   final String imagePath = arguments.isEmpty ? 'test/fixtures/photos/hubble.jpg' : arguments.first;
   final int iterations = arguments.length < 2 ? 3 : int.parse(arguments[1]);
   final Uint8List encodedSource = File(imagePath).readAsBytesSync();
-  final Image image = imagePath.toLowerCase().endsWith('.png') ? PngCodec().decode(encodedSource) : JpegCodec().decode(encodedSource);
-  final List<(String, ParallelRasterCodec)> codecs = <(String, ParallelRasterCodec)>[
-    ('JPEG 4:4:4', JpegCodec(quality: 90)),
-    ('JPEG 4:2:0', JpegCodec(quality: 90, chroma: JpegChroma.yuv420)),
-    ('PNG', PngCodec(level: 6)),
+  final Image image = imagePath.toLowerCase().endsWith('.png') ? const PngCodec().decode(encodedSource) : const JpegCodec().decode(encodedSource);
+  final List<(String, ParallelRasterCodec, RasterEncodeOptions?)> codecs = <(String, ParallelRasterCodec, RasterEncodeOptions?)>[
+    ('JPEG 4:4:4', const JpegCodec(), const JpegEncodeOptions(quality: 90)),
+    ('JPEG 4:2:0', const JpegCodec(), const JpegEncodeOptions(quality: 90, chroma: JpegChroma.yuv420)),
+    ('PNG', const PngCodec(), const PngEncodeOptions(level: 6)),
     // ('BMP', const BmpCodec()),
     // ('QOI', const QoiCodec()),
     // ('TGA', TgaCodec()),
     // ('TIFF PackBits', TiffCodec()),
-    ('WebP', WebPCodec()),
+    ('WebP', const WebPCodec(), null),
   ];
 
   stdout.writeln('${image.width}x${image.height}, $iterations measured iteration(s)');
-  for (final (String label, ParallelRasterCodec codec) in codecs) {
+  for (final (String label, ParallelRasterCodec codec, RasterEncodeOptions? options) in codecs) {
     final _BenchmarkRunner runner = _BenchmarkRunner();
-    final Uint8List expected = codec.encode(image);
-    final Uint8List warmParallel = await codec.encodeWith(runner.call, image);
+    final Uint8List expected = codec.encode(image, encodeOptions: options);
+    final Uint8List warmParallel = await codec.encodeWith(runner.call, image, encodeOptions: options);
     if (!_equalBytes(expected, warmParallel)) {
       throw StateError('$label produced different bytes in parallel.');
     }
@@ -48,12 +48,12 @@ Future<void> main(List<String> arguments) async {
     final List<int> parallelTimes = <int>[];
     for (int iteration = 0; iteration < iterations; iteration++) {
       final Stopwatch sequentialWatch = Stopwatch()..start();
-      codec.encode(image);
+      codec.encode(image, encodeOptions: options);
       sequentialWatch.stop();
       sequentialTimes.add(sequentialWatch.elapsedMicroseconds);
 
       final Stopwatch parallelWatch = Stopwatch()..start();
-      await codec.encodeWith(runner.call, image);
+      await codec.encodeWith(runner.call, image, encodeOptions: options);
       parallelWatch.stop();
       parallelTimes.add(parallelWatch.elapsedMicroseconds);
     }

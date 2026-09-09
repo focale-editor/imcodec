@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:imcodec/src/codecs/exception.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/color/color_encoding.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/color/icc_codec.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/color/icc_transform.dart';
@@ -43,9 +44,8 @@ import 'package:imcodec/src/codecs/jpeg_xl/render/noise.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/render/transpose.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/render/upsample.dart';
 import 'package:imcodec/src/codecs/raster_codec.dart';
+import 'package:imcodec/src/formats/image_format.dart';
 import 'package:imcodec/src/image.dart';
-import 'package:imcodec/src/image_codec_exception.dart';
-import 'package:imcodec/src/image_format.dart';
 import 'package:imcodec/src/parallel_runner.dart';
 
 export 'jpeg_xl/encoder/effort.dart';

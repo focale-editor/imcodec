@@ -1,13 +1,13 @@
 part of '../qoi.dart';
 
 /// Decodes Quite OK Image data to RGBA pixels.
-final class QoiDecoder extends RasterDecoder {
+final class QoiDecoder extends RasterDecoder<QoiDecodeOptions> {
   /// Creates a QOI decoder.
   const QoiDecoder();
 
   /// Decodes one complete QOI image.
   @override
-  Image decode(Uint8List bytes, {required int maxPixels}) {
+  Image decodeImage(Uint8List bytes, QoiDecodeOptions options) {
     final InputBuffer input = InputBuffer(bytes);
     if (input.remaining < 14 || input.readUint8() != 0x71 || input.readUint8() != 0x6f || input.readUint8() != 0x69 || input.readUint8() != 0x66) {
       throw const ImageCodecException('Invalid QOI signature');
@@ -25,7 +25,7 @@ final class QoiDecoder extends RasterDecoder {
     if (colorSpace != 0 && colorSpace != 1) {
       throw ImageCodecException('Invalid QOI color space: $colorSpace');
     }
-    _checkPixelLimit(width, height, maxPixels);
+    _checkPixelLimit(width, height, options.maxPixels);
 
     final int pixelCount = width * height;
     final Uint8List rgba = Uint8List(pixelCount * 4);
@@ -114,4 +114,17 @@ final class QoiDecoder extends RasterDecoder {
       throw ImageCodecException('Decoded image contains $pixelCount pixels, exceeding the $maxPixels pixel limit');
     }
   }
+
+  @override
+  QoiDecodeOptions createDecodeOptions({
+    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
+  }) => QoiDecodeOptions(maxPixels: maxPixels);
+}
+
+/// Options for the QOI decoder.
+final class QoiDecodeOptions extends RasterDecodeOptions {
+  /// Creates a QOI decode with the default options.
+  const QoiDecodeOptions({
+    super.maxPixels,
+  });
 }

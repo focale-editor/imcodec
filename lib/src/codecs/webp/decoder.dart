@@ -1,13 +1,13 @@
 part of '../webp.dart';
 
 /// Decodes static and first-frame WebP images synchronously.
-final class WebPDecoder extends RasterDecoder {
+final class WebPDecoder extends RasterDecoder<WebPDecodeOptions> {
   /// Creates a WebP decoder.
   const WebPDecoder();
 
   /// Decodes VP8, VP8 with alpha, or VP8L pixels to straight RGBA.
   @override
-  Image decode(Uint8List bytes, {required int maxPixels}) {
+  Image decodeImage(Uint8List bytes, WebPDecodeOptions options) {
     if (bytes.length < 20 || _fourCharacterCode(bytes, 0) != 'RIFF' || _fourCharacterCode(bytes, 8) != 'WEBP') {
       throw const ImageCodecException('Invalid WebP RIFF header');
     }
@@ -20,7 +20,7 @@ final class WebPDecoder extends RasterDecoder {
         container.payload ?? (container.animationFrame == null ? throw const ImageCodecException('WebP contains no decodable image payload') : _readAnimationPayload(bytes, container.animationFrame!));
     final int width = _payloadWidth(payload);
     final int height = _payloadHeight(payload);
-    _checkDimensions(width, height, maxPixels: maxPixels);
+    _checkDimensions(width, height, maxPixels: options.maxPixels);
 
     final _WebPDecodingInfo information = _WebPDecodingInfo()
       ..width = width
@@ -46,7 +46,7 @@ final class WebPDecoder extends RasterDecoder {
     }
     final int canvasWidth = container.canvasWidth ?? width;
     final int canvasHeight = container.canvasHeight ?? height;
-    _checkDimensions(canvasWidth, canvasHeight, maxPixels: maxPixels);
+    _checkDimensions(canvasWidth, canvasHeight, maxPixels: options.maxPixels);
     if (frame.x + decoded.width > canvasWidth || frame.y + decoded.height > canvasHeight) {
       throw const ImageCodecException('WebP animation frame exceeds its canvas');
     }
@@ -175,6 +175,19 @@ final class WebPDecoder extends RasterDecoder {
 
   /// Reads a little-endian 32-bit integer.
   int _readUint32(Uint8List bytes, int offset) => bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24);
+
+  @override
+  WebPDecodeOptions createDecodeOptions({
+    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
+  }) => WebPDecodeOptions(maxPixels: maxPixels);
+}
+
+/// The WebP decode options.
+final class WebPDecodeOptions extends RasterDecodeOptions {
+  /// Creates a WebP decode options.
+  const WebPDecodeOptions({
+    super.maxPixels,
+  });
 }
 
 /// Distinguishes lossy VP8 from lossless VP8L payloads.

@@ -13,34 +13,25 @@ enum JpegChroma {
 ///
 /// The implementation uses a forward discrete cosine transform and canonical
 /// JPEG Huffman tables.
-final class JpegEncoder extends RasterEncoder with ParallelRasterEncoder {
-  /// Compression quality from 1 through 100.
-  final int quality;
-
-  /// Chroma sampling used by the encoder.
-  final JpegChroma chroma;
-
+final class JpegEncoder extends RasterEncoder<JpegEncodeOptions> with ParallelRasterEncoder<JpegEncodeOptions> {
   /// Creates an immutable baseline JPEG encoder configuration.
-  const JpegEncoder({
-    this.quality = 100,
-    this.chroma = JpegChroma.yuv444,
-  });
+  const JpegEncoder();
 
   @override
-  Uint8List encode(Image image) => _JpegEncodingSession(
-    quality: quality,
-    chroma: chroma,
+  Uint8List encodeImage(Image image, JpegEncodeOptions options) => _JpegEncodingSession(
+    quality: options.quality,
+    chroma: options.chroma,
   ).encode(image);
 
   @override
-  Future<Uint8List> encodeWith(ParallelRunner runner, Image input) async {
+  Future<Uint8List> encodeImageWith(ParallelRunner runner, Image input, JpegEncodeOptions options) async {
     final _JpegEncodingSession session = _JpegEncodingSession(
-      quality: quality,
-      chroma: chroma,
+      quality: options.quality,
+      chroma: options.chroma,
     );
     session._checkDimensions(input);
 
-    final int mcuHeight = chroma == JpegChroma.yuv444 ? 8 : 16;
+    final int mcuHeight = options.chroma == JpegChroma.yuv444 ? 8 : 16;
     final int mcuRowCount = (input.height + mcuHeight - 1) ~/ mcuHeight;
     if (input.width * input.height < _minimumJpegParallelPixels || mcuRowCount < 2) {
       return session.encode(input);
@@ -48,8 +39,8 @@ final class JpegEncoder extends RasterEncoder with ParallelRasterEncoder {
 
     final List<_JpegBandJob> jobs = _createJpegBandJobs(
       input,
-      quality: quality,
-      chroma: chroma,
+      quality: options.quality,
+      chroma: options.chroma,
       mcuHeight: mcuHeight,
       mcuRowCount: mcuRowCount,
     );
@@ -63,6 +54,24 @@ final class JpegEncoder extends RasterEncoder with ParallelRasterEncoder {
       height: input.height,
     );
   }
+
+  @override
+  JpegEncodeOptions createDefaultEncodeOptions() => const JpegEncodeOptions();
+}
+
+/// Options for JPEG encoding.
+final class JpegEncodeOptions extends RasterEncodeOptions {
+  /// The JPEG quality to use.
+  final int quality;
+
+  /// Selects the chroma sampling used by the JPEG encoder.
+  final JpegChroma chroma;
+
+  /// Creates an immutable baseline JPEG encoder configuration.
+  const JpegEncodeOptions({
+    this.quality = 100,
+    this.chroma = JpegChroma.yuv444,
+  });
 }
 
 /// Small images finish before isolate startup and message transfer pay off.

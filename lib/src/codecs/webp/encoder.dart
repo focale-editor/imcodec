@@ -108,7 +108,7 @@ _WebPTransformBand _runWebPTransformJob(_WebPTransformJob job) => const WebPEnco
 ///
 /// The default constructor remains lossless. Supplying [quality], or using
 /// [WebPEncoder.lossy], selects the lossy encoder.
-final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
+final class WebPEncoder extends RasterEncoder<WebPEncodeOptions> with ParallelRasterEncoder<WebPEncodeOptions> {
   /// Maps nearby two-dimensional pixel offsets to VP8L distance plane codes.
   static const List<int> _distancePlaneLookup = <int>[
     // yoffset=0 (xoffset 8..1, then 0..-7 which are unused=255)
@@ -129,41 +129,19 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
     119, 116, 111, 106, 97, 88, 84, 74, 72, 75, 85, 89, 98, 107, 112, 117,
   ];
 
-  /// Lossy quality from zero through 100, or `null` for lossless encoding.
-  final int? quality;
-
-  /// How much candidate search the lossy encoder performs.
-  final WebPEffort effort;
-
   /// Creates a WebP encoder.
   ///
   /// Encoding stays lossless when [quality] is omitted. Supplied quality
   /// values are clamped to the range from zero through 100.
-  const WebPEncoder({
-    this.quality,
-    this.effort = WebPEffort.balanced,
-  });
-
-  /// Creates an encoder that produces lossy VP8 data.
-  const WebPEncoder.lossy({
-    int quality = 75,
-    WebPEffort effort = WebPEffort.balanced,
-  }) : this(
-         quality: quality,
-         effort: effort,
-       );
-
-  /// Whether this encoder produces lossy VP8 data.
-  bool get isLossy => quality != null;
+  const WebPEncoder();
 
   /// Encodes [image] with the configured WebP representation.
   @override
-  Uint8List encode(Image image) {
-    final int? lossyQuality = quality;
-    if (lossyQuality != null) {
+  Uint8List encodeImage(Image image, WebPEncodeOptions options) {
+    if (options.isLossy) {
       return _Vp8LossyEncoder(
-        quality: lossyQuality.clamp(0, 100),
-        effort: effort,
+        quality: options.quality!.clamp(0, 100),
+        effort: options.effort,
       ).encode(image);
     }
     _checkInput(image);
@@ -178,14 +156,14 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
   }
 
   @override
-  Future<Uint8List> encodeWith(ParallelRunner runner, Image input) async {
-    if (isLossy) {
-      return encode(input);
+  Future<Uint8List> encodeImageWith(ParallelRunner runner, Image input, WebPEncodeOptions options) async {
+    if (options.isLossy) {
+      return encode(input, encodeOptions: options);
     }
     _checkInput(input);
     final int predictorBlockRowCount = (input.height + _webPPredictorBlockSize - 1) ~/ _webPPredictorBlockSize;
     if (input.width * input.height < _minimumWebPParallelPixels || predictorBlockRowCount < 2) {
-      return encode(input);
+      return encode(input, encodeOptions: options);
     }
     final _WebPTransformResult transformed = await _transformImageWith(
       runner,
@@ -1284,6 +1262,27 @@ final class WebPEncoder extends RasterEncoder with ParallelRasterEncoder {
     }
     return bytes;
   }
+
+  @override
+  WebPEncodeOptions createDefaultEncodeOptions() => const WebPEncodeOptions();
+}
+
+/// The options for encoding a WebP image.
+final class WebPEncodeOptions extends RasterEncodeOptions {
+  /// Lossy quality from zero through 100, or `null` for lossless encoding.
+  final int? quality;
+
+  /// How much candidate search the lossy encoder performs.
+  final WebPEffort effort;
+
+  /// Creates a new WebP encode options.
+  const WebPEncodeOptions({
+    this.quality,
+    this.effort = .balanced,
+  });
+
+  /// Returns `true` if this encoder is lossy.
+  bool get isLossy => quality != null;
 }
 
 /// A code-length symbol with optional extra bits.

@@ -1,18 +1,13 @@
 part of '../open_exr.dart';
 
 /// Encodes straight RGBA samples as scene-linear half-float OpenEXR.
-final class OpenExrEncoder extends RasterEncoder {
-  /// Compression applied independently to scan-line blocks.
-  final OpenExrCompression compression;
-
+final class OpenExrEncoder extends RasterEncoder<OpenExrEncodeOptions> {
   /// Creates a half-float OpenEXR encoder.
-  const OpenExrEncoder({
-    this.compression = OpenExrCompression.zip,
-  });
+  const OpenExrEncoder();
 
   /// Encodes straight eight-bit sRGB pixels.
   @override
-  Uint8List encode(Image image) => _encode(
+  Uint8List encodeImage(Image image, OpenExrEncodeOptions options) => _encode(
     width: image.width,
     height: image.height,
     encodeRows: (firstY, rowCount) => _encodeByteRows(
@@ -20,13 +15,15 @@ final class OpenExrEncoder extends RasterEncoder {
       firstY,
       rowCount,
     ),
+    compression: options.compression,
   );
 
   /// Encodes straight extended-sRGB float samples without clipping HDR values.
-  Uint8List encodeFloat32Rgba({
+  static Uint8List encodeFloat32Rgba({
     required int width,
     required int height,
     required Float32List pixels,
+    required OpenExrEncodeOptions options,
   }) {
     if (width < 1 || height < 1) {
       throw RangeError('OpenEXR dimensions must be positive');
@@ -47,16 +44,18 @@ final class OpenExrEncoder extends RasterEncoder {
         firstY: firstY,
         rowCount: rowCount,
       ),
+      compression: options.compression,
     );
   }
 
   /// Builds the header, offset table, and encoded scan-line blocks.
-  Uint8List _encode({
+  static Uint8List _encode({
     required int width,
     required int height,
     required Uint8List Function(int firstY, int rowCount) encodeRows,
+    required OpenExrCompression compression,
   }) {
-    final Uint8List header = _header(width, height);
+    final Uint8List header = _header(width, height, compression);
     final List<Uint8List> blocks = [];
     for (int firstY = 0; firstY < height; firstY += compression.linesPerBlock) {
       final int rowCount = math.min(
@@ -64,7 +63,7 @@ final class OpenExrEncoder extends RasterEncoder {
         height - firstY,
       );
       final Uint8List raw = encodeRows(firstY, rowCount);
-      final Uint8List packed = _compress(raw);
+      final Uint8List packed = _compress(raw, compression);
       final BytesBuilder block = BytesBuilder(copy: false)
         ..add(_int32(firstY))
         ..add(_uint32(packed.lengthInBytes))
@@ -83,7 +82,7 @@ final class OpenExrEncoder extends RasterEncoder {
   }
 
   /// Writes the required single-part scan-line header attributes.
-  Uint8List _header(int width, int height) {
+  static Uint8List _header(int width, int height, OpenExrCompression compression) {
     final BytesBuilder output = BytesBuilder(copy: false)
       ..add(const [0x76, 0x2f, 0x31, 0x01])
       ..add(_uint32(2))
@@ -107,7 +106,7 @@ final class OpenExrEncoder extends RasterEncoder {
   }
 
   /// Describes alphabetically ordered half-float A, B, G, and R channels.
-  Uint8List _channelList() {
+  static Uint8List _channelList() {
     final BytesBuilder output = BytesBuilder(copy: false);
     for (final String name in const ['A', 'B', 'G', 'R']) {
       output
@@ -122,7 +121,7 @@ final class OpenExrEncoder extends RasterEncoder {
   }
 
   /// Serializes one zero-origin integer display or data window.
-  Uint8List _box(int width, int height) {
+  static Uint8List _box(int width, int height) {
     final BytesBuilder output = BytesBuilder(copy: false)
       ..add(_int32(0))
       ..add(_int32(0))
@@ -132,7 +131,7 @@ final class OpenExrEncoder extends RasterEncoder {
   }
 
   /// Converts byte rows from encoded sRGB to planar scene-linear half values.
-  Uint8List _encodeByteRows(Image image, int firstY, int rowCount) {
+  static Uint8List _encodeByteRows(Image image, int firstY, int rowCount) {
     final ByteData output = ByteData(rowCount * image.width * 8);
     int destination = 0;
     for (int row = 0; row < rowCount; row++) {
@@ -150,7 +149,7 @@ final class OpenExrEncoder extends RasterEncoder {
   }
 
   /// Converts float rows from extended sRGB to planar linear half values.
-  Uint8List _encodeFloatRows(
+  static Uint8List _encodeFloatRows(
     Float32List pixels, {
     required int width,
     required int firstY,
@@ -178,7 +177,7 @@ final class OpenExrEncoder extends RasterEncoder {
   }
 
   /// Applies the OpenEXR byte reordering, predictor, and selected compressor.
-  Uint8List _compress(Uint8List source) {
+  static Uint8List _compress(Uint8List source, OpenExrCompression compression) {
     if (compression == OpenExrCompression.none) {
       return source;
     }
@@ -197,12 +196,50 @@ final class OpenExrEncoder extends RasterEncoder {
   }
 
   /// Converts an extended encoded-sRGB component to scene-linear light.
-  double _extendedSrgbToLinear(double value) {
+  static double _extendedSrgbToLinear(double value) {
     final double sign = value < 0 ? -1 : 1;
     final double magnitude = value.abs();
     final double linear = magnitude <= 0.04045 ? magnitude / 12.92 : math.pow((magnitude + 0.055) / 1.055, 2.4).toDouble();
     return sign * linear;
   }
+
+  @override
+  OpenExrEncodeOptions createDefaultEncodeOptions() => const OpenExrEncodeOptions();
+}
+
+/// Compression methods emitted by [OpenExrEncoder].
+enum OpenExrCompression {
+  /// Stores one scan line per block without compression.
+  none(value: 0, linesPerBlock: 1),
+
+  /// Applies zlib compression independently to every scan line.
+  zips(value: 2, linesPerBlock: 1),
+
+  /// Applies zlib compression to groups of up to sixteen scan lines.
+  zip(value: 3, linesPerBlock: 16);
+
+  /// Value stored in the OpenEXR `compression` attribute.
+  final int value;
+
+  /// Number of consecutive scan lines stored by one encoded block.
+  final int linesPerBlock;
+
+  /// Creates one OpenEXR compression choice.
+  const OpenExrCompression({
+    required this.value,
+    required this.linesPerBlock,
+  });
+}
+
+/// The OpenEXR encode options.
+final class OpenExrEncodeOptions extends RasterEncodeOptions {
+  /// Compression applied independently to scan-line blocks.
+  final OpenExrCompression compression;
+
+  /// Creates OpenEXR encoder options.
+  const OpenExrEncodeOptions({
+    this.compression = OpenExrCompression.zip,
+  });
 }
 
 /// Converts a finite Dart double to rounded IEEE-754 binary16 bits.

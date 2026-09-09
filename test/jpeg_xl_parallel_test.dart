@@ -15,11 +15,12 @@ void main() {
   for (final (String label, Image source) in sources) {
     test('a parallel encode of $label matches the sequential one', () async {
       for (final JpegXlEffort effort in JpegXlEffort.values) {
-        final Uint8List sequential = encodeJpegXl(source, effort: effort);
+        final JpegXlEncodeOptions options = JpegXlEncodeOptions(effort: effort);
+        final Uint8List sequential = encodeJpegXl(source, options: options);
 
-        final Uint8List inline = await encodeJpegXlWith(runSequentially, source, effort: effort);
-        final Uint8List isolated = await encodeJpegXlWith(onIsolates, source, effort: effort);
-        final Uint8List pooled = await encodeJpegXlWith(onBoundedIsolates, source, effort: effort);
+        final Uint8List inline = await encodeJpegXlWith(runSequentially, source, options: options);
+        final Uint8List isolated = await encodeJpegXlWith(onIsolates, source, options: options);
+        final Uint8List pooled = await encodeJpegXlWith(onBoundedIsolates, source, options: options);
 
         expect(inline, sequential, reason: '$label ${effort.name} inline');
         expect(isolated, sequential, reason: '$label ${effort.name} isolates');
@@ -31,8 +32,14 @@ void main() {
 
   test('the codec exposes the same parallel entry point', () async {
     final Image source = sources.first.$2;
-    final JpegXlCodec codec = JpegXlCodec(effort: JpegXlEffort.fast);
+    const JpegXlCodec codec = JpegXlCodec();
+    const JpegXlEncodeOptions options = JpegXlEncodeOptions(
+      effort: JpegXlEffort.fast,
+    );
 
-    expect(await codec.encodeWith(onIsolates, source), codec.encode(source));
+    expect(
+      await codec.encodeWith(onIsolates, source, encodeOptions: options),
+      codec.encode(source, encodeOptions: options),
+    );
   });
 }

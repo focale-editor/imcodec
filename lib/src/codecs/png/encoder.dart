@@ -38,7 +38,7 @@ Uint8List _runPngFilterJob(_PngFilterJob job) => PngEncoder._filterRows(
 );
 
 /// Encodes images as Portable Network Graphics data.
-final class PngEncoder extends RasterEncoder with ParallelRasterEncoder {
+final class PngEncoder extends RasterEncoder<PngEncodeOptions> with ParallelRasterEncoder<PngEncodeOptions> {
   /// Eight-byte PNG file signature.
   static const List<int> _signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -51,30 +51,21 @@ final class PngEncoder extends RasterEncoder with ParallelRasterEncoder {
   /// Chunk type bytes for the end marker.
   static const List<int> _iend = [0x49, 0x45, 0x4e, 0x44];
 
-  /// Zlib compression level.
-  final int level;
-
   /// Creates a codec using a zlib [level] from 0 through 9.
-  const PngEncoder({
-    this.level = 6,
-  }) : assert(level >= 0 && level <= 9, 'PNG compression level must be between 0 and 9');
+  const PngEncoder();
 
   /// Encodes [image] as an eight-bit RGBA PNG image.
   @override
-  Uint8List encode(Image image) {
-    _checkInput(image);
-    return _encodeFiltered(
-      _filter(image),
-      width: image.width,
-      height: image.height,
-    );
+  Uint8List encodeImage(Image image, PngEncodeOptions options) {
+    _checkInput(image, options.level);
+    return _encodeFiltered(_filter(image), image.width, image.height, options.level);
   }
 
   @override
-  Future<Uint8List> encodeWith(ParallelRunner runner, Image input) async {
-    _checkInput(input);
+  Future<Uint8List> encodeImageWith(ParallelRunner runner, Image input, PngEncodeOptions options) async {
+    _checkInput(input, options.level);
     if (input.width * input.height < _minimumPngParallelPixels || input.height < 2) {
-      return encode(input);
+      return encode(input, encodeOptions: options);
     }
 
     final int jobCount = input.height < _maximumPngParallelJobs ? input.height : _maximumPngParallelJobs;
@@ -110,15 +101,11 @@ final class PngEncoder extends RasterEncoder with ParallelRasterEncoder {
       filtered.setRange(destination, destination + band.length, band);
       destination += band.length;
     }
-    return _encodeFiltered(
-      filtered,
-      width: input.width,
-      height: input.height,
-    );
+    return _encodeFiltered(filtered, input.width, input.height, options.level);
   }
 
   /// Validates options and dimensions before any output is allocated.
-  void _checkInput(Image image) {
+  void _checkInput(Image image, int level) {
     if (level < 0 || level > 9) {
       throw RangeError.range(level, 0, 9, 'level');
     }
@@ -129,10 +116,11 @@ final class PngEncoder extends RasterEncoder with ParallelRasterEncoder {
 
   /// Compresses already filtered rows and wraps them in PNG chunks.
   Uint8List _encodeFiltered(
-    Uint8List filtered, {
-    required int width,
-    required int height,
-  }) {
+    Uint8List filtered,
+    int width,
+    int height,
+    int level,
+  ) {
     final OutputBuffer output = OutputBuffer(bigEndian: true)..writeBytes(_signature);
     final OutputBuffer header = OutputBuffer(bigEndian: true)
       ..writeUint32(width)
@@ -317,4 +305,18 @@ final class PngEncoder extends RasterEncoder with ParallelRasterEncoder {
 
   /// Computes the PNG CRC-32 over a chunk type and its payload.
   static int _crc32(List<int> type, Uint8List data) => _PngChecksum.compute(type, data);
+
+  @override
+  PngEncodeOptions createDefaultEncodeOptions() => const PngEncodeOptions();
+}
+
+/// Options for the PNG encoder.
+final class PngEncodeOptions extends RasterEncodeOptions {
+  /// Zlib compression level.
+  final int level;
+
+  /// Creates a PNG encode with the default options.
+  const PngEncodeOptions({
+    this.level = 6,
+  });
 }

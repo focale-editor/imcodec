@@ -1,28 +1,23 @@
 part of '../tga.dart';
 
 /// Encodes RGBA pixels as 32-bit true-color TGA data.
-final class TgaEncoder extends RasterEncoder {
-  /// Whether encoding uses TGA run-length packets.
-  final bool runLengthEncoding;
-
+final class TgaEncoder extends RasterEncoder<TgaEncodeOptions> {
   /// TGA 2.0 footer signature.
   static const List<int> _footerSignature = [0x54, 0x52, 0x55, 0x45, 0x56, 0x49, 0x53, 0x49, 0x4f, 0x4e, 0x2d, 0x58, 0x46, 0x49, 0x4c, 0x45, 0x2e, 0x00];
 
   /// Creates a TGA encoder.
-  const TgaEncoder({
-    this.runLengthEncoding = true,
-  });
+  const TgaEncoder();
 
   /// Encodes [image], optionally using TGA run-length encoding.
   @override
-  Uint8List encode(Image image) {
+  Uint8List encodeImage(Image image, TgaEncodeOptions options) {
     if (image.width > 65535 || image.height > 65535) {
       throw const ImageCodecException('TGA dimensions may not exceed 65535 pixels');
     }
     final OutputBuffer output = OutputBuffer()
       ..writeByte(0)
       ..writeByte(0)
-      ..writeByte(runLengthEncoding ? 10 : 2)
+      ..writeByte(options.runLengthEncoding ? 10 : 2)
       ..writeUint16(0)
       ..writeUint16(0)
       ..writeByte(0)
@@ -32,7 +27,7 @@ final class TgaEncoder extends RasterEncoder {
       ..writeUint16(image.height)
       ..writeByte(32)
       ..writeByte(0x28);
-    if (runLengthEncoding) {
+    if (options.runLengthEncoding) {
       _writeRunLengthPixels(output, image);
     } else {
       for (int pixel = 0; pixel < image.width * image.height; pixel++) {
@@ -103,4 +98,18 @@ final class TgaEncoder extends RasterEncoder {
       ..writeByte(bytes[offset])
       ..writeByte(bytes[offset + 3]);
   }
+
+  @override
+  TgaEncodeOptions createDefaultEncodeOptions() => const TgaEncodeOptions();
+}
+
+/// Options for the TGA encoder.
+final class TgaEncodeOptions extends RasterEncodeOptions {
+  /// Whether encoding uses TGA run-length packets.
+  final bool runLengthEncoding;
+
+  /// Creates a TGA encode with the default options.
+  const TgaEncodeOptions({
+    this.runLengthEncoding = true,
+  });
 }
