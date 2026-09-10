@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.4.2
+Released on September 10, 2026.
+
+* **FEAT**: QOI and TGA are now inspectable ! ([#5cf46e6](https://github.com/focale-editor/imcodec/commit/5cf46e6))
+
 ## v0.4.1
 Released on September 10, 2026.
 
