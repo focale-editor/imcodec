@@ -76,6 +76,30 @@ void main() {
 
       expect(decoded.bytes, [255, 0, 0, 255, 0, 0, 0, 255]);
     });
+
+    test('is inspectable, so a caller need not decode to learn its shape', () {
+      final Uint8List encoded = encodeTga(_testImage());
+
+      final DecodedImageMetadata? metadata = inspectImage(encoded);
+
+      expect(metadata, isNotNull, reason: 'a null inspection reads as ordinary content a platform decoder could take');
+      expect(metadata!.width, 4);
+      expect(metadata.height, 2);
+      expect(metadata.bitsPerChannel, 8);
+      expect(metadata.colorModel, DecodedColorModel.rgb);
+      expect(metadata.iccProfile, isNull);
+      expect(metadata.requiresExactDecoding, isFalse);
+    });
+
+    test('inspecting the independent fixtures agrees with decoding them', () {
+      for (final Uint8List fixture in [_tga24Fixture, _tgaGrayscaleRleFixture, _tgaIndexedFixture]) {
+        final DecodedImageMetadata metadata = inspectImage(fixture)!;
+        final Image decoded = decodeTga(fixture);
+
+        expect(metadata.width, decoded.width);
+        expect(metadata.height, decoded.height);
+      }
+    });
   });
 
   group('QOI', () {
@@ -109,6 +133,34 @@ void main() {
       final Image decoded = decodeQoi(_qoiOpcodeFixture);
 
       expect(decoded.bytes, [0, 0, 0, 255, 1, 1, 1, 255, 5, 10, 4, 255, 5, 10, 4, 128, 0, 0, 0, 255]);
+    });
+
+    test('is inspectable, so a caller need not decode to learn its shape', () {
+      final Uint8List encoded = encodeQoi(_testImage());
+
+      final DecodedImageMetadata? metadata = inspectImage(encoded);
+
+      expect(metadata, isNotNull, reason: 'a null inspection reads as ordinary content a platform decoder could take');
+      expect(metadata!.width, 4);
+      expect(metadata.height, 2);
+      expect(metadata.bitsPerChannel, 8);
+      expect(metadata.colorModel, DecodedColorModel.rgb);
+      expect(metadata.iccProfile, isNull);
+      expect(metadata.requiresExactDecoding, isFalse);
+    });
+
+    test('inspecting the independent fixtures agrees with decoding them', () {
+      for (final Uint8List fixture in [_qoiRedFixture, _qoiOpcodeFixture]) {
+        final DecodedImageMetadata metadata = inspectImage(fixture)!;
+        final Image decoded = decodeQoi(fixture);
+
+        expect(metadata.width, decoded.width);
+        expect(metadata.height, decoded.height);
+      }
+    });
+
+    test('a truncated header is refused rather than guessed at', () {
+      expect(() => inspectImage(_qoiRedFixture.sublist(0, 12)), throwsA(isA<ImageCodecException>()));
     });
   });
 

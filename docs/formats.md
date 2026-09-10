@@ -71,14 +71,21 @@ light without clipping highlights; alpha is limited to zero through one.
 ## QOI
 
 QOI is encoded and decoded losslessly according to the Quite OK Image
-specification.
+specification. `inspectImage` reads the fourteen-byte header for dimensions and
+channel count; the format carries no ICC profile and no descriptive packet, and
+its colour space byte only separates sRGB from all-linear without naming a
+profile to preserve.
 
 ## TGA
 
 TGA supports color-mapped, true-color, and grayscale input, with raw or RLE
 pixel data. A 32-bit image whose attribute bytes are all zero is read as
 opaque. Output is 32-bit true-color and uses RLE by default, with packets
-confined to a single scanline as the format requires.
+confined to a single scanline as the format requires. `inspectImage` reads the
+eighteen-byte header for dimensions and pixel depth. Every TGA depth packs its
+channels into eight bits or fewer — the fifteen and sixteen bit forms use five
+each — so inspection reports eight bits per channel, and the extension area's
+authorship and gamma fields change nothing about what the samples mean.
 
 ## TIFF
 
@@ -104,7 +111,7 @@ the first animation frame. `inspectImage` also returns top-level ICCP, EXIF, and
 XMP chunks.
 
 
-# Optional formats and encoder replacements
+# Optional formats and codec replacements
 
 Imcodec stays pure Dart. Add-on packages can extend `ImageFormat` and register
 an `ImageCodecExtension`, without adding a dependency to Imcodec itself:
@@ -152,9 +159,10 @@ authoritative for the complete generic codec entry: an encoder-only extension
 also makes generic decoding unavailable until it is unregistered. Direct codec
 instances stay unchanged, and unregistering restores the built-in entry.
 
-`imcodec_native` uses this API for AVIF/HEIF and native JPEG XL/WebP encoders,
-with the same engines compiled to WebAssembly for browsers. Applications that
-do not add and initialize that package retain their pure-Dart behavior.
+`imcodec_native` uses this API for AVIF/HEIF and complete native JPEG XL/WebP
+codec replacements, with the same engines compiled to WebAssembly for
+browsers. Applications that do not add and initialize that package retain
+their pure-Dart behavior.
 
 Since 0.4.0, `ImageFormat` is an extensible class, not an enum. Its existing
 constants, `name` and `sniff` remain available. Use
