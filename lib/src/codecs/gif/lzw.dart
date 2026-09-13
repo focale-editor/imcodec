@@ -21,6 +21,9 @@ abstract final class _GifLzwEncoder {
       return output.takeBytes();
     }
     int prefix = indices.first;
+    // Whether a code has been written since the last clear code. The decoder
+    // only defines a dictionary entry once it holds a previous code.
+    bool emittedSinceClear = false;
     for (int position = 1; position < indices.length; position++) {
       final int symbol = indices[position];
       final int key = prefix << 8 | symbol;
@@ -30,6 +33,7 @@ abstract final class _GifLzwEncoder {
         continue;
       }
       output.write(prefix, codeSize);
+      emittedSinceClear = true;
       if (nextCode < 4096) {
         dictionary[key] = nextCode++;
         // The newly inserted code need not fit until it can be emitted by a
@@ -45,12 +49,19 @@ abstract final class _GifLzwEncoder {
         codeSize = minimumCodeSize + 1;
         nextCode = endCode + 1;
         codeLimit = 1 << codeSize;
+        emittedSinceClear = false;
       }
       prefix = symbol;
     }
-    output
-      ..write(prefix, codeSize)
-      ..write(endCode, codeSize);
+    output.write(prefix, codeSize);
+    // Reading that last code makes the decoder define one more entry, exactly
+    // as every earlier code did, and widen its codes when that entry fills the
+    // current width. The end code has to be written at the width the decoder
+    // will read it with, or the stream appears to have no end code at all.
+    if (emittedSinceClear && nextCode < 4096 && nextCode + 1 > codeLimit && codeSize < 12) {
+      codeSize++;
+    }
+    output.write(endCode, codeSize);
     return output.takeBytes();
   }
 }

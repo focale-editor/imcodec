@@ -35,6 +35,45 @@ void main() {
     await _expectFlutterAccepts(encoded, width: 4, height: 2);
   });
 
+  test('GIF LZW writes the end code at the width the decoder reads it with', () async {
+    // Small images with few colours end exactly where the decoder widens its
+    // codes; an end code written one bit too narrow reads as a missing one.
+    const List<List<int>> palette = [
+      [0, 0, 0, 0],
+      [255, 0, 0, 255],
+      [0, 255, 0, 255],
+      [0, 0, 255, 255],
+    ];
+    int seed = 1;
+    int nextRandom(int bound) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed % bound;
+    }
+
+    int flutterChecks = 0;
+    for (int trial = 0; trial < 4000; trial++) {
+      final int width = 1 + nextRandom(12);
+      final int height = 1 + nextRandom(6);
+      final int colours = 1 + nextRandom(palette.length);
+      final Image source = Image(width: width, height: height);
+      for (int index = 0; index < width * height; index++) {
+        source.bytes.setAll(index * 4, palette[nextRandom(colours)]);
+      }
+
+      final Uint8List encoded = encodeGif(
+        source,
+        options: const GifEncodeOptions(ditherAmount: 0),
+      );
+
+      expect(decodeImage(encoded).bytes, source.bytes, reason: '${width}x$height trial $trial');
+      if (trial % 40 == 0) {
+        await _expectFlutterAccepts(encoded, width: width, height: height);
+        flutterChecks++;
+      }
+    }
+    expect(flutterChecks, 100);
+  });
+
   test('GIF LZW grows its dictionary without changing decoded pixels', () {
     final Image source = Image(width: 257, height: 97);
     for (int y = 0; y < source.height; y++) {
