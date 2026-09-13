@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.4.4
+Released on September 13, 2026.
+
+* **FIX**: Fixed GIF LZW end code size when the dictionary widens after the final code. ([#5c28638](https://github.com/focale-editor/imcodec/commit/5c28638))
+
 ## v0.4.3
 Released on September 13, 2026.
 
