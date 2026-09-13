@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="screenshots/overview.png" alt="Imcodec package illustration" width="180">
+</p>
+
 # Imcodec
 
 Imcodec is a focused Flutter image codec for BMP, GIF, JPEG, JPEG XL, OpenEXR,
@@ -172,3 +176,7 @@ The JPEG XL implementation is adapted from
 [`koni_jxl`](https://github.com/zenbaku/koni_jxl), released by Jonathan Urzúa
 under the MIT License. Its decoding logic includes work derived from the MIT
 licensed [`JXLatte`](https://github.com/Traneptora/jxlatte) project.
+
+---
+
+Built for **[Focale](https://focale-editor.app)**, an advanced local image editor. Discover what these packages make possible in a real creative workflow.
