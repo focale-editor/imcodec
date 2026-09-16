@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:imcodec/src/codecs/exception.dart';
+import 'package:imcodec/src/codecs/open_exr/offsets_native.dart' if (dart.library.js_interop) 'package:imcodec/src/codecs/open_exr/offsets_web.dart' as offsets;
 import 'package:imcodec/src/codecs/raster_codec.dart';
 import 'package:imcodec/src/decoded_image.dart';
 import 'package:imcodec/src/formats/image_format.dart';

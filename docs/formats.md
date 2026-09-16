@@ -68,6 +68,11 @@ also exposes uncompressed and ZIPS output. `encodeOpenExrFloat32Rgba` accepts
 straight extended-sRGB values and converts colour channels to scene-linear
 light without clipping highlights; alpha is limited to zero through one.
 
+The same API works on the Dart VM and the Web. A conditional Web adapter
+reads and writes file offsets as two 32-bit words and checks them against
+the input length before combining them. Other platforms retain native
+64-bit accessors; encoded files use the same eight-byte offsets everywhere.
+
 ## QOI
 
 QOI is encoded and decoded losslessly according to the Quite OK Image

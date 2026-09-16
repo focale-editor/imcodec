@@ -311,7 +311,8 @@ Uint8List _uint32(int value) {
 
 /// Serializes one unsigned little-endian 64-bit value.
 Uint8List _uint64(int value) {
-  final ByteData data = ByteData(8)..setUint64(0, value, Endian.little);
+  final ByteData data = ByteData(8);
+  offsets.writeOffset(data, 0, value);
   return data.buffer.asUint8List();
 }
 

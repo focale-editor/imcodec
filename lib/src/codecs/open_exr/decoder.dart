@@ -795,11 +795,8 @@ final class _OpenExrReader {
   /// Reads one bounded unsigned little-endian 64-bit file offset.
   int uint64() {
     _ensure(8);
-    final int value = _data.getUint64(offset, Endian.little);
+    final int value = offsets.readOffset(_data, offset, maxOffset: _bytes.lengthInBytes - 8);
     offset += 8;
-    if (value > _bytes.lengthInBytes - 8) {
-      throw const ImageCodecException('OpenEXR block offset lies outside the file');
-    }
     return value;
   }
 

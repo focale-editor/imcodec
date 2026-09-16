@@ -111,6 +111,42 @@ void main() {
     );
   });
 
+  test('rejects oversized block offsets without truncating their high word', () {
+    // Arrange.
+    final Uint8List valid = encodeOpenExr(Image(width: 1, height: 1));
+    final int offsetTable = _openExrHeaderEnd(valid);
+    final int validLow = ByteData.sublistView(valid).getUint32(offsetTable, Endian.little);
+    for (final (int low, int high) in [
+      (validLow, 1),
+      (validLow, 0x200000),
+      (validLow, 0x80000000),
+      (0xffffffff, 0xffffffff),
+      (0x80000000, 0),
+      (valid.length - 7, 0),
+    ]) {
+      final Uint8List encoded = Uint8List.fromList(valid);
+      ByteData.sublistView(encoded)
+        ..setUint32(offsetTable, low, Endian.little)
+        ..setUint32(offsetTable + 4, high, Endian.little);
+
+      // Act and assert.
+      expect(
+        () => decodeOpenExrData(encoded),
+        throwsA(isA<ImageCodecException>().having((error) => error.message, 'message', 'OpenEXR block offset lies outside the file')),
+        reason: 'low=$low, high=$high',
+      );
+    }
+  });
+
+  test('rejects a truncated block-offset table', () {
+    // Arrange.
+    final Uint8List valid = encodeOpenExr(Image(width: 1, height: 1));
+    final Uint8List truncated = valid.sublist(0, _openExrHeaderEnd(valid) + 7);
+
+    // Act and assert.
+    expect(() => decodeOpenExrData(truncated), throwsA(isA<ImageCodecException>()));
+  });
+
   test('rejects unsupported decreasing scan-line order explicitly', () {
     // Arrange.
     final Uint8List encoded = encodeOpenExr(Image(width: 1, height: 1));
@@ -239,9 +275,12 @@ Uint8List _addHalfChannels(Uint8List encoded, int count) {
       Endian.little,
     );
   final int offsetTable = _openExrHeaderEnd(result);
-  resultData.setUint64(
+  // This small fixture has no high offset word; avoid native-only accessors
+  // so the same malformed-file checks also run in a browser.
+  expect(resultData.getUint32(offsetTable + 4, Endian.little), 0);
+  resultData.setUint32(
     offsetTable,
-    resultData.getUint64(offsetTable, Endian.little) + addedBytes.lengthInBytes,
+    resultData.getUint32(offsetTable, Endian.little) + addedBytes.lengthInBytes,
     Endian.little,
   );
   return result;
