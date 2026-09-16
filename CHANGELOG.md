@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.4.5
+Released on September 17, 2026.
+
+* **FEAT**: Added pixel density encoding and metadata inspection for image resolution, orientation, and Extended XMP. ([#6c9eb4c](https://github.com/focale-editor/imcodec/commit/6c9eb4c))
+
 ## v0.4.4
 Released on September 13, 2026.
 
