@@ -170,7 +170,7 @@ final class PngEncoder extends RasterEncoder<PngEncodeOptions> with ParallelRast
       _writeChunk(output, _phys, physical.getBytes());
     }
 
-    final Uint8List compressed = Uint8List.fromList(ZlibCodec(level: level).encode(filtered));
+    final Uint8List compressed = ZlibCodec(level: level).encode(filtered);
     _writeChunk(output, _idat, compressed);
     _writeChunk(output, _iend, Uint8List(0));
     return output.takeBytes();
@@ -361,4 +361,10 @@ final class PngEncodeOptions extends RasterEncodeOptions {
     this.level = 6,
     this.pixelsPerInch,
   });
+
+  /// Favors encoding speed over file size with zlib compression level one.
+  ///
+  /// Pixels remain lossless and use the same adaptive row filters as the
+  /// default encoder. The resulting file may be larger.
+  const PngEncodeOptions.fast({double? pixelsPerInch}) : this(level: 1, pixelsPerInch: pixelsPerInch);
 }
