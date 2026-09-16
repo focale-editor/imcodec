@@ -1,5 +1,11 @@
 # 📰 Imcodec changelog
 
+## v0.4.6
+Released on September 17, 2026.
+
+* **FEAT**: Added `PngEncodeOptions.fast()` for level-one lossless PNG encoding while preserving the default compression level. ([#0df12b7](https://github.com/focale-editor/imcodec/commit/0df12b7))
+* **CHORE**: Accelerating eight-bit OpenEXR encoding with exact sRGB and alpha half-float lookup tables. ([#d7b2014](https://github.com/focale-editor/imcodec/commit/d7b2014))
+
 ## v0.4.5
 Released on September 17, 2026.
 
