@@ -4,4 +4,5 @@ docs/
 AGENTS.md
 build
 analysis_options.yaml
+pubspec_overrides.yaml
 imcodec.iml

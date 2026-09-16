@@ -2,6 +2,16 @@ part of '../open_exr.dart';
 
 /// Encodes straight RGBA samples as scene-linear half-float OpenEXR.
 final class OpenExrEncoder extends RasterEncoder<OpenExrEncodeOptions> {
+  /// Scene-linear half-float bits for each encoded sRGB byte value.
+  static final Uint16List _byteColorHalf = Uint16List.fromList([
+    for (int byte = 0; byte < 256; byte++) _doubleToHalf(_extendedSrgbToLinear(byte / 255)),
+  ]);
+
+  /// Half-float bits for each linear alpha byte value.
+  static final Uint16List _byteAlphaHalf = Uint16List.fromList([
+    for (int byte = 0; byte < 256; byte++) _doubleToHalf(byte / 255),
+  ]);
+
   /// Creates a half-float OpenEXR encoder.
   const OpenExrEncoder();
 
@@ -137,10 +147,10 @@ final class OpenExrEncoder extends RasterEncoder<OpenExrEncodeOptions> {
     for (int row = 0; row < rowCount; row++) {
       final int sourceRow = (firstY + row) * image.width * 4;
       for (final int channel in const [3, 2, 1, 0]) {
+        final Uint16List halfValues = channel == 3 ? _byteAlphaHalf : _byteColorHalf;
         for (int x = 0; x < image.width; x++) {
           final int byte = image.bytes[sourceRow + x * 4 + channel];
-          final double value = channel == 3 ? byte / 255 : _extendedSrgbToLinear(byte / 255);
-          output.setUint16(destination, _doubleToHalf(value), Endian.little);
+          output.setUint16(destination, halfValues[byte], Endian.little);
           destination += 2;
         }
       }
@@ -189,9 +199,7 @@ final class OpenExrEncoder extends RasterEncoder<OpenExrEncodeOptions> {
     for (int index = predicted.lengthInBytes - 1; index > 0; index--) {
       predicted[index] = (predicted[index] - predicted[index - 1] + 128) & 0xff;
     }
-    final Uint8List compressed = Uint8List.fromList(
-      const ZlibCodec().encode(predicted),
-    );
+    final Uint8List compressed = const ZlibCodec().encode(predicted);
     return compressed.lengthInBytes < source.lengthInBytes ? compressed : source;
   }
 

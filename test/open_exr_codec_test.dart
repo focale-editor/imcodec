@@ -33,6 +33,35 @@ void main() {
   });
 
   for (final OpenExrCompression compression in OpenExrCompression.values) {
+    test('matches float encoding for every byte value with ${compression.name}', () {
+      // Arrange. Nineteen rows include both a full ZIP block and its tail.
+      final Uint8List pixels = Uint8List(256 * 19 * 4);
+      final Float32List floats = Float32List(pixels.length);
+      for (int pixel = 0; pixel < 256 * 19; pixel++) {
+        final int offset = pixel * 4;
+        pixels[offset] = pixel & 0xff;
+        pixels[offset + 1] = 255 - (pixel & 0xff);
+        pixels[offset + 2] = (pixel * 73) & 0xff;
+        pixels[offset + 3] = (pixel * 151) & 0xff;
+      }
+      for (int index = 0; index < pixels.length; index++) {
+        floats[index] = pixels[index] / 255;
+      }
+      final Image source = Image.fromRgba(width: 256, height: 19, bytes: pixels);
+      final OpenExrEncodeOptions options = OpenExrEncodeOptions(compression: compression);
+
+      // Act. The float encoder retains the per-sample conversion path.
+      final Uint8List encoded = encodeOpenExr(source, options: options);
+      final Uint8List reference = encodeOpenExrFloat32Rgba(width: 256, height: 19, pixels: floats, options: options);
+      final Uint8List savedEncoding = Uint8List.fromList(encoded);
+      final Image decoded = decodeOpenExrData(encoded).toImage();
+
+      // Assert.
+      expect(encoded, reference);
+      expect(encoded, savedEncoding, reason: 'decoding must not mutate compressed input');
+      expect(decoded.bytes, pixels);
+    });
+
     test('round-trips half-float RGBA with ${compression.name}', () {
       // Arrange.
       final Uint8List pixels = Uint8List(7 * 19 * 4);

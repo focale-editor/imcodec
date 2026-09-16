@@ -200,6 +200,84 @@ void main() {
       expect(metadata.iptcMetadata, orderedEquals(iptc));
     });
 
+    test('inspect EXIF orientation and physical resolution in JPEG', () {
+      final Uint8List encoded = _buildJpegMetadata(
+        width: 7,
+        height: 5,
+        componentCount: 3,
+        iccProfile: Uint8List.fromList(<int>[1, 2]),
+        exifMetadata: _buildExifImageInfo(
+          orientation: 6,
+          horizontalPixelsPerInch: 300,
+          verticalPixelsPerInch: 150,
+        ),
+      );
+
+      final DecodedImageMetadata metadata = inspectImage(encoded)!;
+
+      expect(metadata.orientation, 6);
+      expect(metadata.orientedWidth, 5);
+      expect(metadata.orientedHeight, 7);
+      expect(metadata.horizontalPixelsPerInch, closeTo(300, 0.001));
+      expect(metadata.verticalPixelsPerInch, closeTo(150, 0.001));
+      expect(metadata.pixelsPerInch, closeTo(225, 0.001));
+    });
+
+    test('reassembles out-of-order Extended XMP chunks', () {
+      const String guid = '0123456789ABCDEF0123456789ABCDEF';
+      final Uint8List standard = Uint8List.fromList(
+        utf8.encode(
+          '<rdf:RDF xmlns:rdf="urn:rdf" xmlns:xmpNote="http://ns.adobe.com/xmp/note/">'
+          '<rdf:Description xmpNote:HasExtendedXMP="$guid"/>'
+          '</rdf:RDF>',
+        ),
+      );
+      final Uint8List extended = Uint8List.fromList(
+        List<int>.generate(90000, (index) => index % 251),
+      );
+      final Uint8List encoded = _buildJpegMetadata(
+        width: 7,
+        height: 5,
+        componentCount: 3,
+        iccProfile: Uint8List.fromList(<int>[1, 2]),
+        xmpMetadata: standard,
+        extendedXmpMetadata: extended,
+        extendedXmpGuid: guid,
+      );
+
+      final DecodedImageMetadata metadata = inspectImage(encoded)!;
+
+      expect(metadata.xmpMetadata, orderedEquals(standard));
+      expect(metadata.extendedXmpMetadata, orderedEquals(extended));
+    });
+
+    test('round-trips physical resolution through core encoders', () {
+      final Image image = Image(width: 2, height: 3);
+      final List<Uint8List> encoded = [
+        encodeJpg(
+          image,
+          options: const JpegEncodeOptions(pixelsPerInch: 300),
+        ),
+        encodePng(
+          image,
+          options: const PngEncodeOptions(pixelsPerInch: 300),
+        ),
+        encodeBmp(
+          image,
+          options: const BmpEncodeOptions(pixelsPerInch: 300),
+        ),
+        encodeTiff(
+          image,
+          options: const TiffEncodeOptions(pixelsPerInch: 300),
+        ),
+      ];
+
+      for (final Uint8List bytes in encoded) {
+        final DecodedImageMetadata metadata = inspectImage(bytes)!;
+        expect(metadata.pixelsPerInch, closeTo(300, 0.03));
+      }
+    });
+
     test('inspect EXIF and XMP chunks in WebP containers', () {
       final Uint8List exif = Uint8List.fromList(<int>[1, 3, 5]);
       final Uint8List xmp = Uint8List.fromList(utf8.encode('<x:xmpmeta />'));
@@ -534,6 +612,8 @@ Uint8List _buildJpegMetadata({
   Uint8List? exifMetadata,
   Uint8List? xmpMetadata,
   Uint8List? iptcMetadata,
+  Uint8List? extendedXmpMetadata,
+  String? extendedXmpGuid,
 }) {
   final int split = iccProfile.lengthInBytes ~/ 2;
   final Uint8List first = Uint8List.sublistView(iccProfile, 0, split);
@@ -569,6 +649,31 @@ Uint8List _buildJpegMetadata({
         ]),
       ),
     );
+  }
+  if (extendedXmpMetadata != null) {
+    final String guid =
+        extendedXmpGuid ??
+        (throw ArgumentError(
+          'Extended XMP requires a GUID',
+        ));
+    const int split = 40000;
+    for (final int offset in [split, 0, split * 2]) {
+      if (offset >= extendedXmpMetadata.lengthInBytes) {
+        continue;
+      }
+      final int end = (offset + split).clamp(
+        0,
+        extendedXmpMetadata.lengthInBytes,
+      );
+      output.add(
+        _jpegExtendedXmpSegment(
+          guid,
+          extendedXmpMetadata,
+          offset,
+          end,
+        ),
+      );
+    }
   }
   if (iptcMetadata != null) {
     output.add(_jpegSegment(0xed, _photoshopIptcResource(iptcMetadata)));
@@ -621,6 +726,73 @@ Uint8List _jpegSegment(int marker, Uint8List payload) {
     result,
   ).setUint16(2, payload.lengthInBytes + 2, Endian.big);
   return result;
+}
+
+/// Wraps one range of an Extended XMP packet in a JPEG APP1 segment.
+Uint8List _jpegExtendedXmpSegment(
+  String guid,
+  Uint8List packet,
+  int offset,
+  int end,
+) {
+  final Uint8List framing = Uint8List(8);
+  ByteData.sublistView(framing)
+    ..setUint32(0, packet.lengthInBytes, Endian.big)
+    ..setUint32(4, offset, Endian.big);
+  return _jpegSegment(
+    0xe1,
+    Uint8List.fromList(<int>[
+      ...'http://ns.adobe.com/xmp/extension/\u0000'.codeUnits,
+      ...guid.codeUnits,
+      ...framing,
+      ...Uint8List.sublistView(packet, offset, end),
+    ]),
+  );
+}
+
+/// Builds a bounded little-endian EXIF root directory for image properties.
+Uint8List _buildExifImageInfo({
+  required int orientation,
+  required int horizontalPixelsPerInch,
+  required int verticalPixelsPerInch,
+}) {
+  const int tiffStart = 6;
+  const int directory = 14;
+  const int horizontalOffset = 68;
+  const int verticalOffset = 76;
+  final Uint8List packet = Uint8List(84)..setAll(0, 'Exif\u0000\u0000'.codeUnits);
+  final ByteData data = ByteData.sublistView(packet)
+    ..setUint8(tiffStart, 0x49)
+    ..setUint8(tiffStart + 1, 0x49)
+    ..setUint16(tiffStart + 2, 42, Endian.little)
+    ..setUint32(tiffStart + 4, 8, Endian.little)
+    ..setUint16(directory, 4, Endian.little);
+
+  /// Writes one scalar or offset root-directory entry.
+  void entry(int index, int tag, int type, int value) {
+    final int offset = directory + 2 + index * 12;
+    data
+      ..setUint16(offset, tag, Endian.little)
+      ..setUint16(offset + 2, type, Endian.little)
+      ..setUint32(offset + 4, 1, Endian.little);
+    if (type == 3) {
+      data.setUint16(offset + 8, value, Endian.little);
+    } else {
+      data.setUint32(offset + 8, value, Endian.little);
+    }
+  }
+
+  entry(0, 274, 3, orientation);
+  entry(1, 282, 5, horizontalOffset - tiffStart);
+  entry(2, 283, 5, verticalOffset - tiffStart);
+  entry(3, 296, 3, 2);
+  data
+    ..setUint32(directory + 2 + 4 * 12, 0, Endian.little)
+    ..setUint32(horizontalOffset, horizontalPixelsPerInch, Endian.little)
+    ..setUint32(horizontalOffset + 4, 1, Endian.little)
+    ..setUint32(verticalOffset, verticalPixelsPerInch, Endian.little)
+    ..setUint32(verticalOffset + 4, 1, Endian.little);
+  return packet;
 }
 
 /// Creates an extended WebP container carrying dimensions and an ICC chunk.

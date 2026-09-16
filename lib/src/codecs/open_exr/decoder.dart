@@ -152,9 +152,7 @@ final class OpenExrDecoder extends RasterDecoder<OpenExrDecodeOptions> {
   /// Decompresses one bounded ZIP or ZIPS payload.
   Uint8List _decodeZlib(Uint8List packed, int expectedLength) {
     try {
-      return Uint8List.fromList(
-        ZlibCodec(maxOutputBytes: expectedLength).decode(packed),
-      );
+      return ZlibCodec(maxOutputBytes: expectedLength).decode(packed);
     } on Object catch (error) {
       throw ImageCodecException(
         'Could not decompress the OpenEXR ZIP block',

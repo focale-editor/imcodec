@@ -63,7 +63,7 @@ void main() {
     expect(() => encodeImage(image, format: _CustomFormat.custom), throwsA(isA<ImageCodecException>()));
   });
 
-  test('encoder-only overrides replace generic decoding but leave direct codecs intact', () async {
+  test('registered overrides replace the generic codec but leave direct codecs intact', () async {
     final _TestExtension extension = _TestExtension(format: ImageFormat.webp);
     final Uint8List dartBytes = const WebPCodec().encode(image);
     ImageCodecRegistry.register(extension);
@@ -101,8 +101,8 @@ void main() {
     );
     expect((extension.options as WebPEncodeOptions).quality, 50);
     expect(const WebPCodec().encode(image), dartBytes);
-    expect(() => decodeImage(dartBytes), throwsA(isA<ImageCodecException>()));
-    expect(() => decodeImageData(dartBytes), throwsA(isA<ImageCodecException>()));
+    expect(decodeImage(dartBytes).bytes, image.bytes);
+    expect(decodeImageData(dartBytes).bytes, image.bytes);
     expect(inspectImage(dartBytes)?.width, 1);
   });
 

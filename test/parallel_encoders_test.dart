@@ -50,6 +50,7 @@ void main() {
     ('JPEG 4:4:4', const JpegCodec(), const JpegEncodeOptions(quality: 91), largeSource),
     ('JPEG 4:2:0', const JpegCodec(), const JpegEncodeOptions(quality: 91, chroma: JpegChroma.yuv420), largeSource),
     ('PNG', const PngCodec(), const PngEncodeOptions(), mediumSource),
+    ('PNG fast', const PngCodec(), const PngEncodeOptions.fast(pixelsPerInch: 144), mediumSource),
     ('WebP', const WebPCodec(), const WebPEncodeOptions(), mediumSource),
   ];
 
