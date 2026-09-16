@@ -45,6 +45,9 @@ final class PngEncoder extends RasterEncoder<PngEncodeOptions> with ParallelRast
   /// Chunk type bytes for the image header.
   static const List<int> _ihdr = [0x49, 0x48, 0x44, 0x52];
 
+  /// Chunk type bytes for physical pixel dimensions.
+  static const List<int> _phys = [0x70, 0x48, 0x59, 0x73];
+
   /// Chunk type bytes for compressed image data.
   static const List<int> _idat = [0x49, 0x44, 0x41, 0x54];
 
@@ -58,7 +61,13 @@ final class PngEncoder extends RasterEncoder<PngEncodeOptions> with ParallelRast
   @override
   Uint8List encodeImage(Image image, PngEncodeOptions options) {
     _checkInput(image, options.level);
-    return _encodeFiltered(_filter(image), image.width, image.height, options.level);
+    return _encodeFiltered(
+      _filter(image),
+      image.width,
+      image.height,
+      options.level,
+      options.pixelsPerInch,
+    );
   }
 
   @override
@@ -101,7 +110,13 @@ final class PngEncoder extends RasterEncoder<PngEncodeOptions> with ParallelRast
       filtered.setRange(destination, destination + band.length, band);
       destination += band.length;
     }
-    return _encodeFiltered(filtered, input.width, input.height, options.level);
+    return _encodeFiltered(
+      filtered,
+      input.width,
+      input.height,
+      options.level,
+      options.pixelsPerInch,
+    );
   }
 
   /// Validates options and dimensions before any output is allocated.
@@ -120,6 +135,7 @@ final class PngEncoder extends RasterEncoder<PngEncodeOptions> with ParallelRast
     int width,
     int height,
     int level,
+    double? pixelsPerInch,
   ) {
     final OutputBuffer output = OutputBuffer(bigEndian: true)..writeBytes(_signature);
     final OutputBuffer header = OutputBuffer(bigEndian: true)
@@ -131,6 +147,28 @@ final class PngEncoder extends RasterEncoder<PngEncodeOptions> with ParallelRast
       ..writeByte(0)
       ..writeByte(0);
     _writeChunk(output, _ihdr, header.getBytes());
+    if (pixelsPerInch != null) {
+      if (!pixelsPerInch.isFinite || pixelsPerInch <= 0) {
+        throw ArgumentError.value(
+          pixelsPerInch,
+          'pixelsPerInch',
+          'Pixel density must be finite and positive',
+        );
+      }
+      final int pixelsPerMeter = (pixelsPerInch * 39.37007874015748).round();
+      if (pixelsPerMeter > 0xffffffff) {
+        throw ArgumentError.value(
+          pixelsPerInch,
+          'pixelsPerInch',
+          'PNG pixel density exceeds the format limit',
+        );
+      }
+      final OutputBuffer physical = OutputBuffer(bigEndian: true)
+        ..writeUint32(pixelsPerMeter)
+        ..writeUint32(pixelsPerMeter)
+        ..writeByte(1);
+      _writeChunk(output, _phys, physical.getBytes());
+    }
 
     final Uint8List compressed = Uint8List.fromList(ZlibCodec(level: level).encode(filtered));
     _writeChunk(output, _idat, compressed);
@@ -315,8 +353,12 @@ final class PngEncodeOptions extends RasterEncodeOptions {
   /// Zlib compression level.
   final int level;
 
+  /// Optional square pixel density written to the `pHYs` chunk.
+  final double? pixelsPerInch;
+
   /// Creates a PNG encode with the default options.
   const PngEncodeOptions({
     this.level = 6,
+    this.pixelsPerInch,
   });
 }

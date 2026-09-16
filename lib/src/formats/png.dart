@@ -21,6 +21,8 @@ final class _PngFormat extends ImageFormat with InspectableFormat {
     Uint8List? iccProfile;
     Uint8List? exifMetadata;
     Uint8List? xmpMetadata;
+    double? horizontalPixelsPerInch;
+    double? verticalPixelsPerInch;
     int position = 8;
     while (position < bytes.lengthInBytes) {
       if (position > bytes.lengthInBytes - 12) {
@@ -80,6 +82,23 @@ final class _PngFormat extends ImageFormat with InspectableFormat {
           maximumBytes: maxDescriptiveMetadataBytes,
           label: 'PNG EXIF',
         );
+      } else if (type == 'pHYs' && length == 9) {
+        final int horizontalPixelsPerMeter = data.getUint32(
+          payloadOffset,
+          Endian.big,
+        );
+        final int verticalPixelsPerMeter = data.getUint32(
+          payloadOffset + 4,
+          Endian.big,
+        );
+        if (bytes[payloadOffset + 8] == 1) {
+          if (horizontalPixelsPerMeter > 0) {
+            horizontalPixelsPerInch = horizontalPixelsPerMeter / 39.37007874015748;
+          }
+          if (verticalPixelsPerMeter > 0) {
+            verticalPixelsPerInch = verticalPixelsPerMeter / 39.37007874015748;
+          }
+        }
       } else if (type == 'iTXt') {
         final Uint8List? packet = _pngXmpPacket(
           bytes,
@@ -105,6 +124,8 @@ final class _PngFormat extends ImageFormat with InspectableFormat {
       iccProfile: iccProfile,
       exifMetadata: exifMetadata,
       xmpMetadata: xmpMetadata,
+      horizontalPixelsPerInch: horizontalPixelsPerInch,
+      verticalPixelsPerInch: verticalPixelsPerInch,
     );
   }
 

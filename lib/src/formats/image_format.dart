@@ -237,3 +237,98 @@ int _littleUint24(Uint8List bytes, int offset) => bytes[offset] | (bytes[offset 
 
 /// Reads one unsigned little-endian thirty-two-bit integer.
 int _littleUint32(Uint8List bytes, int offset) => bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24);
+
+/// Pixel interpretation fields read from one bounded EXIF TIFF directory.
+final class _ExifImageInfo {
+  /// Default metadata used when the packet is absent or malformed.
+  static const _ExifImageInfo empty = _ExifImageInfo(orientation: 1);
+
+  /// Encoded display orientation.
+  final int orientation;
+
+  /// Horizontal density expressed in pixels per inch.
+  final double? horizontalPixelsPerInch;
+
+  /// Vertical density expressed in pixels per inch.
+  final double? verticalPixelsPerInch;
+
+  /// Creates one parsed EXIF image projection.
+  const _ExifImageInfo({
+    required this.orientation,
+    this.horizontalPixelsPerInch,
+    this.verticalPixelsPerInch,
+  });
+}
+
+/// Reads orientation and density without trusting any EXIF offset.
+_ExifImageInfo _inspectExifImageInfo(Uint8List? packet) {
+  if (packet == null) {
+    return _ExifImageInfo.empty;
+  }
+  try {
+    final int tiffStart = packet.lengthInBytes >= 6 && _matchesAscii(packet, 0, 'Exif\u0000\u0000') ? 6 : 0;
+    if (packet.lengthInBytes - tiffStart < 8) {
+      return _ExifImageInfo.empty;
+    }
+    final Endian endian = switch ((packet[tiffStart], packet[tiffStart + 1])) {
+      (0x49, 0x49) => Endian.little,
+      (0x4d, 0x4d) => Endian.big,
+      _ => throw const FormatException('Invalid EXIF byte order'),
+    };
+    final ByteData data = ByteData.sublistView(packet);
+    if (data.getUint16(tiffStart + 2, endian) != 42) {
+      return _ExifImageInfo.empty;
+    }
+    final int directory = tiffStart + data.getUint32(tiffStart + 4, endian);
+    if (directory < tiffStart || directory > packet.lengthInBytes - 2) {
+      return _ExifImageInfo.empty;
+    }
+    final int count = data.getUint16(directory, endian);
+    if (count > (packet.lengthInBytes - directory - 2) ~/ 12) {
+      return _ExifImageInfo.empty;
+    }
+    int orientation = 1;
+    double? horizontal;
+    double? vertical;
+    int resolutionUnit = 2;
+    for (int index = 0; index < count; index++) {
+      final int entry = directory + 2 + index * 12;
+      final int tag = data.getUint16(entry, endian);
+      final int type = data.getUint16(entry + 2, endian);
+      final int valueCount = data.getUint32(entry + 4, endian);
+      if (tag == 274 && type == 3 && valueCount == 1) {
+        final int candidate = data.getUint16(entry + 8, endian);
+        if (candidate >= 1 && candidate <= 8) {
+          orientation = candidate;
+        }
+      } else if ((tag == 282 || tag == 283) && type == 5 && valueCount == 1) {
+        final int relativeOffset = data.getUint32(entry + 8, endian);
+        final int valueOffset = tiffStart + relativeOffset;
+        if (valueOffset >= tiffStart && valueOffset <= packet.lengthInBytes - 8) {
+          final int numerator = data.getUint32(valueOffset, endian);
+          final int denominator = data.getUint32(valueOffset + 4, endian);
+          if (denominator != 0) {
+            final double value = numerator / denominator;
+            if (value.isFinite && value > 0) {
+              if (tag == 282) {
+                horizontal = value;
+              } else {
+                vertical = value;
+              }
+            }
+          }
+        }
+      } else if (tag == 296 && type == 3 && valueCount == 1) {
+        resolutionUnit = data.getUint16(entry + 8, endian);
+      }
+    }
+    final double scale = resolutionUnit == 3 ? 2.54 : 1;
+    return _ExifImageInfo(
+      orientation: orientation,
+      horizontalPixelsPerInch: horizontal == null ? null : horizontal * scale,
+      verticalPixelsPerInch: vertical == null ? null : vertical * scale,
+    );
+  } on Object {
+    return _ExifImageInfo.empty;
+  }
+}

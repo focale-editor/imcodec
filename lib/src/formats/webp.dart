@@ -76,6 +76,7 @@ final class _WebPFormat extends ImageFormat with InspectableFormat {
     if (width == null || height == null) {
       throw const ImageCodecException('WebP is missing image dimensions');
     }
+    final _ExifImageInfo exif = _inspectExifImageInfo(exifMetadata);
     return DecodedImageMetadata(
       width: width,
       height: height,
@@ -84,6 +85,8 @@ final class _WebPFormat extends ImageFormat with InspectableFormat {
       iccProfile: iccProfile,
       exifMetadata: exifMetadata,
       xmpMetadata: xmpMetadata,
+      horizontalPixelsPerInch: exif.horizontalPixelsPerInch,
+      verticalPixelsPerInch: exif.verticalPixelsPerInch,
     );
   }
 }

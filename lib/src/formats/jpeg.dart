@@ -7,6 +7,11 @@ final class _JpegFormat extends ImageFormat with InspectableFormat {
     'http://ns.adobe.com/xap/1.0/\u0000'.codeUnits,
   );
 
+  /// JPEG APP1 prefix preceding an Extended XMP chunk.
+  static final Uint8List _jpegExtendedXmpHeader = Uint8List.fromList(
+    'http://ns.adobe.com/xmp/extension/\u0000'.codeUnits,
+  );
+
   /// Creates a Joint Photographic Experts Group format.
   const _JpegFormat() : super(name: 'jpeg');
 
@@ -28,6 +33,11 @@ final class _JpegFormat extends ImageFormat with InspectableFormat {
     Uint8List? exifMetadata;
     Uint8List? iptcMetadata;
     Uint8List? xmpMetadata;
+    final Map<int, Uint8List> extendedXmpChunks = {};
+    String? extendedXmpGuid;
+    int? extendedXmpLength;
+    double? jfifHorizontalPixelsPerInch;
+    double? jfifVerticalPixelsPerInch;
     int offset = 2;
     while (offset < bytes.lengthInBytes) {
       while (offset < bytes.lengthInBytes && bytes[offset] != 0xff) {
@@ -63,6 +73,15 @@ final class _JpegFormat extends ImageFormat with InspectableFormat {
         height = (bytes[payload + 1] << 8) | bytes[payload + 2];
         width = (bytes[payload + 3] << 8) | bytes[payload + 4];
         componentCount = bytes[payload + 5];
+      } else if (marker == 0xe0 && payloadLength >= 12 && _matchesAscii(bytes, payload, 'JFIF\u0000')) {
+        final int unit = bytes[payload + 7];
+        final int horizontal = (bytes[payload + 8] << 8) | bytes[payload + 9];
+        final int vertical = (bytes[payload + 10] << 8) | bytes[payload + 11];
+        final double scale = unit == 2 ? 2.54 : 1;
+        if ((unit == 1 || unit == 2) && horizontal > 0 && vertical > 0) {
+          jfifHorizontalPixelsPerInch = horizontal * scale;
+          jfifVerticalPixelsPerInch = vertical * scale;
+        }
       } else if (marker == 0xe2 && payloadLength >= 14 && _matchesAscii(bytes, payload, 'ICC_PROFILE\u0000')) {
         final int sequence = bytes[payload + 12];
         final int count = bytes[payload + 13];
@@ -96,6 +115,43 @@ final class _JpegFormat extends ImageFormat with InspectableFormat {
           maximumBytes: maxDescriptiveMetadataBytes,
           label: 'JPEG XMP',
         );
+      } else if (marker == 0xe1 && payloadLength >= _jpegExtendedXmpHeader.length + 40 && _matchesBytes(bytes, payload, _jpegExtendedXmpHeader)) {
+        final int headerEnd = payload + _jpegExtendedXmpHeader.length;
+        final String guid = String.fromCharCodes(
+          bytes,
+          headerEnd,
+          headerEnd + 32,
+        ).toUpperCase();
+        if (!RegExp(r'^[0-9A-F]{32}$').hasMatch(guid)) {
+          throw const ImageCodecException('JPEG Extended XMP has an invalid GUID');
+        }
+        final ByteData values = ByteData.sublistView(bytes);
+        final int fullLength = values.getUint32(headerEnd + 32, Endian.big);
+        final int chunkOffset = values.getUint32(headerEnd + 36, Endian.big);
+        final int chunkStart = headerEnd + 40;
+        final int chunkLength = payload + payloadLength - chunkStart;
+        if (fullLength < 1 ||
+            fullLength > maxDescriptiveMetadataBytes ||
+            chunkLength < 1 ||
+            chunkOffset > fullLength - chunkLength ||
+            extendedXmpGuid != null && extendedXmpGuid != guid ||
+            extendedXmpLength != null && extendedXmpLength != fullLength) {
+          throw const ImageCodecException('JPEG Extended XMP framing is invalid');
+        }
+        for (final MapEntry<int, Uint8List> chunk in extendedXmpChunks.entries) {
+          final int existingEnd = chunk.key + chunk.value.lengthInBytes;
+          final int chunkEnd = chunkOffset + chunkLength;
+          if (chunkOffset < existingEnd && chunk.key < chunkEnd) {
+            throw const ImageCodecException(
+              'JPEG Extended XMP chunks overlap',
+            );
+          }
+        }
+        extendedXmpGuid = guid;
+        extendedXmpLength = fullLength;
+        extendedXmpChunks[chunkOffset] = Uint8List.fromList(
+          Uint8List.sublistView(bytes, chunkStart, chunkStart + chunkLength),
+        );
       } else if (marker == 0xed) {
         final Uint8List? packet = _jpegIptcPacket(
           bytes,
@@ -115,6 +171,21 @@ final class _JpegFormat extends ImageFormat with InspectableFormat {
       expectedChunks,
       totalProfileBytes,
     );
+    final Uint8List? extendedXmpMetadata = _joinExtendedXmpChunks(
+      extendedXmpChunks,
+      extendedXmpLength,
+    );
+    if (extendedXmpMetadata != null &&
+        xmpMetadata != null &&
+        extendedXmpGuid != null &&
+        !String.fromCharCodes(
+          xmpMetadata,
+        ).toUpperCase().contains(extendedXmpGuid)) {
+      throw const ImageCodecException(
+        'JPEG Extended XMP does not match its standard packet',
+      );
+    }
+    final _ExifImageInfo exif = _inspectExifImageInfo(exifMetadata);
     return DecodedImageMetadata(
       width: width,
       height: height,
@@ -124,6 +195,10 @@ final class _JpegFormat extends ImageFormat with InspectableFormat {
       exifMetadata: exifMetadata,
       iptcMetadata: iptcMetadata,
       xmpMetadata: xmpMetadata,
+      extendedXmpMetadata: extendedXmpMetadata,
+      orientation: exif.orientation,
+      horizontalPixelsPerInch: exif.horizontalPixelsPerInch ?? jfifHorizontalPixelsPerInch,
+      verticalPixelsPerInch: exif.verticalPixelsPerInch ?? jfifVerticalPixelsPerInch,
     );
   }
 
@@ -208,6 +283,31 @@ final class _JpegFormat extends ImageFormat with InspectableFormat {
       }
       result.setAll(offset, chunk);
       offset += chunk.lengthInBytes;
+    }
+    return result;
+  }
+
+  /// Joins a complete set of offset-addressed Extended XMP chunks.
+  Uint8List? _joinExtendedXmpChunks(
+    Map<int, Uint8List> chunks,
+    int? expectedLength,
+  ) {
+    if (expectedLength == null) {
+      return null;
+    }
+    final List<int> offsets = chunks.keys.toList()..sort();
+    final Uint8List result = Uint8List(expectedLength);
+    int cursor = 0;
+    for (final int offset in offsets) {
+      final Uint8List chunk = chunks[offset]!;
+      if (offset != cursor) {
+        throw const ImageCodecException('JPEG Extended XMP is incomplete');
+      }
+      result.setAll(offset, chunk);
+      cursor += chunk.lengthInBytes;
+    }
+    if (cursor != expectedLength) {
+      throw const ImageCodecException('JPEG Extended XMP is incomplete');
     }
     return result;
   }

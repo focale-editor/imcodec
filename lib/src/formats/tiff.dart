@@ -97,6 +97,18 @@ final class _TiffFormat extends ImageFormat with InspectableFormat {
     }
     final _MetadataTiffField? iptcField = fields[33723];
     final _MetadataTiffField? xmpField = fields[700];
+    final _MetadataTiffField? orientationField = fields[274];
+    final int orientation = orientationField == null || orientationField.count < 1 || orientationField.type != 3 ? 1 : orientationField.unsignedAt(0);
+    if (orientation < 1 || orientation > 8) {
+      throw ImageCodecException('Unsupported TIFF orientation: $orientation');
+    }
+    final _MetadataTiffField? resolutionUnitField = fields[296];
+    final int resolutionUnit = resolutionUnitField == null || resolutionUnitField.count < 1 || resolutionUnitField.type != 3 ? 2 : resolutionUnitField.unsignedAt(0);
+    final double resolutionScale = resolutionUnit == 3 ? 2.54 : 1;
+    final _MetadataTiffField? horizontalResolutionField = fields[282];
+    final _MetadataTiffField? verticalResolutionField = fields[283];
+    final double? horizontalResolution = horizontalResolutionField?.type == 5 && horizontalResolutionField!.count > 0 ? horizontalResolutionField.rationalAt(0) : null;
+    final double? verticalResolution = verticalResolutionField?.type == 5 && verticalResolutionField!.count > 0 ? verticalResolutionField.rationalAt(0) : null;
     return DecodedImageMetadata(
       width: width,
       height: height,
@@ -121,6 +133,9 @@ final class _TiffFormat extends ImageFormat with InspectableFormat {
               maximumBytes: maxDescriptiveMetadataBytes,
               label: 'TIFF XMP',
             ),
+      orientation: orientation,
+      horizontalPixelsPerInch: horizontalResolution == null ? null : horizontalResolution * resolutionScale,
+      verticalPixelsPerInch: verticalResolution == null ? null : verticalResolution * resolutionScale,
     );
   }
 
@@ -199,4 +214,19 @@ final class _MetadataTiffField {
       'TIFF field type $type is not an unsigned integer',
     ),
   };
+
+  /// Reads one unsigned rational value.
+  double rationalAt(int index) {
+    if (type != 5) {
+      throw ImageCodecException(
+        'TIFF field type $type is not an unsigned rational',
+      );
+    }
+    final int valueOffset = offset + index * 8;
+    final int denominator = data.getUint32(valueOffset + 4, endian);
+    if (denominator == 0) {
+      throw const ImageCodecException('TIFF rational denominator is zero');
+    }
+    return data.getUint32(valueOffset, endian) / denominator;
+  }
 }

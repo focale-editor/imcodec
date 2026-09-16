@@ -68,6 +68,21 @@ final class DecodedImageMetadata {
   /// Original XMP packet, when present.
   final Uint8List? xmpMetadata;
 
+  /// Reassembled Extended XMP packet, when present.
+  ///
+  /// JPEG keeps this separate from the standard packet so callers can merge
+  /// both RDF documents without discarding properties retained in either one.
+  final Uint8List? extendedXmpMetadata;
+
+  /// Encoded TIFF or EXIF display orientation, from one to eight.
+  final int orientation;
+
+  /// Horizontal pixel density in pixels per inch, when declared.
+  final double? horizontalPixelsPerInch;
+
+  /// Vertical pixel density in pixels per inch, when declared.
+  final double? verticalPixelsPerInch;
+
   /// Creates immutable decoded-image metadata.
   DecodedImageMetadata({
     required this.width,
@@ -78,10 +93,48 @@ final class DecodedImageMetadata {
     Uint8List? exifMetadata,
     Uint8List? iptcMetadata,
     Uint8List? xmpMetadata,
+    Uint8List? extendedXmpMetadata,
+    this.orientation = 1,
+    this.horizontalPixelsPerInch,
+    this.verticalPixelsPerInch,
   }) : iccProfile = _immutableBytes(iccProfile),
        exifMetadata = _immutableBytes(exifMetadata),
        iptcMetadata = _immutableBytes(iptcMetadata),
-       xmpMetadata = _immutableBytes(xmpMetadata);
+       xmpMetadata = _immutableBytes(xmpMetadata),
+       extendedXmpMetadata = _immutableBytes(extendedXmpMetadata) {
+    if (orientation < 1 || orientation > 8) {
+      throw RangeError.range(orientation, 1, 8, 'orientation');
+    }
+    for (final double? density in [
+      horizontalPixelsPerInch,
+      verticalPixelsPerInch,
+    ]) {
+      if (density != null && (!density.isFinite || density <= 0)) {
+        throw ArgumentError.value(
+          density,
+          'pixelsPerInch',
+          'Pixel density must be finite and positive',
+        );
+      }
+    }
+  }
+
+  /// Width after applying an orientation that may swap the axes.
+  int get orientedWidth => orientation >= 5 ? height : width;
+
+  /// Height after applying an orientation that may swap the axes.
+  int get orientedHeight => orientation >= 5 ? width : height;
+
+  /// Representative density for document models that use one square value.
+  double? get pixelsPerInch => switch ((
+    horizontalPixelsPerInch,
+    verticalPixelsPerInch,
+  )) {
+    (final double horizontal, final double vertical) => (horizontal + vertical) / 2,
+    (final double horizontal, null) => horizontal,
+    (null, final double vertical) => vertical,
+    (null, null) => null,
+  };
 
   /// Whether generic RGBA8 platform decoding would discard authored data.
   bool get requiresExactDecoding => bitsPerChannel > 8 || colorModel == DecodedColorModel.cmyk || iccProfile != null;

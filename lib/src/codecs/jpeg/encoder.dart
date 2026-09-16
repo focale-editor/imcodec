@@ -21,6 +21,7 @@ final class JpegEncoder extends RasterEncoder<JpegEncodeOptions> with ParallelRa
   Uint8List encodeImage(Image image, JpegEncodeOptions options) => _JpegEncodingSession(
     quality: options.quality,
     chroma: options.chroma,
+    pixelsPerInch: options.pixelsPerInch,
   ).encode(image);
 
   @override
@@ -28,6 +29,7 @@ final class JpegEncoder extends RasterEncoder<JpegEncodeOptions> with ParallelRa
     final _JpegEncodingSession session = _JpegEncodingSession(
       quality: options.quality,
       chroma: options.chroma,
+      pixelsPerInch: options.pixelsPerInch,
     );
     session._checkDimensions(input);
 
@@ -67,10 +69,14 @@ final class JpegEncodeOptions extends RasterEncodeOptions {
   /// Selects the chroma sampling used by the JPEG encoder.
   final JpegChroma chroma;
 
+  /// Optional square pixel density written to the JFIF header.
+  final double? pixelsPerInch;
+
   /// Creates an immutable baseline JPEG encoder configuration.
   const JpegEncodeOptions({
     this.quality = 100,
     this.chroma = JpegChroma.yuv444,
+    this.pixelsPerInch,
   });
 }
 
@@ -202,6 +208,9 @@ final class _JpegEncodingSession {
 
   /// Quality the quantization tables were built for.
   final int quality;
+
+  /// Optional square pixel density written to the JFIF header.
+  final double? pixelsPerInch;
 
   /// Number of luminance DC codes for each bit length.
   static const List<int> _standardLuminanceDcCodeCounts = [0, 0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0];
@@ -563,7 +572,16 @@ final class _JpegEncodingSession {
   _JpegEncodingSession({
     required this.quality,
     required this.chroma,
+    this.pixelsPerInch,
   }) {
+    final double? density = pixelsPerInch;
+    if (density != null && (!density.isFinite || density <= 0 || density.round() > 0xffff)) {
+      throw ArgumentError.value(
+        density,
+        'pixelsPerInch',
+        'JPEG pixel density must be at most 65535 DPI',
+      );
+    }
     _initHuffmanTable();
     _initRgbYuvTable();
     _initializeQuality(quality);
@@ -1287,6 +1305,8 @@ final class _JpegEncodingSession {
 
   /// Writes the JFIF application header.
   void _writeApplicationSegment(OutputBuffer out) {
+    final double? density = pixelsPerInch;
+    final int encodedDensity = density?.round() ?? 1;
     _writeMarker(out, JpegMarker.application0);
     out
       ..writeUint16(16) // length
@@ -1297,9 +1317,9 @@ final class _JpegEncodingSession {
       ..writeByte(0) // '\0'
       ..writeByte(1) // versionhi
       ..writeByte(1) // versionlo
-      ..writeByte(0) // xyunits
-      ..writeUint16(1) // xdensity
-      ..writeUint16(1) // ydensity
+      ..writeByte(density == null ? 0 : 1) // xyunits
+      ..writeUint16(encodedDensity) // xdensity
+      ..writeUint16(encodedDensity) // ydensity
       ..writeByte(0) // thumbnwidth
       ..writeByte(0); // thumbnheight
   }

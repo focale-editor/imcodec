@@ -31,6 +31,23 @@ final class TiffEncoder extends RasterEncoder<TiffEncodeOptions> {
   /// Encodes [image] as a little-endian, chunky, eight-bit RGBA TIFF image.
   @override
   Uint8List encodeImage(Image image, TiffEncodeOptions options) {
+    final double density = options.pixelsPerInch ?? 72;
+    if (!density.isFinite || density <= 0) {
+      throw ArgumentError.value(
+        density,
+        'pixelsPerInch',
+        'Pixel density must be finite and positive',
+      );
+    }
+    const int resolutionDenominator = 1000;
+    final int resolutionNumerator = (density * resolutionDenominator).round();
+    if (resolutionNumerator > 0xffffffff) {
+      throw ArgumentError.value(
+        density,
+        'pixelsPerInch',
+        'TIFF pixel density exceeds the format limit',
+      );
+    }
     final int rowBytes = image.width * 4;
     final Uint8List encodedPixels = switch (options.compression) {
       TiffCompression.none => image.bytes,
@@ -75,8 +92,16 @@ final class TiffEncoder extends RasterEncoder<TiffEncodeOptions> {
     }
     for (int index = 0; index < 2; index++) {
       data
-        ..setUint32(resolutionOffset + index * 8, 72, Endian.little)
-        ..setUint32(resolutionOffset + index * 8 + 4, 1, Endian.little);
+        ..setUint32(
+          resolutionOffset + index * 8,
+          resolutionNumerator,
+          Endian.little,
+        )
+        ..setUint32(
+          resolutionOffset + index * 8 + 4,
+          resolutionDenominator,
+          Endian.little,
+        );
     }
     data.buffer.asUint8List().setRange(pixelOffset, pixelOffset + encodedPixels.length, encodedPixels);
     return data.buffer.asUint8List();
@@ -165,8 +190,12 @@ final class TiffEncodeOptions extends RasterEncodeOptions {
   /// Compression used when encoding pixel strips.
   final TiffCompression compression;
 
+  /// Optional square pixel density, defaulting to the legacy 72 DPI output.
+  final double? pixelsPerInch;
+
   /// Creates a TIFF encode with the default options.
   const TiffEncodeOptions({
     this.compression = TiffCompression.packBits,
+    this.pixelsPerInch,
   });
 }

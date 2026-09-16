@@ -12,6 +12,22 @@ final class BmpEncoder extends RasterEncoder<BmpEncodeOptions> {
     if (image.width > 0x7fffffff || image.height > 0x7fffffff || pixelDataLength > 0xffffffff - pixelOffset) {
       throw const ImageCodecException('BMP dimensions or file size exceed the format limits');
     }
+    final double density = encodeOptions.pixelsPerInch ?? 72;
+    if (!density.isFinite || density <= 0) {
+      throw ArgumentError.value(
+        density,
+        'pixelsPerInch',
+        'Pixel density must be finite and positive',
+      );
+    }
+    final int pixelsPerMeter = (density * 39.37007874015748).round();
+    if (pixelsPerMeter > 0x7fffffff) {
+      throw ArgumentError.value(
+        density,
+        'pixelsPerInch',
+        'BMP pixel density exceeds the format limit',
+      );
+    }
     final OutputBuffer output = OutputBuffer()
       ..writeByte(0x42)
       ..writeByte(0x4d)
@@ -26,8 +42,8 @@ final class BmpEncoder extends RasterEncoder<BmpEncodeOptions> {
       ..writeUint16(32)
       ..writeUint32(3)
       ..writeUint32(pixelDataLength)
-      ..writeUint32(2835)
-      ..writeUint32(2835)
+      ..writeUint32(pixelsPerMeter)
+      ..writeUint32(pixelsPerMeter)
       ..writeUint32(0)
       ..writeUint32(0)
       ..writeUint32(0x00ff0000)
@@ -65,6 +81,9 @@ final class BmpEncoder extends RasterEncoder<BmpEncodeOptions> {
 
 /// Allows to pass options to a [BmpEncoder].
 final class BmpEncodeOptions extends RasterEncodeOptions {
+  /// Optional square pixel density, defaulting to the legacy 72 DPI output.
+  final double? pixelsPerInch;
+
   /// Creates a BMP encode options.
-  const BmpEncodeOptions();
+  const BmpEncodeOptions({this.pixelsPerInch});
 }
