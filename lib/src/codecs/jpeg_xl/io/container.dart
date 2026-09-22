@@ -186,7 +186,7 @@ Uint8List demuxContainerPartial(Uint8List data) {
         break;
       }
       payloadStart = offset + 16;
-      payloadEnd = offset + byteData.getUint64(offset + 8);
+      payloadEnd = offset + wideShl(byteData.getUint32(offset + 8), 32) + byteData.getUint32(offset + 12);
     } else if (size32 == 0) {
       payloadEnd = data.length; // extends to end of file / stream so far
     } else {

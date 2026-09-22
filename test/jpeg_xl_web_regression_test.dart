@@ -3,9 +3,47 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:imcodec/imcodec.dart';
+import 'package:imcodec/src/codecs/jpeg_xl/io/container.dart';
 
 /// Checks real libjxl output on VM, JavaScript and Dart WebAssembly runtimes.
 void main() {
+  test('progressive extended-size boxes expose their available codestream prefix', () {
+    final Uint8List prefix = Uint8List.fromList([
+      0,
+      0,
+      0,
+      12,
+      0x4a,
+      0x58,
+      0x4c,
+      0x20,
+      13,
+      10,
+      0x87,
+      10,
+      0,
+      0,
+      0,
+      1,
+      0x6a,
+      0x78,
+      0x6c,
+      0x63,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      16,
+      0xff,
+      0x0a,
+      0x42,
+    ]);
+    expect(demuxContainerPartial(prefix), [0xff, 0x0a, 0x42]);
+  });
+
   test('libjxl modular output decodes without native-only typed lists', () {
     final Image decoded = decodeJpegXl(base64Decode(_fixture));
     final Uint8List expected = Uint8List(17 * 9 * 4);

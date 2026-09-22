@@ -360,9 +360,9 @@ final class _PreparedHistogram {
     final int matteGreen = (options.matteColorValue >>> 8) & 0xff;
     final int matteBlue = options.matteColorValue & 0xff;
     final Int32List counts = Int32List(1 << (_channelBits * 3));
-    final Int64List redSums = Int64List(counts.length);
-    final Int64List greenSums = Int64List(counts.length);
-    final Int64List blueSums = Int64List(counts.length);
+    final List<int> redSums = _channelSums(counts.length);
+    final List<int> greenSums = _channelSums(counts.length);
+    final List<int> blueSums = _channelSums(counts.length);
     bool hasTransparency = false;
     final Uint8List bytes = image.bytes;
     for (int offset = 0; offset < bytes.length; offset += 4) {
@@ -675,3 +675,8 @@ final class GifEncodeOptions extends RasterEncodeOptions {
     }
   }
 }
+
+/// Keeps histogram sums exact without unsupported JavaScript Int64 storage.
+///
+/// Each sum is at most 255 times the admitted pixel count, well below 2^53.
+List<int> _channelSums(int length) => const bool.fromEnvironment('dart.library.js_interop') ? List<int>.filled(length, 0) : Int64List(length);
