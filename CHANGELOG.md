@@ -1,5 +1,11 @@
 # 📰 Imcodec changelog
 
+## v0.4.7
+Released on September 22, 2026.
+
+* **FIX**: Fixed OpenEXR encoding and decoding on the Web with a bounded two-word offset adapter. ([#429705d](https://github.com/focale-editor/imcodec/commit/429705d))
+* **FIX**: Fixed OpenEXR encoding and decoding on the Web with a bounded two-word offset adapter. Other platforms retain native 64-bit accessors. ([#8fe2f39](https://github.com/focale-editor/imcodec/commit/8fe2f39))
+
 ## v0.4.6
 Released on September 17, 2026.
 
