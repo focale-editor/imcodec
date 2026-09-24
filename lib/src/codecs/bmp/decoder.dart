@@ -3,10 +3,14 @@ part of '../bmp.dart';
 /// Decodes uncompressed, bitfield, and run-length encoded BMP images.
 final class BmpDecoder extends RasterDecoder<BmpDecodeOptions> {
   /// Creates a BMP decoder.
-  const BmpDecoder();
+  const BmpDecoder({
+    BmpDecodeOptions defaultOptions = const BmpDecodeOptions(),
+  }) : super(
+         defaultDecodeOptions: defaultOptions,
+       );
 
   @override
-  Image decodeImage(Uint8List bytes, BmpDecodeOptions decodeOptions) {
+  Image decodeWithOptions(Uint8List bytes, BmpDecodeOptions decodeOptions) {
     final InputBuffer input = InputBuffer(bytes);
     if (input.readUint8() != 0x42 || input.readUint8() != 0x4d) {
       throw const ImageCodecException('Invalid BMP signature');
@@ -322,11 +326,6 @@ final class BmpDecoder extends RasterDecoder<BmpDecodeOptions> {
       throw ImageCodecException('Decoded image contains $pixelCount pixels, exceeding the $maxPixels pixel limit');
     }
   }
-
-  @override
-  BmpDecodeOptions createDecodeOptions({
-    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
-  }) => BmpDecodeOptions(maxPixels: maxPixels);
 }
 
 /// Scales one packed BMP bitfield channel to eight bits.

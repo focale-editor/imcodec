@@ -17,7 +17,7 @@ final class _JpegCodecExtension extends ParallelRasterCodecExtension<JpegEncodeO
   }) => _checkDecodedByteLength(
     _codec.rasterDecoder.decodeData(
       bytes,
-      maxPixels: (decodeOptions ?? _codec.rasterDecoder.createDefaultDecodeOptions()).maxPixels,
+      maxPixels: (decodeOptions ?? _codec.rasterDecoder.defaultDecodeOptions).maxPixels,
     ),
     maxDecodedBytes,
   );

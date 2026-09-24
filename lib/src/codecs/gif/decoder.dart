@@ -3,11 +3,15 @@ part of '../gif.dart';
 /// Decodes the first visible GIF frame to straight RGBA pixels.
 final class GifDecoder extends RasterDecoder<GifDecodeOptions> {
   /// Creates a GIF decoder.
-  const GifDecoder();
+  const GifDecoder({
+    GifDecodeOptions defaultOptions = const GifDecodeOptions(),
+  }) : super(
+         defaultDecodeOptions: defaultOptions,
+       );
 
   /// Decodes the first image descriptor in [bytes].
   @override
-  Image decodeImage(Uint8List bytes, GifDecodeOptions options) {
+  Image decodeWithOptions(Uint8List bytes, GifDecodeOptions options) {
     final InputBuffer input = InputBuffer(bytes);
     _readSignature(input);
     final int canvasWidth = input.readUint16();
@@ -47,11 +51,6 @@ final class GifDecoder extends RasterDecoder<GifDecodeOptions> {
     }
     throw const ImageCodecException('GIF trailer is missing');
   }
-
-  @override
-  GifDecodeOptions createDecodeOptions({
-    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
-  }) => GifDecodeOptions(maxPixels: maxPixels);
 
   /// Validates and consumes the GIF87a or GIF89a header.
   static void _readSignature(InputBuffer input) {

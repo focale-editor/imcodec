@@ -55,11 +55,15 @@ final class PngEncoder extends RasterEncoder<PngEncodeOptions> with ParallelRast
   static const List<int> _iend = [0x49, 0x45, 0x4e, 0x44];
 
   /// Creates a codec using a zlib [level] from 0 through 9.
-  const PngEncoder();
+  const PngEncoder({
+    PngEncodeOptions defaultOptions = const PngEncodeOptions(),
+  }) : super(
+         defaultEncodeOptions: defaultOptions,
+       );
 
   /// Encodes [image] as an eight-bit RGBA PNG image.
   @override
-  Uint8List encodeImage(Image image, PngEncodeOptions options) {
+  Uint8List encodeWithOptions(Image image, PngEncodeOptions options) {
     _checkInput(image, options.level);
     return _encodeFiltered(
       _filter(image),
@@ -343,9 +347,6 @@ final class PngEncoder extends RasterEncoder<PngEncodeOptions> with ParallelRast
 
   /// Computes the PNG CRC-32 over a chunk type and its payload.
   static int _crc32(List<int> type, Uint8List data) => _PngChecksum.compute(type, data);
-
-  @override
-  PngEncodeOptions createDefaultEncodeOptions() => const PngEncodeOptions();
 }
 
 /// Options for the PNG encoder.

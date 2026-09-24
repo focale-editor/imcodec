@@ -3,10 +3,14 @@ part of '../jpeg_xl.dart';
 /// Decodes JPEG XL images to straight-alpha RGBA pixels.
 final class JpegXlDecoder extends RasterDecoder<JpegXlDecodeOptions> {
   /// Creates a JPEG XL decoder.
-  const JpegXlDecoder();
+  const JpegXlDecoder({
+    JpegXlDecodeOptions defaultOptions = const JpegXlDecodeOptions(),
+  }) : super(
+         defaultDecodeOptions: defaultOptions,
+       );
 
   @override
-  Image decodeImage(Uint8List encoded, JpegXlDecodeOptions options) {
+  Image decodeWithOptions(Uint8List encoded, JpegXlDecodeOptions options) {
     final JpegXlCodestreamInfo information = JpegXlCodestreamInfo.fromBytes(bytes: encoded);
     final int pixelCount = information.width * information.height;
     if (information.width < 1 || information.height < 1) {
@@ -28,11 +32,6 @@ final class JpegXlDecoder extends RasterDecoder<JpegXlDecodeOptions> {
   ///
   /// Returns `null` when [encoded] does not contain JPEG reconstruction data.
   Uint8List? reconstructJpeg(Uint8List encoded) => _JpegXlCodestreamDecoder.reconstructJpeg(encoded);
-
-  @override
-  JpegXlDecodeOptions createDecodeOptions({
-    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
-  }) => JpegXlDecodeOptions(maxPixels: maxPixels);
 }
 
 /// The JPEG XL decode options.

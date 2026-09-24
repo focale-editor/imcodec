@@ -3,11 +3,15 @@ part of '../webp.dart';
 /// Decodes static and first-frame WebP images synchronously.
 final class WebPDecoder extends RasterDecoder<WebPDecodeOptions> {
   /// Creates a WebP decoder.
-  const WebPDecoder();
+  const WebPDecoder({
+    WebPDecodeOptions defaultOptions = const WebPDecodeOptions(),
+  }) : super(
+         defaultDecodeOptions: defaultOptions,
+       );
 
   /// Decodes VP8, VP8 with alpha, or VP8L pixels to straight RGBA.
   @override
-  Image decodeImage(Uint8List bytes, WebPDecodeOptions options) {
+  Image decodeWithOptions(Uint8List bytes, WebPDecodeOptions options) {
     if (bytes.length < 20 || _fourCharacterCode(bytes, 0) != 'RIFF' || _fourCharacterCode(bytes, 8) != 'WEBP') {
       throw const ImageCodecException('Invalid WebP RIFF header');
     }
@@ -175,11 +179,6 @@ final class WebPDecoder extends RasterDecoder<WebPDecodeOptions> {
 
   /// Reads a little-endian 32-bit integer.
   int _readUint32(Uint8List bytes, int offset) => bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24);
-
-  @override
-  WebPDecodeOptions createDecodeOptions({
-    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
-  }) => WebPDecodeOptions(maxPixels: maxPixels);
 }
 
 /// The WebP decode options.

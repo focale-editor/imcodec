@@ -18,11 +18,15 @@ final class PngDecoder extends RasterDecoder<PngDecodeOptions> {
   static const List<int> _adam7StepY = [8, 8, 8, 4, 4, 2, 2];
 
   /// Creates a PNG decoder.
-  const PngDecoder();
+  const PngDecoder({
+    PngDecodeOptions defaultOptions = const PngDecodeOptions(),
+  }) : super(
+         defaultDecodeOptions: defaultOptions,
+       );
 
   /// Decodes the default PNG image to straight-alpha RGBA pixels.
   @override
-  Image decodeImage(Uint8List bytes, PngDecodeOptions options) {
+  Image decodeWithOptions(Uint8List bytes, PngDecodeOptions options) {
     final (_PngHeader header, DecodedSampleFormat sampleFormat, Uint8List samples) = _decodeSamples(bytes, maxPixels: options.maxPixels);
     if (sampleFormat != DecodedSampleFormat.uint8) {
       return _wrapSamples(header, sampleFormat, samples).toImage();
@@ -551,11 +555,6 @@ final class PngDecoder extends RasterDecoder<PngDecodeOptions> {
     }
     return aboveDistance <= upperLeftDistance ? above : upperLeft;
   }
-
-  @override
-  PngDecodeOptions createDecodeOptions({
-    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
-  }) => PngDecodeOptions(maxPixels: maxPixels);
 }
 
 /// Options for the PNG decoder.

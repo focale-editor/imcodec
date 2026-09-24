@@ -3,10 +3,14 @@ part of '../jpeg_xl.dart';
 /// Encodes straight-alpha RGBA images as lossless JPEG XL Modular data.
 final class JpegXlEncoder extends RasterEncoder<JpegXlEncodeOptions> with ParallelRasterEncoder<JpegXlEncodeOptions> {
   /// Creates a lossless JPEG XL encoder.
-  const JpegXlEncoder();
+  const JpegXlEncoder({
+    JpegXlEncodeOptions defaultOptions = const JpegXlEncodeOptions(),
+  }) : super(
+         defaultEncodeOptions: defaultOptions,
+       );
 
   @override
-  Uint8List encodeImage(Image image, JpegXlEncodeOptions options) => encodeLossless(
+  Uint8List encodeWithOptions(Image image, JpegXlEncodeOptions options) => encodeLossless(
     image.bytes,
     width: image.width,
     height: image.height,
@@ -159,9 +163,6 @@ final class JpegXlEncoder extends RasterEncoder<JpegXlEncodeOptions> with Parall
     height: height,
     config: config ?? VarDctConfiguration.fromDistance(distance: distance),
   );
-
-  @override
-  JpegXlEncodeOptions createDefaultEncodeOptions() => const JpegXlEncodeOptions();
 }
 
 /// Lossy JPEG XL encoder options.

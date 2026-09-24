@@ -133,11 +133,15 @@ final class WebPEncoder extends RasterEncoder<WebPEncodeOptions> with ParallelRa
   ///
   /// Encoding stays lossless when [quality] is omitted. Supplied quality
   /// values are clamped to the range from zero through 100.
-  const WebPEncoder();
+  const WebPEncoder({
+    WebPEncodeOptions defaultOptions = const WebPEncodeOptions(),
+  }) : super(
+         defaultEncodeOptions: defaultOptions,
+       );
 
   /// Encodes [image] with the configured WebP representation.
   @override
-  Uint8List encodeImage(Image image, WebPEncodeOptions options) {
+  Uint8List encodeWithOptions(Image image, WebPEncodeOptions options) {
     if (options.isLossy) {
       return _Vp8LossyEncoder(
         quality: options.quality!.clamp(0, 100),
@@ -1262,9 +1266,6 @@ final class WebPEncoder extends RasterEncoder<WebPEncodeOptions> with ParallelRa
     }
     return bytes;
   }
-
-  @override
-  WebPEncodeOptions createDefaultEncodeOptions() => const WebPEncodeOptions();
 }
 
 /// The options for encoding a WebP image.

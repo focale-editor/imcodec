@@ -6,11 +6,15 @@ final class TgaEncoder extends RasterEncoder<TgaEncodeOptions> {
   static const List<int> _footerSignature = [0x54, 0x52, 0x55, 0x45, 0x56, 0x49, 0x53, 0x49, 0x4f, 0x4e, 0x2d, 0x58, 0x46, 0x49, 0x4c, 0x45, 0x2e, 0x00];
 
   /// Creates a TGA encoder.
-  const TgaEncoder();
+  const TgaEncoder({
+    TgaEncodeOptions defaultOptions = const TgaEncodeOptions(),
+  }) : super(
+         defaultEncodeOptions: defaultOptions,
+       );
 
   /// Encodes [image], optionally using TGA run-length encoding.
   @override
-  Uint8List encodeImage(Image image, TgaEncodeOptions options) {
+  Uint8List encodeWithOptions(Image image, TgaEncodeOptions options) {
     if (image.width > 65535 || image.height > 65535) {
       throw const ImageCodecException('TGA dimensions may not exceed 65535 pixels');
     }
@@ -98,9 +102,6 @@ final class TgaEncoder extends RasterEncoder<TgaEncodeOptions> {
       ..writeByte(bytes[offset])
       ..writeByte(bytes[offset + 3]);
   }
-
-  @override
-  TgaEncodeOptions createDefaultEncodeOptions() => const TgaEncodeOptions();
 }
 
 /// Options for the TGA encoder.

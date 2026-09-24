@@ -19,11 +19,15 @@ final class TiffDecoder extends RasterDecoder<TiffDecodeOptions> {
   };
 
   /// Creates a baseline TIFF decoder.
-  const TiffDecoder();
+  const TiffDecoder({
+    TiffDecodeOptions defaultOptions = const TiffDecodeOptions(),
+  }) : super(
+         defaultDecodeOptions: defaultOptions,
+       );
 
   /// Decodes the first image-file directory in [bytes].
   @override
-  Image decodeImage(Uint8List bytes, TiffDecodeOptions options) {
+  Image decodeWithOptions(Uint8List bytes, TiffDecodeOptions options) {
     final _TiffRaster raster = _decodeRaster(bytes, maxPixels: options.maxPixels);
     if (raster.colorModel != DecodedColorModel.rgb || raster.samples.format != DecodedSampleFormat.uint8) {
       return raster.toDecodedImage().toImage();
@@ -745,11 +749,6 @@ final class TiffDecoder extends RasterDecoder<TiffDecodeOptions> {
 
   /// Returns the smaller integer.
   int _minimum(int first, int second) => first < second ? first : second;
-
-  @override
-  TiffDecodeOptions createDecodeOptions({
-    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
-  }) => TiffDecodeOptions(maxPixels: maxPixels);
 }
 
 /// Options for the TIFF decoder.

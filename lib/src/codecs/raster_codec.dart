@@ -28,46 +28,45 @@ class RasterEncodeOptions {
 
 /// Converts encoded raster bytes to an [Image].
 abstract base class RasterDecoder<Options extends RasterDecodeOptions> extends Converter<Uint8List, Image> {
+  /// The default decode options.
+  final Options defaultDecodeOptions;
+
   /// Creates a raster decoder.
-  const RasterDecoder();
+  const RasterDecoder({
+    required this.defaultDecodeOptions,
+  });
 
   /// Decodes [input] to an image.
-  Image decode(Uint8List input, {Options? decodeOptions}) => decodeImage(input, decodeOptions ?? createDefaultDecodeOptions());
+  Image decode(Uint8List input, {Options? decodeOptions}) => decodeWithOptions(input, decodeOptions ?? defaultDecodeOptions);
 
   /// Decodes [input] to an image, with the given options or default options.
-  Image decodeImage(Uint8List input, Options options);
+  Image decodeWithOptions(Uint8List input, Options options);
 
   @override
   Image convert(Uint8List input, {Options? decodeOptions}) => decode(input, decodeOptions: decodeOptions);
-
-  /// Creates decode options with a format-independent pixel limit.
-  Options createDecodeOptions({
-    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
-  });
-
-  /// Creates the default decode options.
-  Options createDefaultDecodeOptions() => createDecodeOptions();
 }
 
 /// Converts an [Image] to encoded raster bytes.
 abstract base class RasterEncoder<Options extends RasterEncodeOptions> extends Converter<Image, Uint8List> {
+  /// The default encode options.
+  final Options defaultEncodeOptions;
+
   /// Creates a raster encoder.
-  const RasterEncoder();
+  const RasterEncoder({
+    required this.defaultEncodeOptions,
+  });
 
   /// Encodes [input] to raster bytes.
-  Uint8List encode(Image input, {Options? encodeOptions}) => encodeImage(input, encodeOptions ?? createDefaultEncodeOptions());
+  Uint8List encode(Image input, {Options? encodeOptions}) => encodeWithOptions(input, encodeOptions ?? defaultEncodeOptions);
 
   /// Encodes [input] to raster bytes, with the given options or default options.
-  Uint8List encodeImage(Image input, Options encodeOptions);
+  Uint8List encodeWithOptions(Image input, Options encodeOptions);
 
   @override
   Uint8List convert(Image input, {Options? encodeOptions}) => encode(
     input,
     encodeOptions: encodeOptions,
   );
-
-  /// Creates a default encode options.
-  Options createDefaultEncodeOptions();
 }
 
 /// Provides shared validation and error handling for synchronous image codecs.
@@ -108,7 +107,7 @@ abstract base class RasterCodec<
 
   @override
   Image decode(Uint8List encoded, {DecodeOptions? decodeOptions}) {
-    final DecodeOptions options = decodeOptions ?? rasterDecoder.createDefaultDecodeOptions();
+    final DecodeOptions options = decodeOptions ?? rasterDecoder.defaultDecodeOptions;
     if (options.maxPixels < 1) {
       throw RangeError.range(options.maxPixels, 1, null, 'maxPixels');
     }
@@ -128,7 +127,7 @@ abstract base class RasterCodec<
   @override
   Uint8List encode(Image input, {EncodeOptions? encodeOptions}) {
     try {
-      final EncodeOptions options = encodeOptions ?? rasterEncoder.createDefaultEncodeOptions();
+      final EncodeOptions options = encodeOptions ?? rasterEncoder.defaultEncodeOptions;
       return encodeImage(input, encodeOptions: options);
     } on ImageCodecException {
       rethrow;
@@ -223,7 +222,7 @@ base mixin ParallelRasterEncoder<Options extends RasterEncodeOptions> on RasterE
   }) => encodeImageWith(
     runner,
     input,
-    encodeOptions ?? createDefaultEncodeOptions(),
+    encodeOptions ?? defaultEncodeOptions,
   );
 
   /// Encodes [input], offering [runner] the parts that can run independently.

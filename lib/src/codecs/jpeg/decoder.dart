@@ -3,11 +3,15 @@ part of '../jpeg.dart';
 /// Decodes baseline, extended sequential, and progressive Huffman JPEG data.
 final class JpegDecoder extends RasterDecoder<JpegDecodeOptions> {
   /// Creates a JPEG decoder.
-  const JpegDecoder();
+  const JpegDecoder({
+    JpegDecodeOptions defaultOptions = const JpegDecodeOptions(),
+  }) : super(
+         defaultDecodeOptions: defaultOptions,
+       );
 
   /// Decodes one JPEG image to opaque RGBA pixels.
   @override
-  Image decodeImage(Uint8List bytes, JpegDecodeOptions options) {
+  Image decodeWithOptions(Uint8List bytes, JpegDecodeOptions options) {
     final _JpegData jpeg = _JpegData(maxPixels: options.maxPixels)..read(bytes);
     return _renderJpeg(jpeg);
   }
@@ -17,11 +21,6 @@ final class JpegDecoder extends RasterDecoder<JpegDecodeOptions> {
     final _JpegData jpeg = _JpegData(maxPixels: maxPixels)..read(bytes);
     return jpeg.components.length == 4 ? _renderJpegCmykData(jpeg) : DecodedImage.fromImage(_renderJpeg(jpeg));
   }
-
-  @override
-  JpegDecodeOptions createDecodeOptions({
-    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
-  }) => JpegDecodeOptions(maxPixels: maxPixels);
 }
 
 /// Options for JPEG decoding.

@@ -15,10 +15,14 @@ enum JpegChroma {
 /// JPEG Huffman tables.
 final class JpegEncoder extends RasterEncoder<JpegEncodeOptions> with ParallelRasterEncoder<JpegEncodeOptions> {
   /// Creates an immutable baseline JPEG encoder configuration.
-  const JpegEncoder();
+  const JpegEncoder({
+    JpegEncodeOptions defaultOptions = const JpegEncodeOptions(),
+  }) : super(
+         defaultEncodeOptions: defaultOptions,
+       );
 
   @override
-  Uint8List encodeImage(Image image, JpegEncodeOptions options) => _JpegEncodingSession(
+  Uint8List encodeWithOptions(Image image, JpegEncodeOptions options) => _JpegEncodingSession(
     quality: options.quality,
     chroma: options.chroma,
     pixelsPerInch: options.pixelsPerInch,
@@ -56,9 +60,6 @@ final class JpegEncoder extends RasterEncoder<JpegEncodeOptions> with ParallelRa
       height: input.height,
     );
   }
-
-  @override
-  JpegEncodeOptions createDefaultEncodeOptions() => const JpegEncodeOptions();
 }
 
 /// Options for JPEG encoding.

@@ -9,11 +9,15 @@ final class QoiEncoder extends RasterEncoder<QoiEncodeOptions> {
   static const List<int> _endMarker = [0, 0, 0, 0, 0, 0, 0, 1];
 
   /// Creates a QOI encoder.
-  const QoiEncoder();
+  const QoiEncoder({
+    QoiEncodeOptions defaultOptions = const QoiEncodeOptions(),
+  }) : super(
+         defaultEncodeOptions: defaultOptions,
+       );
 
   /// Encodes [image] losslessly in the sRGB color space.
   @override
-  Uint8List encodeImage(Image image, QoiEncodeOptions options) {
+  Uint8List encodeWithOptions(Image image, QoiEncodeOptions options) {
     if (image.width > 0xffffffff || image.height > 0xffffffff) {
       throw const ImageCodecException('QOI dimensions may not exceed 4294967295 pixels');
     }
@@ -109,9 +113,6 @@ final class QoiEncoder extends RasterEncoder<QoiEncodeOptions> {
     }
     return false;
   }
-
-  @override
-  QoiEncodeOptions createDefaultEncodeOptions() => const QoiEncodeOptions();
 }
 
 /// Options for the QOI encoder.

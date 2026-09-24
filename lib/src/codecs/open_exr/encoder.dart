@@ -13,11 +13,15 @@ final class OpenExrEncoder extends RasterEncoder<OpenExrEncodeOptions> {
   ]);
 
   /// Creates a half-float OpenEXR encoder.
-  const OpenExrEncoder();
+  const OpenExrEncoder({
+    OpenExrEncodeOptions defaultOptions = const OpenExrEncodeOptions(),
+  }) : super(
+         defaultEncodeOptions: defaultOptions,
+       );
 
   /// Encodes straight eight-bit sRGB pixels.
   @override
-  Uint8List encodeImage(Image image, OpenExrEncodeOptions options) => _encode(
+  Uint8List encodeWithOptions(Image image, OpenExrEncodeOptions options) => _encode(
     width: image.width,
     height: image.height,
     encodeRows: (firstY, rowCount) => _encodeByteRows(
@@ -210,9 +214,6 @@ final class OpenExrEncoder extends RasterEncoder<OpenExrEncodeOptions> {
     final double linear = magnitude <= 0.04045 ? magnitude / 12.92 : math.pow((magnitude + 0.055) / 1.055, 2.4).toDouble();
     return sign * linear;
   }
-
-  @override
-  OpenExrEncodeOptions createDefaultEncodeOptions() => const OpenExrEncodeOptions();
 }
 
 /// Compression methods emitted by [OpenExrEncoder].

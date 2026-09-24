@@ -26,11 +26,15 @@ final class TiffEncoder extends RasterEncoder<TiffEncodeOptions> {
   static const int _packBitsPacketLimit = 128;
 
   /// Creates a baseline TIFF encoder.
-  const TiffEncoder();
+  const TiffEncoder({
+    TiffEncodeOptions defaultOptions = const TiffEncodeOptions(),
+  }) : super(
+         defaultEncodeOptions: defaultOptions,
+       );
 
   /// Encodes [image] as a little-endian, chunky, eight-bit RGBA TIFF image.
   @override
-  Uint8List encodeImage(Image image, TiffEncodeOptions options) {
+  Uint8List encodeWithOptions(Image image, TiffEncodeOptions options) {
     final double density = options.pixelsPerInch ?? 72;
     if (!density.isFinite || density <= 0) {
       throw ArgumentError.value(
@@ -180,9 +184,6 @@ final class TiffEncoder extends RasterEncoder<TiffEncodeOptions> {
     }
     return next - position;
   }
-
-  @override
-  TiffEncodeOptions createDefaultEncodeOptions() => const TiffEncodeOptions();
 }
 
 /// Options for the TIFF encoder.

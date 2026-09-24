@@ -3,10 +3,14 @@ part of '../bmp.dart';
 /// Encodes RGBA pixels as a 32-bit BMP with explicit color masks.
 final class BmpEncoder extends RasterEncoder<BmpEncodeOptions> {
   /// Creates a BMP encoder.
-  const BmpEncoder();
+  const BmpEncoder({
+    BmpEncodeOptions defaultOptions = const BmpEncodeOptions(),
+  }) : super(
+         defaultEncodeOptions: defaultOptions,
+       );
 
   @override
-  Uint8List encodeImage(Image image, BmpEncodeOptions encodeOptions) {
+  Uint8List encodeWithOptions(Image image, BmpEncodeOptions encodeOptions) {
     const int pixelOffset = 14 + 108;
     final int pixelDataLength = image.width * image.height * 4;
     if (image.width > 0x7fffffff || image.height > 0x7fffffff || pixelDataLength > 0xffffffff - pixelOffset) {
@@ -74,9 +78,6 @@ final class BmpEncoder extends RasterEncoder<BmpEncodeOptions> {
     output.writeBytes(rows);
     return output.takeBytes();
   }
-
-  @override
-  BmpEncodeOptions createDefaultEncodeOptions() => const BmpEncodeOptions();
 }
 
 /// Allows to pass options to a [BmpEncoder].
@@ -85,5 +86,7 @@ final class BmpEncodeOptions extends RasterEncodeOptions {
   final double? pixelsPerInch;
 
   /// Creates a BMP encode options.
-  const BmpEncodeOptions({this.pixelsPerInch});
+  const BmpEncodeOptions({
+    this.pixelsPerInch,
+  });
 }

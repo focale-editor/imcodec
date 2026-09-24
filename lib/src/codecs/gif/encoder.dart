@@ -13,10 +13,14 @@ final class GifEncoder extends RasterEncoder<GifEncodeOptions> {
   ];
 
   /// Creates a static GIF encoder.
-  const GifEncoder();
+  const GifEncoder({
+    GifEncodeOptions defaultOptions = const GifEncodeOptions(),
+  }) : super(
+         defaultEncodeOptions: defaultOptions,
+       );
 
   @override
-  Uint8List encodeImage(Image image, GifEncodeOptions options) {
+  Uint8List encodeWithOptions(Image image, GifEncodeOptions options) {
     if (image.width > 0xffff || image.height > 0xffff) {
       throw const ImageCodecException(
         'GIF dimensions may not exceed 65535 pixels',
@@ -69,9 +73,6 @@ final class GifEncoder extends RasterEncoder<GifEncodeOptions> {
       ..writeByte(0x3b);
     return output.takeBytes();
   }
-
-  @override
-  GifEncodeOptions createDefaultEncodeOptions() => const GifEncodeOptions();
 
   /// Returns the power-of-two table size required by [paletteLength].
   static int _tableSize(int paletteLength) {

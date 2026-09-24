@@ -8,10 +8,14 @@ part of '../open_exr.dart';
 /// use [DecodedImage]. Extra arbitrary channels are skipped without allocation.
 final class OpenExrDecoder extends RasterDecoder<OpenExrDecodeOptions> {
   /// Creates an OpenEXR decoder.
-  const OpenExrDecoder();
+  const OpenExrDecoder({
+    OpenExrDecodeOptions defaultOptions = const OpenExrDecodeOptions(),
+  }) : super(
+         defaultDecodeOptions: defaultOptions,
+       );
 
   @override
-  Image decodeImage(Uint8List bytes, OpenExrDecodeOptions options) => decodeData(
+  Image decodeWithOptions(Uint8List bytes, OpenExrDecodeOptions options) => decodeData(
     bytes,
     maxPixels: options.maxPixels,
     maxDecodedBytes: options.maxPixels * 16,
@@ -264,11 +268,6 @@ final class OpenExrDecoder extends RasterDecoder<OpenExrDecodeOptions> {
     final double encoded = magnitude <= 0.0031308 ? 12.92 * magnitude : 1.055 * math.pow(magnitude, 1 / 2.4) - 0.055;
     return sign * encoded;
   }
-
-  @override
-  OpenExrDecodeOptions createDecodeOptions({
-    int maxPixels = RasterDecodeOptions.defaultMaxPixels,
-  }) => OpenExrDecodeOptions(maxPixels: maxPixels);
 }
 
 /// The OpenEXT decoder options.

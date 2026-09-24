@@ -16,7 +16,7 @@ final class _OpenExrCodecExtension extends RasterCodecExtension<OpenExrEncodeOpt
     required int maxIccProfileBytes,
   }) => _codec.rasterDecoder.decodeData(
     bytes,
-    maxPixels: (decodeOptions ?? _codec.rasterDecoder.createDefaultDecodeOptions()).maxPixels,
+    maxPixels: (decodeOptions ?? _codec.rasterDecoder.defaultDecodeOptions).maxPixels,
     maxDecodedBytes: maxDecodedBytes,
   );
 
