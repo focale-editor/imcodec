@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.5.0
+Released on September 24, 2026.
+
+* **BREAKING REFACTOR**: Removed `createDecodeOptions` and `createEncodeOptions` in favor of a `defaultOptions` field. ([#1380ab7](https://github.com/focale-editor/imcodec/commit/1380ab7))
+
 ## v0.4.7
 Released on September 22, 2026.
 
