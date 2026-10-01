@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.5.1
+Released on October 1, 2026.
+
+* **FIX**: Fixed a problem with parallel runners, making them incompatible with WASM. ([#1d78780](https://github.com/focale-editor/imcodec/commit/1d78780))
+
 ## v0.5.0
 Released on September 24, 2026.
 
