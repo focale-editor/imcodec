@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:imcodec/src/parallel_runner/web.dart' if (dart.library.io) 'package:imcodec/src/parallel_runner/task_isolate.dart' as platform;
+import 'package:imcodec/src/parallel_runner/web.dart' if (dart.library.io) 'package:imcodec/src/parallel_runner/io.dart' as platform;
 
 /// Runs independent pieces of work, optionally on other isolates.
 ///
