@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:isolate';
+
+import 'package:imcodec/src/parallel_runner/web.dart' if (dart.library.io) 'package:imcodec/src/parallel_runner/task_isolate.dart' as platform;
 
 /// Runs independent pieces of work, optionally on other isolates.
 ///
@@ -12,7 +13,7 @@ import 'dart:isolate';
 /// makes a parallel encode produce exactly the same bytes as a sequential one.
 ///
 /// Inputs, results, and the task must all be sendable, so a runner may forward
-/// them straight to [Isolate.run]:
+/// them straight to `Isolate.run` on native platforms:
 ///
 /// ```dart
 /// Future<List<R>> runOnIsolates<T, R>(List<T> inputs, R Function(T input) task) =>
@@ -21,7 +22,8 @@ import 'dart:isolate';
 ///
 /// A pool that bounds concurrency fits the same signature, and so does a
 /// runner that simply calls the task inline, which is what an encode without a
-/// runner already does.
+/// runner already does. The built-in isolate runners execute tasks inline in
+/// browsers, including when compiled to WebAssembly.
 typedef ParallelRunner = Future<List<R>> Function<T, R>(List<T> inputs, R Function(T input) task);
 
 /// Runs every task on the current isolate, in order.
@@ -31,9 +33,13 @@ typedef ParallelRunner = Future<List<R>> Function<T, R>(List<T> inputs, R Functi
 Future<List<R>> runSequentially<T, R>(List<T> inputs, R Function(T input) task) async => <R>[for (final T input in inputs) task(input)];
 
 /// Runs one isolate per job, the shortest runner a caller can write.
-Future<List<R>> onIsolates<T, R>(List<T> inputs, R Function(T input) task) => Future.wait(<Future<R>>[for (final T input in inputs) Isolate.run(() => task(input))]);
+///
+/// In browsers, runs tasks inline on the current thread instead.
+Future<List<R>> onIsolates<T, R>(List<T> inputs, R Function(T input) task) => Future.wait(<Future<R>>[for (final T input in inputs) platform.runTask(input, task)]);
 
 /// Runs jobs on isolates, never more than [limit] at a time.
+///
+/// In browsers, runs tasks inline on the current thread instead.
 Future<List<R>> onBoundedIsolates<T, R>(List<T> inputs, R Function(T input) task, {int limit = 2}) async {
   final List<R?> results = List<R?>.filled(inputs.length, null);
   int next = 0;
@@ -44,7 +50,7 @@ Future<List<R>> onBoundedIsolates<T, R>(List<T> inputs, R Function(T input) task
         return;
       }
       final T input = inputs[index];
-      results[index] = await Isolate.run(() => task(input));
+      results[index] = await platform.runTask(input, task);
     }
   }
 

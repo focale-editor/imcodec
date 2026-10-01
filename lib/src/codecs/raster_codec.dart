@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:imcodec/src/codecs/exception.dart';
 import 'package:imcodec/src/formats/image_format.dart';
 import 'package:imcodec/src/image.dart';
-import 'package:imcodec/src/parallel_runner.dart';
+import 'package:imcodec/src/parallel_runner/parallel_runner.dart';
 
 /// Allows to pass options to a [RasterDecoder].
 class RasterDecodeOptions {

@@ -13,7 +13,7 @@ import 'package:imcodec/src/codecs/webp/effort.dart';
 import 'package:imcodec/src/formats/image_format.dart';
 import 'package:imcodec/src/image.dart';
 import 'package:imcodec/src/output_buffer.dart';
-import 'package:imcodec/src/parallel_runner.dart';
+import 'package:imcodec/src/parallel_runner/parallel_runner.dart';
 
 export 'webp/effort.dart';
 

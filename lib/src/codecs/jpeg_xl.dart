@@ -46,7 +46,7 @@ import 'package:imcodec/src/codecs/jpeg_xl/render/upsample.dart';
 import 'package:imcodec/src/codecs/raster_codec.dart';
 import 'package:imcodec/src/formats/image_format.dart';
 import 'package:imcodec/src/image.dart';
-import 'package:imcodec/src/parallel_runner.dart';
+import 'package:imcodec/src/parallel_runner/parallel_runner.dart';
 
 export 'jpeg_xl/encoder/effort.dart';
 

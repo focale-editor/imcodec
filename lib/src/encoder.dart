@@ -13,7 +13,7 @@ import 'package:imcodec/src/codecs/tiff.dart';
 import 'package:imcodec/src/codecs/webp.dart';
 import 'package:imcodec/src/formats/image_format.dart';
 import 'package:imcodec/src/image.dart';
-import 'package:imcodec/src/parallel_runner.dart';
+import 'package:imcodec/src/parallel_runner/parallel_runner.dart';
 import 'package:imcodec/src/registry/registry.dart';
 
 /// Encodes [image] as a 32-bit BMP with alpha bitfields.

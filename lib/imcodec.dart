@@ -19,5 +19,5 @@ export 'src/encoder.dart';
 export 'src/formats/image_format.dart';
 export 'src/image.dart';
 export 'src/image_metadata.dart';
-export 'src/parallel_runner.dart';
+export 'src/parallel_runner/parallel_runner.dart';
 export 'src/registry/registry.dart' show ImageCodecExtension, ImageCodecRegistry, ParallelImageCodecExtension, ParallelRasterCodecExtension, RasterCodecExtension;

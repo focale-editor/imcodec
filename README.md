@@ -122,6 +122,10 @@ final Uint8List jpeg = await img.encodeJpgWith(
 );
 ```
 
+Both isolate runners also work in browsers, including WebAssembly builds,
+where they execute tasks inline on the current thread. Applications can supply
+a custom runner to move browser work to a Web Worker.
+
 JPEG transforms MCU bands independently, JPEG XL spreads its modular groups
 and context work, PNG filters row bands independently, and lossless WebP
 selects and applies predictor-block bands independently. Lossy WebP currently

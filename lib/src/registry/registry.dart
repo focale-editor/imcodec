@@ -18,7 +18,7 @@ import 'package:imcodec/src/decoded_image.dart';
 import 'package:imcodec/src/formats/image_format.dart';
 import 'package:imcodec/src/image.dart';
 import 'package:imcodec/src/image_metadata.dart';
-import 'package:imcodec/src/parallel_runner.dart';
+import 'package:imcodec/src/parallel_runner/parallel_runner.dart';
 
 part 'extensions/bmp.dart';
 part 'extensions/extension.dart';
