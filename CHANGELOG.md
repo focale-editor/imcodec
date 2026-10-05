@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.5.3
+Released on October 5, 2026.
+
+* **DOCS**: Updated package overview screenshot. ([#b8d4635](https://github.com/focale-editor/imcodec/commit/b8d4635))
+
 ## v0.5.2
 Released on October 1, 2026.
 
