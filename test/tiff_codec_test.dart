@@ -7,6 +7,23 @@ import 'package:imcodec/imcodec.dart';
 /// Exercises baseline TIFF import and export.
 void main() {
   group('TIFF', () {
+    for (final TiffCompression compression in TiffCompression.values) {
+      test('keeps RGB, alpha, density and ICC with ${compression.name}', () {
+        final Image source = _testImage();
+        final Uint8List profile = Uint8List.fromList(List.generate(513, (index) => index % 256));
+
+        final Uint8List encoded = const TiffEncoder().encode(
+          source,
+          encodeOptions: TiffEncodeOptions(compression: compression, pixelsPerInch: 300, iccProfile: profile),
+        );
+
+        expect(const TiffDecoder().decode(encoded).bytes, source.bytes);
+        final DecodedImageMetadata metadata = inspectImage(encoded)!;
+        expect(metadata.iccProfile, profile);
+        expect(metadata.pixelsPerInch, 300);
+      });
+    }
+
     test('round-trips uncompressed and PackBits RGBA exactly', () {
       final Image source = _testImage();
 

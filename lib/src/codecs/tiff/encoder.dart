@@ -58,12 +58,15 @@ final class TiffEncoder extends RasterEncoder<TiffEncodeOptions> {
       TiffCompression.packBits => _encodePackBits(image.bytes, rowBytes),
     };
     const int firstIfdOffset = 8;
-    const int ifdSize = 2 + _entryCount * 12 + 4;
-    const int bitsPerSampleOffset = firstIfdOffset + ifdSize;
+    final Uint8List? profile = options.iccProfile;
+    final int entryCount = _entryCount + (profile == null ? 0 : 1);
+    final int ifdSize = 2 + entryCount * 12 + 4;
+    final int bitsPerSampleOffset = firstIfdOffset + ifdSize;
     const int bitsPerSampleSize = 8;
-    const int resolutionOffset = bitsPerSampleOffset + bitsPerSampleSize;
+    final int resolutionOffset = bitsPerSampleOffset + bitsPerSampleSize;
     const int resolutionSize = 16;
-    const int pixelOffset = resolutionOffset + resolutionSize;
+    final int profileOffset = resolutionOffset + resolutionSize;
+    final int pixelOffset = (profileOffset + (profile?.length ?? 0) + 1) & ~1;
     final ByteData data = ByteData(pixelOffset + encodedPixels.length);
 
     data
@@ -71,7 +74,7 @@ final class TiffEncoder extends RasterEncoder<TiffEncodeOptions> {
       ..setUint8(1, 0x49)
       ..setUint16(2, 42, Endian.little)
       ..setUint32(4, firstIfdOffset, Endian.little)
-      ..setUint16(firstIfdOffset, _entryCount, Endian.little);
+      ..setUint16(firstIfdOffset, entryCount, Endian.little);
 
     // Entries must stay sorted by ascending tag number.
     int entryOffset = firstIfdOffset + 2;
@@ -90,6 +93,11 @@ final class TiffEncoder extends RasterEncoder<TiffEncodeOptions> {
     entryOffset = _writeEntry(data, entryOffset, tag: 284, type: 3, count: 1, value: 1);
     entryOffset = _writeEntry(data, entryOffset, tag: 296, type: 3, count: 1, value: 2);
     entryOffset = _writeEntry(data, entryOffset, tag: 338, type: 3, count: 1, value: 2);
+    if (profile != null) {
+      entryOffset = _writeEntry(data, entryOffset, tag: 34675, type: 7, count: profile.length, value: profile.length <= 4 ? 0 : profileOffset);
+      final int destination = profile.length <= 4 ? entryOffset - 4 : profileOffset;
+      data.buffer.asUint8List().setRange(destination, destination + profile.length, profile);
+    }
     data.setUint32(entryOffset, 0, Endian.little);
     for (int index = 0; index < 4; index++) {
       data.setUint16(bitsPerSampleOffset + index * 2, 8, Endian.little);
@@ -194,9 +202,13 @@ final class TiffEncodeOptions extends RasterEncodeOptions {
   /// Optional square pixel density, defaulting to the legacy 72 DPI output.
   final double? pixelsPerInch;
 
+  /// ICC payload describing the input RGB samples, embedded without conversion.
+  final Uint8List? iccProfile;
+
   /// Creates a TIFF encode with the default options.
   const TiffEncodeOptions({
     this.compression = TiffCompression.packBits,
     this.pixelsPerInch,
+    this.iccProfile,
   });
 }

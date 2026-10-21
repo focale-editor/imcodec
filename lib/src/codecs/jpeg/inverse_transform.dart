@@ -1,5 +1,19 @@
 part of '../jpeg.dart';
 
+/// Whether this code runs compiled to JavaScript, where integers are doubles.
+const bool _isWeb = identical(0, 0.0);
+
+/// Shifts [value] right by [bits] with sign extension on every platform.
+///
+/// Compiled to JavaScript, bitwise operators read their result back as an
+/// unsigned 32-bit integer: `-8 >> 1` is 4294967292 there. The inverse
+/// transform and colour conversion shift negative intermediates, so the web
+/// reinterprets the result as signed. The branch is a constant, so native
+/// code keeps a plain shift.
+@pragma('vm:prefer-inline')
+@pragma('dart2js:prefer-inline')
+int _shr(int value, int bits) => _isWeb ? (value >> bits).toSigned(32) : value >> bits;
+
 /// Lookup table that clamps inverse-transform samples to one byte.
 final Uint8List _dctClip = _createDctClip();
 
@@ -51,7 +65,7 @@ void _inverseTransformBlock(Int16List quantizationTable, Int32List coefBlock, Ui
   for (var i = 0; i < 8; ++i, row += 8) {
     // check for all-zero AC coefficients
     if (p[1 + row] == 0 && p[2 + row] == 0 && p[3 + row] == 0 && p[4 + row] == 0 && p[5 + row] == 0 && p[6 + row] == 0 && p[7 + row] == 0) {
-      final int t = (sqrt2 * p[0 + row] + 512) >> 10;
+      final int t = _shr(sqrt2 * p[0 + row] + 512, 10);
       p[row + 0] = t;
       p[row + 1] = t;
       p[row + 2] = t;
@@ -64,41 +78,41 @@ void _inverseTransformBlock(Int16List quantizationTable, Int32List coefBlock, Ui
     }
 
     // stage 4
-    int v0 = (sqrt2 * p[0 + row] + 128) >> 8;
-    int v1 = (sqrt2 * p[4 + row] + 128) >> 8;
+    int v0 = _shr(sqrt2 * p[0 + row] + 128, 8);
+    int v1 = _shr(sqrt2 * p[4 + row] + 128, 8);
     int v2 = p[2 + row];
     int v3 = p[6 + row];
-    int v4 = (sqrt102 * (p[1 + row] - p[7 + row]) + 128) >> 8;
-    int v7 = (sqrt102 * (p[1 + row] + p[7 + row]) + 128) >> 8;
-    int v5 = p[3 + row] << 4;
-    int v6 = p[5 + row] << 4;
+    int v4 = _shr(sqrt102 * (p[1 + row] - p[7 + row]) + 128, 8);
+    int v7 = _shr(sqrt102 * (p[1 + row] + p[7 + row]) + 128, 8);
+    int v5 = p[3 + row] * 16;
+    int v6 = p[5 + row] * 16;
 
     // stage 3
-    int t = (v0 - v1 + 1) >> 1;
-    v0 = (v0 + v1 + 1) >> 1;
+    int t = _shr(v0 - v1 + 1, 1);
+    v0 = _shr(v0 + v1 + 1, 1);
     v1 = t;
-    t = (v2 * sin6 + v3 * cos6 + 128) >> 8;
-    v2 = (v2 * cos6 - v3 * sin6 + 128) >> 8;
+    t = _shr(v2 * sin6 + v3 * cos6 + 128, 8);
+    v2 = _shr(v2 * cos6 - v3 * sin6 + 128, 8);
     v3 = t;
-    t = (v4 - v6 + 1) >> 1;
-    v4 = (v4 + v6 + 1) >> 1;
+    t = _shr(v4 - v6 + 1, 1);
+    v4 = _shr(v4 + v6 + 1, 1);
     v6 = t;
-    t = (v7 + v5 + 1) >> 1;
-    v5 = (v7 - v5 + 1) >> 1;
+    t = _shr(v7 + v5 + 1, 1);
+    v5 = _shr(v7 - v5 + 1, 1);
     v7 = t;
 
     // stage 2
-    t = (v0 - v3 + 1) >> 1;
-    v0 = (v0 + v3 + 1) >> 1;
+    t = _shr(v0 - v3 + 1, 1);
+    v0 = _shr(v0 + v3 + 1, 1);
     v3 = t;
-    t = (v1 - v2 + 1) >> 1;
-    v1 = (v1 + v2 + 1) >> 1;
+    t = _shr(v1 - v2 + 1, 1);
+    v1 = _shr(v1 + v2 + 1, 1);
     v2 = t;
-    t = (v4 * sin3 + v7 * cos3 + 2048) >> 12;
-    v4 = (v4 * cos3 - v7 * sin3 + 2048) >> 12;
+    t = _shr(v4 * sin3 + v7 * cos3 + 2048, 12);
+    v4 = _shr(v4 * cos3 - v7 * sin3 + 2048, 12);
     v7 = t;
-    t = (v5 * sin1 + v6 * cos1 + 2048) >> 12;
-    v5 = (v5 * cos1 - v6 * sin1 + 2048) >> 12;
+    t = _shr(v5 * sin1 + v6 * cos1 + 2048, 12);
+    v5 = _shr(v5 * cos1 - v6 * sin1 + 2048, 12);
     v6 = t;
 
     // stage 1
@@ -118,7 +132,7 @@ void _inverseTransformBlock(Int16List quantizationTable, Int32List coefBlock, Ui
 
     // check for all-zero AC coefficients
     if (p[1 * 8 + col] == 0 && p[2 * 8 + col] == 0 && p[3 * 8 + col] == 0 && p[4 * 8 + col] == 0 && p[5 * 8 + col] == 0 && p[6 * 8 + col] == 0 && p[7 * 8 + col] == 0) {
-      final int t = (sqrt2 * dataIn[i] + 8192) >> 14;
+      final int t = _shr(sqrt2 * dataIn[i] + 8192, 14);
       p[0 * 8 + col] = t;
       p[1 * 8 + col] = t;
       p[2 * 8 + col] = t;
@@ -131,41 +145,41 @@ void _inverseTransformBlock(Int16List quantizationTable, Int32List coefBlock, Ui
     }
 
     // stage 4
-    int v0 = (sqrt2 * p[0 * 8 + col] + 2048) >> 12;
-    int v1 = (sqrt2 * p[4 * 8 + col] + 2048) >> 12;
+    int v0 = _shr(sqrt2 * p[0 * 8 + col] + 2048, 12);
+    int v1 = _shr(sqrt2 * p[4 * 8 + col] + 2048, 12);
     int v2 = p[2 * 8 + col];
     int v3 = p[6 * 8 + col];
-    int v4 = (sqrt102 * (p[1 * 8 + col] - p[7 * 8 + col]) + 2048) >> 12;
-    int v7 = (sqrt102 * (p[1 * 8 + col] + p[7 * 8 + col]) + 2048) >> 12;
+    int v4 = _shr(sqrt102 * (p[1 * 8 + col] - p[7 * 8 + col]) + 2048, 12);
+    int v7 = _shr(sqrt102 * (p[1 * 8 + col] + p[7 * 8 + col]) + 2048, 12);
     int v5 = p[3 * 8 + col];
     int v6 = p[5 * 8 + col];
 
     // stage 3
-    int t = (v0 - v1 + 1) >> 1;
-    v0 = (v0 + v1 + 1) >> 1;
+    int t = _shr(v0 - v1 + 1, 1);
+    v0 = _shr(v0 + v1 + 1, 1);
     v1 = t;
-    t = (v2 * sin6 + v3 * cos6 + 2048) >> 12;
-    v2 = (v2 * cos6 - v3 * sin6 + 2048) >> 12;
+    t = _shr(v2 * sin6 + v3 * cos6 + 2048, 12);
+    v2 = _shr(v2 * cos6 - v3 * sin6 + 2048, 12);
     v3 = t;
-    t = (v4 - v6 + 1) >> 1;
-    v4 = (v4 + v6 + 1) >> 1;
+    t = _shr(v4 - v6 + 1, 1);
+    v4 = _shr(v4 + v6 + 1, 1);
     v6 = t;
-    t = (v7 + v5 + 1) >> 1;
-    v5 = (v7 - v5 + 1) >> 1;
+    t = _shr(v7 + v5 + 1, 1);
+    v5 = _shr(v7 - v5 + 1, 1);
     v7 = t;
 
     // stage 2
-    t = (v0 - v3 + 1) >> 1;
-    v0 = (v0 + v3 + 1) >> 1;
+    t = _shr(v0 - v3 + 1, 1);
+    v0 = _shr(v0 + v3 + 1, 1);
     v3 = t;
-    t = (v1 - v2 + 1) >> 1;
-    v1 = (v1 + v2 + 1) >> 1;
+    t = _shr(v1 - v2 + 1, 1);
+    v1 = _shr(v1 + v2 + 1, 1);
     v2 = t;
-    t = (v4 * sin3 + v7 * cos3 + 2048) >> 12;
-    v4 = (v4 * cos3 - v7 * sin3 + 2048) >> 12;
+    t = _shr(v4 * sin3 + v7 * cos3 + 2048, 12);
+    v4 = _shr(v4 * cos3 - v7 * sin3 + 2048, 12);
     v7 = t;
-    t = (v5 * sin1 + v6 * cos1 + 2048) >> 12;
-    v5 = (v5 * cos1 - v6 * sin1 + 2048) >> 12;
+    t = _shr(v5 * sin1 + v6 * cos1 + 2048, 12);
+    v5 = _shr(v5 * cos1 - v6 * sin1 + 2048, 12);
     v6 = t;
 
     // stage 1
@@ -181,7 +195,7 @@ void _inverseTransformBlock(Int16List quantizationTable, Int32List coefBlock, Ui
 
   // convert to 8-bit integers
   for (var i = 0; i < 64; ++i) {
-    final int index = (_dctClipOffset + 128 + ((p[i] + 8) >> 4)).clamp(0, _dctClipLength - 1);
+    final int index = (_dctClipOffset + 128 + (_shr(p[i] + 8, 4))).clamp(0, _dctClipLength - 1);
     dataOut[i] = _dctClip[index];
   }
 }
@@ -230,9 +244,9 @@ DecodedImage _renderJpegCmykData(_JpegData jpeg) {
       final int scaledLuminance = first[sample] << 8;
       final int blueDifference = second[sample] - 128;
       final int redDifference = third[sample] - 128;
-      cyan = _dctClip[_dctClipOffset + ((scaledLuminance + 359 * redDifference + 128) >> 8)];
-      magenta = _dctClip[_dctClipOffset + ((scaledLuminance - 88 * blueDifference - 183 * redDifference + 128) >> 8)];
-      yellow = _dctClip[_dctClipOffset + ((scaledLuminance + 454 * blueDifference + 128) >> 8)];
+      cyan = _dctClip[_dctClipOffset + (_shr(scaledLuminance + 359 * redDifference + 128, 8))];
+      magenta = _dctClip[_dctClipOffset + (_shr(scaledLuminance - 88 * blueDifference - 183 * redDifference + 128, 8))];
+      yellow = _dctClip[_dctClipOffset + (_shr(scaledLuminance + 454 * blueDifference + 128, 8))];
     } else {
       cyan = 255 - first[sample];
       magenta = 255 - second[sample];
@@ -327,9 +341,9 @@ void _renderYCbCr(
       final int scaledLuminance = luminancePlane[sample] << 8;
       final int blueDifference = bluePlane[sample] - 128;
       final int redDifference = redPlane[sample] - 128;
-      rgba[destination] = clip[_dctClipOffset + ((scaledLuminance + 359 * redDifference + 128) >> 8)];
-      rgba[destination + 1] = clip[_dctClipOffset + ((scaledLuminance - 88 * blueDifference - 183 * redDifference + 128) >> 8)];
-      rgba[destination + 2] = clip[_dctClipOffset + ((scaledLuminance + 454 * blueDifference + 128) >> 8)];
+      rgba[destination] = clip[_dctClipOffset + (_shr(scaledLuminance + 359 * redDifference + 128, 8))];
+      rgba[destination + 1] = clip[_dctClipOffset + (_shr(scaledLuminance - 88 * blueDifference - 183 * redDifference + 128, 8))];
+      rgba[destination + 2] = clip[_dctClipOffset + (_shr(scaledLuminance + 454 * blueDifference + 128, 8))];
     } else {
       rgba[destination] = luminancePlane[sample];
       rgba[destination + 1] = bluePlane[sample];
@@ -367,9 +381,9 @@ void _renderCmyk(
       final int scaledLuminance = cyan << 8;
       final int blueDifference = magenta - 128;
       final int redDifference = yellow - 128;
-      cyan = 255 - clip[_dctClipOffset + ((scaledLuminance + 359 * redDifference + 128) >> 8)];
-      magenta = 255 - clip[_dctClipOffset + ((scaledLuminance - 88 * blueDifference - 183 * redDifference + 128) >> 8)];
-      yellow = 255 - clip[_dctClipOffset + ((scaledLuminance + 454 * blueDifference + 128) >> 8)];
+      cyan = 255 - clip[_dctClipOffset + (_shr(scaledLuminance + 359 * redDifference + 128, 8))];
+      magenta = 255 - clip[_dctClipOffset + (_shr(scaledLuminance - 88 * blueDifference - 183 * redDifference + 128, 8))];
+      yellow = 255 - clip[_dctClipOffset + (_shr(scaledLuminance + 454 * blueDifference + 128, 8))];
     }
     rgba[destination] = (cyan * black + 127) ~/ 255;
     rgba[destination + 1] = (magenta * black + 127) ~/ 255;

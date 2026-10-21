@@ -203,7 +203,8 @@ final class _JpegScanDecoder {
       return 0;
     }
     final int value = _receive(length);
-    return value >= 1 << (length - 1) ? value : value + (-1 << length) + 1;
+    // `-1 << length` would read back as unsigned on the web.
+    return value >= 1 << (length - 1) ? value : value - (1 << length) + 1;
   }
 
   /// Decodes one complete baseline coefficient block.
