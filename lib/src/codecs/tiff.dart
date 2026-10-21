@@ -12,3 +12,4 @@ import 'package:imcodec/src/image.dart';
 part 'tiff/codec.dart';
 part 'tiff/decoder.dart';
 part 'tiff/encoder.dart';
+part 'tiff/photoshop.dart';

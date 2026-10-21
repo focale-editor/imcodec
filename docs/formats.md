@@ -105,6 +105,20 @@ bounded IPTC and XMP tags without parsing them. Output is little-endian, chunky,
 eight-bit RGBA using PackBits by default; pass `TiffCompression.none` for
 uncompressed output.
 
+### Photoshop private tags
+
+`TiffDecoder.readPhotoshopData(bytes)` extracts tag 37724 (`ImageSourceData`)
+and tag 34377 (Photoshop image resources) without decoding the raster. Its
+`TiffPhotoshopData` keeps immutable payloads and the TIFF byte order. Pass it to
+`TiffEncodeOptions.photoshopData` to retain the tags with a new raster.
+
+`TiffEncodeOptions.byteOrder` selects Intel or Motorola output (Intel by default).
+Layer data must match that order; a mismatch throws before producing a file.
+Use `PsdTiffCodec` from PsdKit to interpret/edit the layer payload or convert its
+byte order, and `PsdTiffCodec.encodeResources` for standard resource data.
+The TIFF encoder still writes eight-bit RGBA; tag preservation does not add
+high-depth TIFF raster export or layer rendering.
+
 ## WebP
 
 WebP output supports lossless VP8L and lossy intra-frame VP8. Call

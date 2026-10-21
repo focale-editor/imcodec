@@ -32,9 +32,14 @@ final class TiffEncoder extends RasterEncoder<TiffEncodeOptions> {
          defaultEncodeOptions: defaultOptions,
        );
 
-  /// Encodes [image] as a little-endian, chunky, eight-bit RGBA TIFF image.
+  /// Encodes [image] as chunky, eight-bit RGBA TIFF data in either byte order.
   @override
   Uint8List encodeWithOptions(Image image, TiffEncodeOptions options) {
+    final Endian endian = options.byteOrder;
+    final TiffPhotoshopData? photoshop = options.photoshopData;
+    if (photoshop?.imageSourceData != null && photoshop!.byteOrder != endian) {
+      throw const ImageCodecException('Photoshop layer data must match the TIFF output byte order; convert it with PsdKit first');
+    }
     final double density = options.pixelsPerInch ?? 72;
     if (!density.isFinite || density <= 0) {
       throw ArgumentError.value(
@@ -58,86 +63,96 @@ final class TiffEncoder extends RasterEncoder<TiffEncodeOptions> {
       TiffCompression.packBits => _encodePackBits(image.bytes, rowBytes),
     };
     const int firstIfdOffset = 8;
-    final Uint8List? profile = options.iccProfile;
-    final int entryCount = _entryCount + (profile == null ? 0 : 1);
+    final Map<int, Uint8List> payloads = {
+      if (photoshop?.imageResources != null) 34377: photoshop!.imageResources!,
+      if (options.iccProfile != null) 34675: options.iccProfile!,
+      if (photoshop?.imageSourceData != null) 37724: photoshop!.imageSourceData!,
+    };
+    final int entryCount = _entryCount + payloads.length;
     final int ifdSize = 2 + entryCount * 12 + 4;
     final int bitsPerSampleOffset = firstIfdOffset + ifdSize;
     const int bitsPerSampleSize = 8;
     final int resolutionOffset = bitsPerSampleOffset + bitsPerSampleSize;
     const int resolutionSize = 16;
-    final int profileOffset = resolutionOffset + resolutionSize;
-    final int pixelOffset = (profileOffset + (profile?.length ?? 0) + 1) & ~1;
+    final Map<int, int> offsets = {};
+    int pixelOffset = resolutionOffset + resolutionSize;
+    for (final MapEntry<int, Uint8List> payload in payloads.entries) {
+      offsets[payload.key] = pixelOffset;
+      pixelOffset = (pixelOffset + payload.value.length + 1) & ~1;
+    }
     final ByteData data = ByteData(pixelOffset + encodedPixels.length);
 
     data
-      ..setUint8(0, 0x49)
-      ..setUint8(1, 0x49)
-      ..setUint16(2, 42, Endian.little)
-      ..setUint32(4, firstIfdOffset, Endian.little)
-      ..setUint16(firstIfdOffset, entryCount, Endian.little);
+      ..setUint8(0, endian == Endian.little ? 0x49 : 0x4d)
+      ..setUint8(1, endian == Endian.little ? 0x49 : 0x4d)
+      ..setUint16(2, 42, endian)
+      ..setUint32(4, firstIfdOffset, endian)
+      ..setUint16(firstIfdOffset, entryCount, endian);
 
     // Entries must stay sorted by ascending tag number.
     int entryOffset = firstIfdOffset + 2;
-    entryOffset = _writeEntry(data, entryOffset, tag: 256, type: 4, count: 1, value: image.width);
-    entryOffset = _writeEntry(data, entryOffset, tag: 257, type: 4, count: 1, value: image.height);
-    entryOffset = _writeEntry(data, entryOffset, tag: 258, type: 3, count: 4, value: bitsPerSampleOffset);
-    entryOffset = _writeEntry(data, entryOffset, tag: 259, type: 3, count: 1, value: options.compression.value);
-    entryOffset = _writeEntry(data, entryOffset, tag: 262, type: 3, count: 1, value: 2);
-    entryOffset = _writeEntry(data, entryOffset, tag: 273, type: 4, count: 1, value: pixelOffset);
-    entryOffset = _writeEntry(data, entryOffset, tag: 274, type: 3, count: 1, value: 1);
-    entryOffset = _writeEntry(data, entryOffset, tag: 277, type: 3, count: 1, value: 4);
-    entryOffset = _writeEntry(data, entryOffset, tag: 278, type: 4, count: 1, value: image.height);
-    entryOffset = _writeEntry(data, entryOffset, tag: 279, type: 4, count: 1, value: encodedPixels.length);
-    entryOffset = _writeEntry(data, entryOffset, tag: 282, type: 5, count: 1, value: resolutionOffset);
-    entryOffset = _writeEntry(data, entryOffset, tag: 283, type: 5, count: 1, value: resolutionOffset + 8);
-    entryOffset = _writeEntry(data, entryOffset, tag: 284, type: 3, count: 1, value: 1);
-    entryOffset = _writeEntry(data, entryOffset, tag: 296, type: 3, count: 1, value: 2);
-    entryOffset = _writeEntry(data, entryOffset, tag: 338, type: 3, count: 1, value: 2);
-    if (profile != null) {
-      entryOffset = _writeEntry(data, entryOffset, tag: 34675, type: 7, count: profile.length, value: profile.length <= 4 ? 0 : profileOffset);
-      final int destination = profile.length <= 4 ? entryOffset - 4 : profileOffset;
-      data.buffer.asUint8List().setRange(destination, destination + profile.length, profile);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 256, type: 4, count: 1, value: image.width);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 257, type: 4, count: 1, value: image.height);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 258, type: 3, count: 4, value: bitsPerSampleOffset);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 259, type: 3, count: 1, value: options.compression.value);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 262, type: 3, count: 1, value: 2);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 273, type: 4, count: 1, value: pixelOffset);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 274, type: 3, count: 1, value: 1);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 277, type: 3, count: 1, value: 4);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 278, type: 4, count: 1, value: image.height);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 279, type: 4, count: 1, value: encodedPixels.length);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 282, type: 5, count: 1, value: resolutionOffset);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 283, type: 5, count: 1, value: resolutionOffset + 8);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 284, type: 3, count: 1, value: 1);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 296, type: 3, count: 1, value: 2);
+    entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: 338, type: 3, count: 1, value: 2);
+    for (final MapEntry<int, Uint8List> payload in payloads.entries) {
+      final Uint8List bytes = payload.value;
+      entryOffset = _writeEntry(data, entryOffset, endian: endian, tag: payload.key, type: 7, count: bytes.length, value: bytes.length <= 4 ? 0 : offsets[payload.key]!);
+      final int destination = bytes.length <= 4 ? entryOffset - 4 : offsets[payload.key]!;
+      data.buffer.asUint8List().setRange(destination, destination + bytes.length, bytes);
     }
-    data.setUint32(entryOffset, 0, Endian.little);
+    data.setUint32(entryOffset, 0, endian);
     for (int index = 0; index < 4; index++) {
-      data.setUint16(bitsPerSampleOffset + index * 2, 8, Endian.little);
+      data.setUint16(bitsPerSampleOffset + index * 2, 8, endian);
     }
     for (int index = 0; index < 2; index++) {
       data
         ..setUint32(
           resolutionOffset + index * 8,
           resolutionNumerator,
-          Endian.little,
+          endian,
         )
         ..setUint32(
           resolutionOffset + index * 8 + 4,
           resolutionDenominator,
-          Endian.little,
+          endian,
         );
     }
     data.buffer.asUint8List().setRange(pixelOffset, pixelOffset + encodedPixels.length, encodedPixels);
     return data.buffer.asUint8List();
   }
 
-  /// Writes one little-endian image-file-directory entry.
+  /// Writes one image-file-directory entry in the selected byte order.
   int _writeEntry(
     ByteData data,
     int offset, {
+    required Endian endian,
     required int tag,
     required int type,
     required int count,
     required int value,
   }) {
     data
-      ..setUint16(offset, tag, Endian.little)
-      ..setUint16(offset + 2, type, Endian.little)
-      ..setUint32(offset + 4, count, Endian.little);
+      ..setUint16(offset, tag, endian)
+      ..setUint16(offset + 2, type, endian)
+      ..setUint32(offset + 4, count, endian);
     if (type == 3 && count == 1) {
       data
-        ..setUint16(offset + 8, value, Endian.little)
-        ..setUint16(offset + 10, 0, Endian.little);
+        ..setUint16(offset + 8, value, endian)
+        ..setUint16(offset + 10, 0, endian);
     } else {
-      data.setUint32(offset + 8, value, Endian.little);
+      data.setUint32(offset + 8, value, endian);
     }
     return offset + 12;
   }
@@ -205,10 +220,18 @@ final class TiffEncodeOptions extends RasterEncodeOptions {
   /// ICC payload describing the input RGB samples, embedded without conversion.
   final Uint8List? iccProfile;
 
+  /// Byte order of the TIFF container and any embedded Photoshop layer payload.
+  final Endian byteOrder;
+
+  /// Optional Photoshop layer and resource tags, preserved without rasterization.
+  final TiffPhotoshopData? photoshopData;
+
   /// Creates a TIFF encode with the default options.
   const TiffEncodeOptions({
     this.compression = TiffCompression.packBits,
     this.pixelsPerInch,
     this.iccProfile,
+    this.byteOrder = Endian.little,
+    this.photoshopData,
   });
 }

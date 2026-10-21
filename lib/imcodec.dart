@@ -11,7 +11,7 @@ export 'src/codecs/png.dart' show PngCodec, PngDecodeOptions, PngDecoder, PngEnc
 export 'src/codecs/qoi.dart' show QoiCodec, QoiDecodeOptions, QoiDecoder, QoiEncodeOptions, QoiEncoder;
 export 'src/codecs/raster_codec.dart' show ParallelRasterCodec, ParallelRasterEncoder, RasterCodec, RasterDecodeOptions, RasterDecoder, RasterEncodeOptions, RasterEncoder;
 export 'src/codecs/tga.dart' show TgaCodec, TgaDecodeOptions, TgaDecoder, TgaEncodeOptions, TgaEncoder;
-export 'src/codecs/tiff.dart' show TiffCodec, TiffCompression, TiffDecodeOptions, TiffDecoder, TiffEncodeOptions, TiffEncoder;
+export 'src/codecs/tiff.dart' show TiffCodec, TiffCompression, TiffDecodeOptions, TiffDecoder, TiffEncodeOptions, TiffEncoder, TiffPhotoshopData, TiffPhotoshopDecoder;
 export 'src/codecs/webp.dart' show WebPCodec, WebPDecodeOptions, WebPDecoder, WebPEffort, WebPEncodeOptions, WebPEncoder;
 export 'src/decoded_image.dart';
 export 'src/decoder.dart';
