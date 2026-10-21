@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.5.5
+Released on October 22, 2026.
+
+* **FEAT**: Added Photoshop tags and big-endian encoding. ([#3f9311e](https://github.com/focale-editor/imcodec/commit/3f9311e))
+
 ## v0.5.4
 Released on October 21, 2026.
 
