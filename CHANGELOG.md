@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.5.4
+Released on October 21, 2026.
+
+* **FIX**: Preserving ICC profiles during encoding. ([#2440f45](https://github.com/focale-editor/imcodec/commit/2440f45))
+
 ## v0.5.3
 Released on October 5, 2026.
 
