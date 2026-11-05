@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.5.7
+Released on November 5, 2026.
+
+* **FEAT**: Added bounded packed JBIG2 decoding for PDF hosts, with explicit sample polarity and normalized row padding. ([#a10ed9b](https://github.com/focale-editor/imcodec/commit/a10ed9b))
+
 ## v0.5.6
 Released on November 5, 2026.
 
