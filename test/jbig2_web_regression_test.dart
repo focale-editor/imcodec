@@ -19,6 +19,14 @@ void main() {
       expect(inspectImage(encoded)!.width, source.width);
       final Uint8List embedded = const Jbig2Encoder().encodeEmbedded(source);
       expect(const Jbig2Decoder().decodeEmbedded(embedded).bytes, source.bytes);
+      final Jbig2Bitmap packed = const Jbig2Decoder().decodeEmbeddedBitmap(embedded, oneIsBlack: false);
+      expect(packed.rowStride, 18);
+      for (int y = 0; y < source.height; y++) {
+        for (int x = 0; x < source.width; x++) {
+          final int sample = (packed.bytes[y * packed.rowStride + x ~/ 8] >> (7 - x % 8)) & 1;
+          expect(sample * 255, source.bytes[(y * source.width + x) * 4]);
+        }
+      }
     });
   }
 }

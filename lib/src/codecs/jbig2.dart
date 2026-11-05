@@ -14,6 +14,7 @@ import 'package:imcodec/src/output_buffer.dart';
 
 part 'jbig2/bit_reader.dart';
 part 'jbig2/bitmap.dart';
+part 'jbig2/packed_bitmap.dart';
 part 'jbig2/codec.dart';
 part 'jbig2/decoder.dart';
 part 'jbig2/decoder/arithmetic/arithmetic_decoder.dart';

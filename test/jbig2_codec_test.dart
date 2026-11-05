@@ -30,6 +30,9 @@ void main() {
           expect(image.width, page['width']);
           expect(image.height, page['height']);
           expect(sha256.convert(image.bytes).toString(), page['rgbaSha256']);
+          final Jbig2Bitmap packed = const Jbig2Decoder().decodeEmbeddedBitmap(bytes, globals: globals, decodeOptions: options, oneIsBlack: false);
+          expect((packed.width, packed.height, packed.rowStride), (image.width, image.height, (image.width + 7) ~/ 8));
+          expect(sha256.convert(_rgba(packed)).toString(), page['rgbaSha256']);
         }
       });
     }
@@ -59,6 +62,27 @@ void main() {
       expect(const Jbig2Decoder().decodeEmbedded(encoded).bytes, source.bytes);
       expect(() => decodeJbig2(encoded), throwsA(isA<ImageCodecException>()));
     });
+    test('packed output preserves both polarities, odd-width padding and immutable ownership', () {
+      final Image source = _binaryImage(width: 13, height: 7);
+      final Uint8List encoded = const Jbig2Encoder().encodeEmbedded(source);
+      final Jbig2Bitmap black = const Jbig2Decoder().decodeEmbeddedBitmap(encoded);
+      final Jbig2Bitmap white = const Jbig2Decoder().decodeEmbeddedBitmap(encoded, oneIsBlack: false);
+      expect(black.oneIsBlack, isTrue);
+      expect(white.oneIsBlack, isFalse);
+      expect(black.bytes.length, 14);
+      expect(white.bytes.length, 14);
+      expect(_rgba(black), source.bytes);
+      expect(_rgba(white), source.bytes);
+      for (int row = 0; row < 7; row++) {
+        expect(black.bytes[row * 2 + 1] & 7, 0);
+        expect(white.bytes[row * 2 + 1] & 7, 7);
+      }
+      encoded.fillRange(0, encoded.length, 0);
+      expect(_rgba(white), source.bytes);
+      expect(() => white.bytes[0] = 0, throwsUnsupportedError);
+      expect(() => const Jbig2Decoder().decodeEmbeddedBitmap(encoded), throwsA(isA<ImageCodecException>()));
+    });
+
     test('rejects color unless binarization was explicitly requested', () {
       final Image source = Image.fromRgba(width: 4, height: 1, bytes: Uint8List.fromList([0, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 255, 0, 0, 0, 0]));
       expect(() => encodeJbig2(source), throwsA(isA<ImageCodecException>()));
@@ -74,6 +98,7 @@ void main() {
         const Jbig2DecodeOptions(page: 2),
       ]) {
         expect(() => decodeJbig2(encoded, options: options), throwsA(isA<ImageCodecException>()));
+        expect(() => const Jbig2Decoder().decodeEmbeddedBitmap(encoded, decodeOptions: options), throwsA(isA<ImageCodecException>()));
       }
       expect(() => decodeJbig2(encoded, options: const Jbig2DecodeOptions(maxPixels: 0)), throwsRangeError);
     });
@@ -233,4 +258,18 @@ Uint8List _file({required List<(Uint8List, Uint8List)> segments, bool randomAcce
     ..add([type, if (reference == null) 0 else 32, ?reference, page])
     ..add((ByteData(4)..setUint32(0, payload.length)).buffer.asUint8List());
   return (header.takeBytes(), payload);
+}
+
+/// Expands public packed samples independently to compare with oracle hashes.
+Uint8List _rgba(Jbig2Bitmap bitmap) {
+  final Uint8List pixels = Uint8List(bitmap.width * bitmap.height * 4);
+  for (int y = 0; y < bitmap.height; y++) {
+    for (int x = 0; x < bitmap.width; x++) {
+      final bool set = (bitmap.bytes[y * bitmap.rowStride + x ~/ 8] & (128 >> (x % 8))) != 0;
+      final int value = set == bitmap.oneIsBlack ? 0 : 255;
+      final int offset = (y * bitmap.width + x) * 4;
+      pixels.setRange(offset, offset + 4, [value, value, value, 255]);
+    }
+  }
+  return pixels;
 }

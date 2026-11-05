@@ -10,16 +10,40 @@ final class Jbig2Decoder extends RasterDecoder<Jbig2DecodeOptions> {
     if (!ImageFormat.jbig2.matches(input)) {
       throw const ImageCodecException('Expected a standalone JBIG2 file');
     }
-    return _decode(input, null, options);
+    return _rgba(_decode(input, null, options));
   }
 
   /// Decodes a PDF segment stream with its optional JBIG2Globals bytes.
   ///
   /// The PDF container must decompress the globals stream before passing it.
-  Image decodeEmbedded(Uint8List input, {Uint8List? globals, Jbig2DecodeOptions? decodeOptions}) => _decode(input, globals, decodeOptions ?? defaultDecodeOptions);
+  Image decodeEmbedded(Uint8List input, {Uint8List? globals, Jbig2DecodeOptions? decodeOptions}) => _rgba(_decode(input, globals, decodeOptions ?? defaultDecodeOptions));
 
-  /// Maps the selected page and converts the composed one-bit bitmap to RGBA.
-  Image _decode(Uint8List input, Uint8List? globals, Jbig2DecodeOptions options) {
+  /// Decodes PDF segments to packed, most-significant-bit-first monochrome rows.
+  ///
+  /// Pass decompressed [globals] and set [oneIsBlack] to false for PDF samples
+  /// where a set bit means white. Padding bits always represent white. This
+  /// path never allocates an RGBA page; all ordinary decode budgets still apply.
+  Jbig2Bitmap decodeEmbeddedBitmap(Uint8List input, {Uint8List? globals, Jbig2DecodeOptions? decodeOptions, bool oneIsBlack = true}) =>
+      Jbig2Bitmap._fromDecoded(_decode(input, globals, decodeOptions ?? defaultDecodeOptions), oneIsBlack: oneIsBlack);
+
+  /// Expands the composed bitmap only when the caller requests RGBA pixels.
+  Image _rgba(_Jbig2Bitmap bitmap) {
+    final Uint8List pixels = Uint8List(bitmap.width * bitmap.height * 4);
+    for (int y = 0; y < bitmap.height; y++) {
+      for (int x = 0; x < bitmap.width; x++) {
+        final int offset = (y * bitmap.width + x) * 4;
+        final int value = bitmap.getPixel(x, y) == 0 ? 255 : 0;
+        pixels[offset] = value;
+        pixels[offset + 1] = value;
+        pixels[offset + 2] = value;
+        pixels[offset + 3] = 255;
+      }
+    }
+    return Image.fromRgba(width: bitmap.width, height: bitmap.height, bytes: pixels);
+  }
+
+  /// Composes one bounded page without expanding its packed pixel storage.
+  _Jbig2Bitmap _decode(Uint8List input, Uint8List? globals, Jbig2DecodeOptions options) {
     if (options.maxPixels < 1) {
       throw RangeError.range(options.maxPixels, 1, null, 'maxPixels');
     }
@@ -51,18 +75,7 @@ final class Jbig2Decoder extends RasterDecoder<Jbig2DecodeOptions> {
         _Jbig2Budget.current.checkDimensions(information.bitmapWidth, information.bitmapHeight == -1 ? page.getHeight() : information.bitmapHeight);
         final _Jbig2Bitmap bitmap = page.getBitmap();
         _Jbig2Budget.current.checkDimensions(bitmap.width, bitmap.height);
-        final Uint8List pixels = Uint8List(bitmap.width * bitmap.height * 4);
-        for (int y = 0; y < bitmap.height; y++) {
-          for (int x = 0; x < bitmap.width; x++) {
-            final int offset = (y * bitmap.width + x) * 4;
-            final int value = bitmap.getPixel(x, y) == 0 ? 255 : 0;
-            pixels[offset] = value;
-            pixels[offset + 1] = value;
-            pixels[offset + 2] = value;
-            pixels[offset + 3] = 255;
-          }
-        }
-        return Image.fromRgba(width: bitmap.width, height: bitmap.height, bytes: pixels);
+        return bitmap;
       } on ImageCodecException {
         rethrow;
       } on Object catch (error, stack) {
