@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:imcodec/src/codecs/bmp.dart';
 import 'package:imcodec/src/codecs/gif.dart';
+import 'package:imcodec/src/codecs/jbig2.dart';
 import 'package:imcodec/src/codecs/jpeg.dart';
 import 'package:imcodec/src/codecs/jpeg_xl.dart';
 import 'package:imcodec/src/codecs/open_exr.dart';
@@ -245,3 +246,6 @@ Uint8List encodeImage<Options extends RasterEncodeOptions>(
   image,
   encodeOptions: options,
 );
+
+/// Encodes an opaque binary image as a standalone JBIG2 page.
+Uint8List encodeJbig2(Image image, {Jbig2EncodeOptions? options}) => encodeImage(image, format: ImageFormat.jbig2, options: options);

@@ -1,11 +1,13 @@
 import 'dart:typed_data';
 
 import 'package:imcodec/src/codecs/exception.dart';
+import 'package:imcodec/src/codecs/jbig2.dart' show inspectJbig2Container;
 import 'package:imcodec/src/decoded_image.dart';
 import 'package:zcodec/zcodec.dart';
 
 part 'bmp.dart';
 part 'gif.dart';
+part 'jbig2.dart';
 part 'jpeg.dart';
 part 'jpeg_xl.dart';
 part 'open_exr.dart';
@@ -25,6 +27,9 @@ abstract class ImageFormat {
 
   /// Graphics Interchange Format image.
   static const ImageFormat gif = _GifFormat();
+
+  /// JBIG2 bi-level document image.
+  static const ImageFormat jbig2 = _Jbig2Format();
 
   /// Joint Photographic Experts Group image.
   static const ImageFormat jpeg = _JpegFormat();
@@ -86,6 +91,7 @@ abstract final class ImageFormatRegistry {
     const _ImageFormatRegistration(format: ImageFormat.bmp),
     const _ImageFormatRegistration(format: ImageFormat.gif),
     const _ImageFormatRegistration(format: ImageFormat.png),
+    const _ImageFormatRegistration(format: ImageFormat.jbig2),
     const _ImageFormatRegistration(format: ImageFormat.jpeg),
     const _ImageFormatRegistration(format: ImageFormat.jpegXl),
     const _ImageFormatRegistration(format: ImageFormat.openExr),

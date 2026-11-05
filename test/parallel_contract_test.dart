@@ -16,6 +16,7 @@ void main() {
   final Map<ImageFormat, RasterCodec> codecs = <ImageFormat, RasterCodec>{
     ImageFormat.bmp: const BmpCodec(),
     ImageFormat.gif: const GifCodec(),
+    ImageFormat.jbig2: const Jbig2Codec(),
     ImageFormat.jpeg: const JpegCodec(),
     ImageFormat.jpegXl: const JpegXlCodec(),
     ImageFormat.openExr: const OpenExrCodec(),
@@ -45,7 +46,11 @@ void main() {
 
   test('the format-dispatching helper matches its synchronous twin', () async {
     for (final ImageFormat format in ImageFormatRegistry.formats) {
-      final RasterEncodeOptions? options = identical(format, ImageFormat.jpegXl) ? const JpegXlEncodeOptions(effort: JpegXlEffort.fast) : null;
+      final RasterEncodeOptions? options = switch (format) {
+        ImageFormat.jpegXl => const JpegXlEncodeOptions(effort: JpegXlEffort.fast),
+        ImageFormat.jbig2 => const Jbig2EncodeOptions(threshold: 128),
+        _ => null,
+      };
       expect(
         await encodeImageWith(
           onIsolates,

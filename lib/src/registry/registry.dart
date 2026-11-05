@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:imcodec/src/codecs/bmp.dart';
 import 'package:imcodec/src/codecs/exception.dart';
 import 'package:imcodec/src/codecs/gif.dart';
+import 'package:imcodec/src/codecs/jbig2.dart';
 import 'package:imcodec/src/codecs/jpeg.dart';
 import 'package:imcodec/src/codecs/jpeg_xl.dart';
 import 'package:imcodec/src/codecs/jpeg_xl/info.dart';
@@ -23,6 +24,7 @@ import 'package:imcodec/src/parallel_runner/parallel_runner.dart';
 part 'extensions/bmp.dart';
 part 'extensions/extension.dart';
 part 'extensions/gif.dart';
+part 'extensions/jbig2.dart';
 part 'extensions/jpeg.dart';
 part 'extensions/jpeg_xl.dart';
 part 'extensions/open_exr.dart';
@@ -42,6 +44,7 @@ abstract final class ImageCodecRegistry {
     ..addAll({
       ImageFormat.bmp: const _BmpCodecExtension(),
       ImageFormat.gif: const _GifCodecExtension(),
+      ImageFormat.jbig2: const _Jbig2CodecExtension(),
       ImageFormat.jpeg: const _JpegCodecExtension(),
       ImageFormat.jpegXl: const _JpegXlCodecExtension(),
       ImageFormat.openExr: const _OpenExrCodecExtension(),

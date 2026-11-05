@@ -4,7 +4,7 @@
 
 # Imcodec
 
-Imcodec is a focused Flutter image codec for BMP, GIF, JPEG, JPEG XL, OpenEXR,
+Imcodec is a focused Flutter image codec for BMP, GIF, JBIG2, JPEG, JPEG XL, OpenEXR,
 PNG, QOI, TGA, TIFF, and WebP. It keeps a small straight-alpha RGBA image model and
 exposes synchronous pure-Dart encoders and decoders, which makes expensive
 conversions suitable for `Isolate.run`.

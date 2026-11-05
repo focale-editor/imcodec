@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:imcodec/src/codecs/bmp.dart';
 import 'package:imcodec/src/codecs/exception.dart';
 import 'package:imcodec/src/codecs/gif.dart';
+import 'package:imcodec/src/codecs/jbig2.dart';
 import 'package:imcodec/src/codecs/jpeg.dart';
 import 'package:imcodec/src/codecs/jpeg_xl.dart';
 import 'package:imcodec/src/codecs/open_exr.dart';
@@ -137,10 +138,12 @@ DecodedImage _decodeData<Options extends RasterDecodeOptions>(
   if (resolvedMaxPixels < 1) {
     throw RangeError.range(resolvedMaxPixels, 1, null, 'maxPixels');
   }
-  final DecodedImageMetadata? metadata = inspectImage(
-    bytes,
-    maxIccProfileBytes: maxIccProfileBytes,
-  );
+  final DecodedImageMetadata? metadata = identical(format, ImageFormat.jbig2) && options is Jbig2DecodeOptions
+      ? inspectJbig2Container(bytes, page: options.page)
+      : inspectImage(
+          bytes,
+          maxIccProfileBytes: maxIccProfileBytes,
+        );
   if (metadata != null) {
     _checkDecodedSize(
       metadata,
@@ -311,4 +314,12 @@ Image decodeImage<Options extends RasterDecodeOptions>(
     bytes,
     decodeOptions: options,
   );
+}
+
+/// Decodes the selected standalone JBIG2 page to opaque RGBA.
+Image decodeJbig2(Uint8List bytes, {Jbig2DecodeOptions? options}) {
+  if (!ImageFormat.jbig2.matches(bytes)) {
+    throw const ImageCodecException('Expected a standalone JBIG2 file');
+  }
+  return decodeImage(bytes, options: options);
 }

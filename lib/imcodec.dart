@@ -4,6 +4,7 @@ library;
 export 'src/codecs/bmp.dart' show BmpCodec, BmpDecodeOptions, BmpDecoder, BmpEncodeOptions, BmpEncoder;
 export 'src/codecs/exception.dart';
 export 'src/codecs/gif.dart' show GifCodec, GifDecodeOptions, GifDecoder, GifEncodeOptions, GifEncoder;
+export 'src/codecs/jbig2.dart' show Jbig2Codec, Jbig2DecodeOptions, Jbig2Decoder, Jbig2EncodeOptions, Jbig2Encoder;
 export 'src/codecs/jpeg.dart' show JpegChroma, JpegCodec, JpegDecodeOptions, JpegDecoder, JpegEncodeOptions, JpegEncoder;
 export 'src/codecs/jpeg_xl.dart' show JpegXlCodec, JpegXlDecodeOptions, JpegXlDecoder, JpegXlEffort, JpegXlEncodeOptions, JpegXlEncoder;
 export 'src/codecs/open_exr.dart' show OpenExrCodec, OpenExrCompression, OpenExrDecodeOptions, OpenExrDecoder, OpenExrEncodeOptions, OpenExrEncoder;
