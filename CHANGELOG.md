@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.5.6
+Released on November 5, 2026.
+
+* **FEAT**: Added JBIG2 support. ([#a40379f](https://github.com/focale-editor/imcodec/commit/a40379f))
+
 ## v0.5.5
 Released on October 22, 2026.
 
