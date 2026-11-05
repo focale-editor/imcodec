@@ -1,0 +1,6 @@
+[
+  {
+    "file": "001.jb2",
+    "reason": "Not JBIG2: starts with the CWS signature of a compressed Flash file; jbig2dec produces no page."
+  }
+]
