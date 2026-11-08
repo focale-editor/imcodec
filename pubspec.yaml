@@ -1,6 +1,6 @@
 name: imcodec
 description: Focused BMP, GIF, JBIG2, JPEG, JPEG XL, OpenEXR, PNG, QOI, TGA, TIFF, and WebP codecs for RGBA images in Flutter.
-version: 0.5.7
+version: 0.5.8
 homepage: https://github.com/focale-editor/imcodec
 repository: https://github.com/focale-editor/imcodec
 

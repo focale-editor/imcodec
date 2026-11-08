@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.5.8
+Released on November 8, 2026.
+
+* **FEAT**: Now restoring the declared width after VP8L palette expansion, including compressed alpha and multi-row decode caches. ([#2d5ca0a](https://github.com/focale-editor/imcodec/commit/2d5ca0a))
+
 ## v0.5.7
 Released on November 5, 2026.
 
