@@ -98,10 +98,10 @@ final class _WebPAlphaDecoder {
   bool _decodeLosslessRows(int endRow, Uint8List output) {
     _losslessDecoder._opaque = output;
     return _usesByteDecoder
-        ? _losslessDecoder._decodeAlphaData(_width, _height, endRow)
+        ? _losslessDecoder._decodeAlphaData(_losslessDecoder._streamWidth, _height, endRow)
         : _losslessDecoder._decodeImageData(
             _losslessDecoder._pixels!,
-            _width,
+            _losslessDecoder._streamWidth,
             _height,
             endRow,
             _losslessDecoder._extractAlphaRows,

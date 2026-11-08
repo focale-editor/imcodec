@@ -258,6 +258,9 @@ final class _Vp8LosslessDecoder {
   /// Dimensions and format information shared with the container decoder.
   final _WebPDecodingInfo information;
 
+  /// Width of packed stream rows before inverse palette expansion.
+  int _streamWidth = 0;
+
   /// Destination RGBA image for a full pixel decode.
   Image? image;
 
@@ -302,7 +305,7 @@ final class _Vp8LosslessDecoder {
 
     image = Image(width: information.width, height: information.height);
 
-    if (!_decodeImageData(_pixels!, information.width, information.height, information.height, _processRows)) {
+    if (!_decodeImageData(_pixels!, _streamWidth, information.height, information.height, _processRows)) {
       return null;
     }
 
@@ -425,14 +428,12 @@ final class _Vp8LosslessDecoder {
       _colorCacheSize = 0;
     }
 
-    information
-      ..width = transformXsize
-      ..height = transformYsize;
     final int numBits = _huffmanSubsampleBits;
     _huffmanWidth = _subsampledSize(transformXsize, numBits);
     _huffmanMask = (numBits == 0) ? ~0 : (1 << numBits) - 1;
 
     if (isLevel0) {
+      _streamWidth = transformXsize;
       // Reset for future DECODE_DATA_FUNC() calls.
       _lastPixel = 0;
       return null;
@@ -619,7 +620,7 @@ final class _Vp8LosslessDecoder {
       return; // Nothing to be done.
     }
 
-    _applyInverseTransforms(numRows, information.width * _lastRow);
+    _applyInverseTransforms(numRows, _streamWidth * _lastRow);
 
     // Extract alpha (which is stored in the green plane).
     final int width = information.width; // the final width (!= dec->width_)
@@ -716,7 +717,7 @@ final class _Vp8LosslessDecoder {
   /// Expands palette indexes into output alpha rows through [row].
   void _extractPalettedAlphaRows(int row) {
     final int numRows = row - _lastRow;
-    final pIn = _WebPBuffer(data: _pixels8, offset: information.width * _lastRow);
+    final pIn = _WebPBuffer(data: _pixels8, offset: _streamWidth * _lastRow);
     if (numRows > 0) {
       _applyInverseTransformsAlpha(numRows, pIn);
     }
@@ -737,7 +738,7 @@ final class _Vp8LosslessDecoder {
   //static int __count = 0;
   /// Applies transforms and emits reconstructed pixels through [row].
   void _processRows(int row) {
-    final int rows = information.width * _lastRow; // offset into _pixels
+    final int rows = _streamWidth * _lastRow; // offset into _pixels
     final int numRows = row - _lastRow;
 
     if (numRows <= 0) {
@@ -769,7 +770,7 @@ final class _Vp8LosslessDecoder {
   /// Applies every encoded inverse transform to [numRows] pending rows.
   void _applyInverseTransforms(int numRows, int rows) {
     int n = _transforms.length;
-    final int cachePixs = information.width * numRows;
+    final int cachePixs = _streamWidth * numRows;
     final int startRow = _lastRow;
     final int endRow = startRow + numRows;
     var rowsIn = rows;
