@@ -569,14 +569,22 @@ final class TiffDecoder extends RasterDecoder<TiffDecodeOptions> {
     required bool associatedAlpha,
   }) {
     final int pixelCount = width * height;
-    final DecodedColorModel colorModel = photometric == 5 ? DecodedColorModel.cmyk : DecodedColorModel.rgb;
+    final DecodedColorModel colorModel = switch (photometric) {
+      5 => DecodedColorModel.cmyk,
+      8 || 9 => DecodedColorModel.lab,
+      _ => DecodedColorModel.rgb,
+    };
+    final bool lab = colorModel == DecodedColorModel.lab;
+    if (lab && samples.format == DecodedSampleFormat.float32) {
+      throw const ImageCodecException('Floating-point Lab TIFF samples are not supported');
+    }
     final int processChannels = colorModel.processChannelCount;
     final int outputChannels = processChannels + 1;
     // The sample layout is fixed for a whole image, so it is validated once
     // instead of on every pixel.
     final bool hasAlphaSample = _validateSampleLayout(photometric, samplesPerPixel, colorMap);
     final int sourceProcessChannels = switch (photometric) {
-      2 => 3,
+      2 || 8 || 9 => 3,
       5 => 4,
       _ => 1,
     };
@@ -585,9 +593,9 @@ final class TiffDecoder extends RasterDecoder<TiffDecodeOptions> {
       samples.format,
     );
 
-    // Grayscale, RGB and CMYK samples already carry their output meaning, so
-    // they move as raw scalars rather than through normalized doubles.
-    if (photometric != 0 && photometric != 3 && !associatedAlpha) {
+    // RGB and CMYK samples already carry their output meaning, so they move
+    // as raw scalars rather than through normalized doubles.
+    if (photometric != 0 && photometric != 3 && !lab && !associatedAlpha) {
       _copyProcessSamples(
         samples,
         output,
@@ -632,6 +640,8 @@ final class TiffDecoder extends RasterDecoder<TiffDecodeOptions> {
         process[0] = (colorMap![paletteIndex] >>> paletteShift) / paletteMaximum;
         process[1] = (colorMap[paletteLength + paletteIndex] >>> paletteShift) / paletteMaximum;
         process[2] = (colorMap[paletteLength * 2 + paletteIndex] >>> paletteShift) / paletteMaximum;
+      } else if (lab) {
+        _labProcess(samples, source, process, signed: photometric == 8);
       } else if (photometric == 0 || photometric == 1) {
         final double storedGray = samples.normalizedAt(source);
         final double gray = photometric == 0 ? 1 - storedGray : storedGray;
@@ -644,7 +654,8 @@ final class TiffDecoder extends RasterDecoder<TiffDecodeOptions> {
         }
       }
       final double alpha = hasAlphaSample ? samples.normalizedAt(source + sourceProcessChannels) : 1;
-      if (associatedAlpha && alpha != 0 && alpha != 1) {
+      // Lab components are not scaled by coverage.
+      if (associatedAlpha && !lab && alpha != 0 && alpha != 1) {
         for (int channel = 0; channel < processChannels; channel++) {
           process[channel] = process[channel] / alpha;
         }
@@ -718,6 +729,27 @@ final class TiffDecoder extends RasterDecoder<TiffDecodeOptions> {
     }
   }
 
+  /// Reads the Lab pixel at [source] into ICC-encoded [process] values.
+  ///
+  /// L* is unsigned in both encodings. CIELab stores a* and b* as signed
+  /// integers, whole units at eight bits and 1/256 units at sixteen; ICCLab
+  /// stores them offset by 128, at sixteen bits scaled by 257.
+  void _labProcess(_TiffSampleBuffer samples, int source, Float64List process, {required bool signed}) {
+    final bool wide = samples.format == DecodedSampleFormat.uint16;
+    process[0] = samples.normalizedAt(source);
+    for (int channel = 1; channel < 3; channel++) {
+      final int stored = samples.unsignedAt(source + channel);
+      final double value = signed
+          ? wide
+                ? (stored >= 32768 ? stored - 65536 : stored) / 256
+                : (stored >= 128 ? stored - 256 : stored).toDouble()
+          : wide
+          ? stored / 257 - 128
+          : stored - 128.0;
+      process[channel] = ((value + 128) / 255).clamp(0.0, 1.0);
+    }
+  }
+
   /// Validates the sample layout and reports whether an alpha sample follows.
   bool _validateSampleLayout(int photometric, int samplesPerPixel, List<int>? colorMap) {
     switch (photometric) {
@@ -742,6 +774,12 @@ final class TiffDecoder extends RasterDecoder<TiffDecodeOptions> {
           throw const ImageCodecException('Invalid CMYK TIFF sample count');
         }
         return samplesPerPixel == 5;
+      case 8:
+      case 9:
+        if (samplesPerPixel != 3 && samplesPerPixel != 4) {
+          throw const ImageCodecException('Invalid Lab TIFF sample count');
+        }
+        return samplesPerPixel == 4;
       default:
         throw ImageCodecException('Unsupported TIFF photometric interpretation: $photometric');
     }

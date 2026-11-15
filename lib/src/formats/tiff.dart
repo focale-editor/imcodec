@@ -113,7 +113,11 @@ final class _TiffFormat extends ImageFormat with InspectableFormat {
       width: width,
       height: height,
       bitsPerChannel: depths.first,
-      colorModel: photometric == 5 ? DecodedColorModel.cmyk : DecodedColorModel.rgb,
+      colorModel: switch (photometric) {
+        5 => DecodedColorModel.cmyk,
+        8 || 9 => DecodedColorModel.lab,
+        _ => DecodedColorModel.rgb,
+      },
       iccProfile: iccProfile,
       iptcMetadata: iptcField == null
           ? null

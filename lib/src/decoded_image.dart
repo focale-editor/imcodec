@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:imcodec/src/codecs/exception.dart';
+import 'package:imcodec/src/color/lab.dart';
 import 'package:imcodec/src/image.dart';
 
 /// Identifies the process channels retained by a decoded raster.
@@ -9,7 +10,14 @@ enum DecodedColorModel {
   rgb(processChannelCount: 3),
 
   /// Cyan, magenta, yellow, and black process channels.
-  cmyk(processChannelCount: 4);
+  cmyk(processChannelCount: 4),
+
+  /// CIE L*, a*, and b* channels relative to the D50 white point.
+  ///
+  /// Samples follow the ICC encoding of Lab: L* / 100, (a* + 128) / 255 and
+  /// (b* + 128) / 255, so 0 to 1 spans L* from 0 to 100 and a* and b* from
+  /// −128 to 127 at every sample depth.
+  lab(processChannelCount: 3);
 
   /// Number of process channels before alpha.
   final int processChannelCount;
@@ -137,7 +145,7 @@ final class DecodedImageMetadata {
   };
 
   /// Whether generic RGBA8 platform decoding would discard authored data.
-  bool get requiresExactDecoding => bitsPerChannel > 8 || colorModel == DecodedColorModel.cmyk || iccProfile != null;
+  bool get requiresExactDecoding => bitsPerChannel > 8 || colorModel != DecodedColorModel.rgb || iccProfile != null;
 }
 
 /// Returns a defensive immutable copy of optional metadata bytes.
@@ -311,6 +319,11 @@ final class DecodedImage {
         rgba[destination] = _toByte(_sample(data, source, 0));
         rgba[destination + 1] = _toByte(_sample(data, source, 1));
         rgba[destination + 2] = _toByte(_sample(data, source, 2));
+      } else if (colorModel == DecodedColorModel.lab) {
+        final (double red, double green, double blue) = labToSrgb(_sample(data, source, 0), _sample(data, source, 1), _sample(data, source, 2));
+        rgba[destination] = _toByte(red);
+        rgba[destination + 1] = _toByte(green);
+        rgba[destination + 2] = _toByte(blue);
       } else {
         final double black = _bounded(_sample(data, source, 3));
         rgba[destination] = _toByte(

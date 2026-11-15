@@ -83,14 +83,16 @@ final img.Image png = img.decodePng(
 
 Editors that must retain authored precision or process channels can use the
 metadata-aware API. It keeps PNG/TIFF 16-bit samples, TIFF/OpenEXR float32
-samples, CMYK JPEG/TIFF channels, and embedded ICC payloads without changing the small
-RGBA8 `Image` API used by existing callers:
+samples, CMYK JPEG/TIFF channels, CIELab and ICCLab TIFF channels, and embedded ICC
+payloads without changing the small RGBA8 `Image` API used by existing callers. Lab
+samples use the ICC encoding relative to D50: L* / 100, (a* + 128) / 255 and
+(b* + 128) / 255; the RGBA8 view converts them to sRGB:
 
 ```dart
 final img.DecodedImageMetadata? metadata = img.inspectImage(encodedBytes);
 if (metadata?.requiresExactDecoding ?? false) {
   final img.DecodedImage decoded = img.decodeImageData(encodedBytes);
-  // decoded.bytes contains straight RGB+A or CMYK+A samples in native depth.
+  // decoded.bytes contains straight RGB+A, CMYK+A or Lab+A samples in native depth.
 }
 ```
 
