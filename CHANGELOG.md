@@ -1,5 +1,10 @@
 # 📰 Imcodec changelog
 
+## v0.5.9
+Released on November 15, 2026.
+
+* **FEAT**: Now decoding CIELab and ICCLab TIFF images into a Lab color model. ([#569d887](https://github.com/focale-editor/imcodec/commit/569d887))
+
 ## v0.5.8
 Released on November 8, 2026.
 
